@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NeoSecra Release Manifest",
+  "description": "Schema for NeoSecra release manifests in the distribution channel",
+  "type": "object",
+  "required": [
+    "product", "edition", "version", "release_channel",
+    "git_commit", "build_date", "images", "distribution"
+  ],
+  "properties": {
+    "product": { "type": "string", "enum": ["neosecra-security-health", "neosecra-soc"] },
+    "edition": { "type": "string", "enum": ["security-health", "soc"] },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "release_channel": { "type": "string", "enum": ["stable", "beta", "rc"] },
+    "git_commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "build_date": { "type": "string", "format": "date-time" },
+    "minimum_upgrade_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "target_database_revision": { "type": "string" },
+    "config_schema_version": { "type": "integer", "minimum": 1 },
+    "images": {
+      "type": "object",
+      "required": ["backend", "frontend"],
+      "properties": {
+        "backend": { "$ref": "#/definitions/imageRef" },
+        "frontend": { "$ref": "#/definitions/imageRef" },
+        "worker": { "$ref": "#/definitions/imageRef" }
+      }
+    },
+    "distribution": {
+      "type": "object",
+      "required": ["source_repository_exposed", "distribution_repository", "release_asset_digest"],
+      "properties": {
+        "source_repository_exposed": { "type": "boolean", "const": false },
+        "distribution_repository": { "type": "string", "pattern": "^SirGlooMyy/neosecra-" },
+        "release_asset_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      }
+    },
+    "security": {
+      "type": "object",
+      "required": ["checksum_algorithm", "signature_required", "revoked"],
+      "properties": {
+        "checksum_algorithm": { "type": "string", "enum": ["sha256"] },
+        "signature_required": { "type": "boolean" },
+        "revoked": { "type": "boolean", "const": false }
+      }
+    },
+    "upgrade": {
+      "type": "object",
+      "properties": {
+        "backup_required": { "type": "boolean" },
+        "migration_required": { "type": "boolean" }
+      }
+    }
+  },
+  "definitions": {
+    "imageRef": {
+      "type": "object",
+      "required": ["reference", "digest"],
+      "properties": {
+        "reference": { "type": "string" },
+        "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      }
+    }
+  }
+}

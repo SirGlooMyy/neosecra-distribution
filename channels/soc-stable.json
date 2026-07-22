@@ -1,0 +1,10 @@
+{
+  "channel": "soc-stable",
+  "product": "neosecra-soc",
+  "edition": "soc",
+  "current_version": null,
+  "releases": [],
+  "status": "unavailable",
+  "note": "SOC release lifecycle not yet implemented. Channel reserved for future use.",
+  "updated": "2026-07-22T00:00:00Z"
+}
