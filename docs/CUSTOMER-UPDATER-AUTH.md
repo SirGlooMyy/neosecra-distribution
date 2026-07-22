@@ -26,11 +26,11 @@ sudo mkdir -p /etc/neosecra/credentials
 sudo chmod 0700 /etc/neosecra/credentials
 
 # Install GHCR token
-echo -n '<ghcr-read-token>' | sudo tee /etc/neosecra/credentials/ghcr-read-token > /dev/null
+sudo install -m 600 /dev/stdin /etc/neosecra/credentials/ghcr-read-token
 sudo chmod 0600 /etc/neosecra/credentials/ghcr-read-token
 
 # Install distribution token
-echo -n '<release-read-token>' | sudo tee /etc/neosecra/credentials/release-read-token > /dev/null
+sudo install -m 600 /dev/stdin /etc/neosecra/credentials/release-read-token
 sudo chmod 0600 /etc/neosecra/credentials/release-read-token
 ```
 
