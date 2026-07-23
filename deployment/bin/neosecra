@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # neosecra — NeoSecra Assessment management CLI
-set -Eeuo pipefail
+set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_SRC="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_SRC" ]]; do SCRIPT_SRC="$(readlink -f "$SCRIPT_SRC")"; done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SRC")" && pwd)"
 V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${V1_ROOT}/lib/common.sh"
 

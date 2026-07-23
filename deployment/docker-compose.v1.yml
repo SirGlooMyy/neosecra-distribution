@@ -37,6 +37,7 @@ services:
       - .env.v1
     environment:
       NEOSECRA_EDITION: security_health
+      DATABASE_URL: ${DATABASE_URL}
     volumes:
       - uploads:/app/uploads
       - reports:/app/reports

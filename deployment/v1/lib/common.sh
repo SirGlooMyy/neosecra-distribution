@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Shared helpers for the NeoSecra Assessment deployment scripts.
 # Sourced by install/upgrade/backup/smoke-tests scripts.
-set -Euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"

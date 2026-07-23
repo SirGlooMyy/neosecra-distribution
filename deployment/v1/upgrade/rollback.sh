@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # neosecra rollback — revert to a previous version
-set -Eeuo pipefail
+set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"

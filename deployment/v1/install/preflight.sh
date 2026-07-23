@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # neosecra preflight — host readiness verification (read-only)
-set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"

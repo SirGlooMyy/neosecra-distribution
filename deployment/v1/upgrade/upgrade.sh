@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # neosecra upgrade — apply a target version upgrade
-set -Eeuo pipefail
+set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"

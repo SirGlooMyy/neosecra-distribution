@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Release manifest validation helpers.
 # Source after common.sh
-set -Euo pipefail
 
 # Validate product and edition from manifest
 check_product_identity() {

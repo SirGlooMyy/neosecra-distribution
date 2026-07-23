@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # State management helpers for the NeoSecra Assessment deployment.
 # Source after common.sh
-set -Euo pipefail
 
 # Write installed version
 write_installed_version() {

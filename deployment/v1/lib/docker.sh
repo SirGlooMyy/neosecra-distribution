@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Docker-specific helpers for the NeoSecra Assessment deployment.
 # Source after common.sh
-set -Euo pipefail
 
 # Pull image from GHCR using credential file
 ghcr_pull() {

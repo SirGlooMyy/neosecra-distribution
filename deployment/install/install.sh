@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # neosecra install — internal pilot installation
-set -Eeuo pipefail
+set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
