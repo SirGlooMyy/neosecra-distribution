@@ -48,11 +48,9 @@ random_admin_password() {
 BASE="/opt/neosecra/assessment"
 RELEASE_DIR="${BASE}/releases/${VERSION}"
 
-# Önce mevcut kurulum kontrolü
+INSTALLED_VERSION=""
 if [[ -f "${BASE}/state/installed-version" ]]; then
-  INSTALLED=$(cat "${BASE}/state/installed-version")
-  info "Zaten kurulu: v${INSTALLED}. Upgrade için: neosecra upgrade <version>"
-  exit 0
+  INSTALLED_VERSION="$(cat "${BASE}/state/installed-version" 2>/dev/null || true)"
 fi
 
 TMP_DIR=$(mktemp -d)
@@ -170,6 +168,46 @@ mkdir -p /usr/local/bin
 chmod 0755 "${RELEASE_DIR}/bin/neosecra"
 ln -sf "${RELEASE_DIR}/bin/neosecra" /usr/local/bin/neosecra
 chmod 0755 /usr/local/bin/neosecra 2>/dev/null || true
+
+if [[ -n "$INSTALLED_VERSION" ]]; then
+  info "Zaten kurulu: v${INSTALLED_VERSION}. Release ve CLI onarımı uygulanıyor..."
+  export HOME=/root
+  (
+    cd "$RELEASE_DIR"
+    source "${RELEASE_DIR}/lib/common.sh"
+    source "${RELEASE_DIR}/lib/manifest.sh"
+    source "${RELEASE_DIR}/lib/docker.sh"
+    source "${RELEASE_DIR}/lib/state.sh"
+
+    initialize_env_file
+    validate_env_file || die ".env.v1 validation failed" 2
+    check_product_identity
+    compose_validate
+
+    if [[ "${NEOSECRA_ROTATE_INITIAL_ADMIN:-0}" == "1" ]]; then
+      rotate_initial_admin_password
+      validate_env_file || die ".env.v1 validation failed after admin rotation" 2
+    fi
+
+    if stack_is_running; then
+      ensure_assessment_schema_compatibility || die "Assessment schema compatibility repair failed" 11
+      sync_initial_admin_credentials || die "Initial admin credential synchronization failed" 11
+      if ! run_compose up -d --force-recreate backend worker frontend; then
+        print_service_diagnostics backend worker frontend
+        die "Application services failed to restart after repair" 13
+      fi
+      wait_service_healthy backend 120
+      wait_service_running worker 60
+      wait_service_running frontend 60
+      wait_frontend_http 120 || { print_service_diagnostics frontend; die "Frontend HTTP not reachable within 120s" 13; }
+      bash "${RELEASE_DIR}/install/postflight.sh" --timeout 120
+    else
+      warn "Stack is not running; database credential sync skipped"
+    fi
+  )
+  info "NeoSecra Assessment v${INSTALLED_VERSION} release/CLI onarımı tamamlandı"
+  exit 0
+fi
 
 # --- Kurulum ---
 export HOME=/root

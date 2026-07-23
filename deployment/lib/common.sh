@@ -167,6 +167,12 @@ ensure_env_admin_password() {
   fi
 }
 
+rotate_initial_admin_password() {
+  upsert_env_value FIRST_ADMIN_PASSWORD "$(random_admin_password)"
+  write_initial_admin_credentials
+  ok "Initial admin password rotated; credential file updated"
+}
+
 upsert_env_value() {
   local key="$1" value="$2" tmp
   tmp="$(mktemp)"
@@ -433,6 +439,13 @@ async def main() -> int:
     async with async_session_factory() as session:
         result = await session.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()
+        legacy_email_migrated = False
+        if user is None and email == "admin@neosecra.io":
+            legacy_result = await session.execute(select(User).where(User.email == "admin@neosecra.local"))
+            user = legacy_result.scalar_one_or_none()
+            if user is not None:
+                user.email = email
+                legacy_email_migrated = True
         created = False
         password_changed = False
 
@@ -485,6 +498,7 @@ async def main() -> int:
                     "email": email,
                     "created": created,
                     "password_changed": password_changed,
+                    "legacy_email_migrated": legacy_email_migrated,
                     "source": "installer",
                 },
             )
