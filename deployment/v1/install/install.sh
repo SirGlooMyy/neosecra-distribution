@@ -112,6 +112,7 @@ for _ in 1 2 3; do
   sleep 3
 done
 [[ $MIGRATE_OK -eq 1 ]] || die "Database migrations failed" 11
+ensure_assessment_schema_compatibility || die "Assessment schema compatibility repair failed" 11
 
 # --- Start application services ---
 INSTALL_PHASE="application"

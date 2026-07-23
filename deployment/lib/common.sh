@@ -373,6 +373,29 @@ asyncio.run(main())
 ' >/dev/null 2>&1
 }
 
+ensure_assessment_schema_compatibility() {
+  local pguser pgdb
+  pguser="$(env_value POSTGRES_USER neosecra)"
+  pgdb="$(env_value POSTGRES_DB neosecra_assessment)"
+
+  run_compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$pguser" -d "$pgdb" >/dev/null <<'SQL'
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id UUID PRIMARY KEY,
+  user_id UUID NULL REFERENCES users(id),
+  action VARCHAR(100) NOT NULL,
+  resource_type VARCHAR(50),
+  resource_id VARCHAR(255),
+  ip_address VARCHAR(45),
+  user_agent VARCHAR(500),
+  details JSON,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_audit_logs_user_id ON audit_logs(user_id);
+CREATE INDEX IF NOT EXISTS ix_audit_logs_created_at ON audit_logs(created_at);
+SQL
+  ok "Assessment schema compatibility verified"
+}
+
 reconcile_postgres_password() {
   local current
   current="$(env_value POSTGRES_PASSWORD "")"
