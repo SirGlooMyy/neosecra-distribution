@@ -239,7 +239,21 @@ initialize_env_file() {
   ensure_env_value OPENVAS_MOCK "false"
   ensure_env_value OPENVAS_KNOWN_HOSTS ""
 
+  write_initial_admin_credentials
   ok ".env.v1 initialized"
+}
+
+write_initial_admin_credentials() {
+  local credential_file="${CREDENTIAL_DIR}/initial-admin"
+  mkdir -p "$CREDENTIAL_DIR"
+  chmod 0700 "$CREDENTIAL_DIR"
+  {
+    printf 'FIRST_ADMIN_EMAIL=%s\n' "$(env_value FIRST_ADMIN_EMAIL "")"
+    printf 'FIRST_ADMIN_PASSWORD=%s\n' "$(env_value FIRST_ADMIN_PASSWORD "")"
+    printf 'ADMIN_RECOVERY_KEY=%s\n' "$(env_value ADMIN_RECOVERY_KEY "")"
+  } > "$credential_file"
+  chmod 0600 "$credential_file"
+  ok "Initial admin credential file: ${credential_file}"
 }
 
 postgres_auth_succeeds() {
