@@ -53,14 +53,24 @@ cd "$RELEASE_DIR"
 
 # --- .env oluştur ---
 if [[ ! -f .env.v1 ]]; then
-  cp .env.v1.example .env.v1 2>/dev/null || err ".env.v1.example bulunamadı"
   PG_PASS=$(python3 -c "import secrets; print(secrets.token_hex(16))")
   SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
   OTP_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-  sed -i "s/POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${PG_PASS}/" .env.v1
-  sed -i "s|DATABASE_URL=.*|DATABASE_URL=postgresql+asyncpg://neosecra:${PG_PASS}@postgres:5432/neosecra_assessment|" .env.v1
-  sed -i "s/SECRET_KEY=.*/SECRET_KEY=${SECRET_KEY}/" .env.v1
-  sed -i "s/OTP_SECRET=.*/OTP_SECRET=${OTP_SECRET}/" .env.v1
+
+  cat > .env.v1 << EOF
+POSTGRES_USER=neosecra
+POSTGRES_PASSWORD=${PG_PASS}
+POSTGRES_DB=neosecra_assessment
+POSTGRES_PORT=25433
+REDIS_PORT=25639
+BACKEND_PORT=25800
+FRONTEND_PORT=25300
+NEOSECRA_EDITION=security_health
+VITE_NEOSECRA_EDITION=security-health
+DATABASE_URL=postgresql+asyncpg://neosecra:${PG_PASS}@postgres:5432/neosecra_assessment
+SECRET_KEY=${SECRET_KEY}
+OTP_SECRET=${OTP_SECRET}
+EOF
 fi
 
 # --- CLI ---
