@@ -106,7 +106,7 @@ if [[ ! -f .env.v1 ]]; then
     "REDIS_URL=redis://redis:6379/0" \
     "SECRET_KEY=${SECRET_KEY_VALUE}" \
     "OTP_SECRET=${OTP_SECRET_VALUE}" \
-    "FIRST_ADMIN_EMAIL=admin@neosecra.local" \
+    "FIRST_ADMIN_EMAIL=admin@neosecra.io" \
     "FIRST_ADMIN_PASSWORD=${FIRST_ADMIN_PASSWORD_VALUE}" \
     "ADMIN_RECOVERY_KEY=${ADMIN_RECOVERY_KEY_VALUE}" \
     "POSTGRES_PORT=25433" \
@@ -167,7 +167,9 @@ fi
 
 # --- CLI ---
 mkdir -p /usr/local/bin
+chmod 0755 "${RELEASE_DIR}/bin/neosecra"
 ln -sf "${RELEASE_DIR}/bin/neosecra" /usr/local/bin/neosecra
+chmod 0755 /usr/local/bin/neosecra 2>/dev/null || true
 
 # --- Kurulum ---
 export HOME=/root

@@ -196,6 +196,14 @@ ensure_env_secret() {
   fi
 }
 
+ensure_initial_admin_email() {
+  local current
+  current="$(env_value FIRST_ADMIN_EMAIL "")"
+  if [[ -z "$current" ]] || is_placeholder_value "$current" || [[ "$current" == "admin@neosecra.local" ]]; then
+    upsert_env_value FIRST_ADMIN_EMAIL "admin@neosecra.io"
+  fi
+}
+
 initialize_env_file() {
   local version frontend_port postgres_password backup_path
   version="$(read_version)"
@@ -226,7 +234,7 @@ initialize_env_file() {
   ensure_env_value REDIS_URL "redis://redis:6379/0"
   ensure_env_secret SECRET_KEY 48
   ensure_env_secret OTP_SECRET 48
-  ensure_env_value FIRST_ADMIN_EMAIL "admin@neosecra.local"
+  ensure_initial_admin_email
   ensure_env_admin_password
   ensure_env_secret ADMIN_RECOVERY_KEY 32
 
@@ -394,6 +402,115 @@ CREATE INDEX IF NOT EXISTS ix_audit_logs_user_id ON audit_logs(user_id);
 CREATE INDEX IF NOT EXISTS ix_audit_logs_created_at ON audit_logs(created_at);
 SQL
   ok "Assessment schema compatibility verified"
+}
+
+sync_initial_admin_credentials() {
+  log "Synchronizing initial admin credential with database..."
+  run_compose run --rm --no-deps -T backend python - <<'PY' >/dev/null
+import asyncio
+import sys
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import select, update
+
+from app.config import settings
+from app.core.auth.jwt import hash_password, verify_password
+from app.database import async_session_factory
+from app.shared.models import AuditLog, User, UserSession
+
+
+ADMIN_ROLES = {"admin", "super_admin", "mssp_admin"}
+
+
+async def main() -> int:
+    email = (settings.first_admin_email or "").strip().lower()
+    password = settings.first_admin_password or ""
+    if not email or not password:
+        print("initial admin email/password is not configured", file=sys.stderr)
+        return 2
+
+    async with async_session_factory() as session:
+        result = await session.execute(select(User).where(User.email == email))
+        user = result.scalar_one_or_none()
+        created = False
+        password_changed = False
+
+        if user is None:
+            user = User(
+                id=uuid.uuid4(),
+                email=email,
+                hashed_password=hash_password(password),
+                full_name="System Admin",
+                role="admin",
+                is_active=True,
+                force_password_change=True,
+            )
+            session.add(user)
+            await session.flush()
+            created = True
+            password_changed = True
+        else:
+            try:
+                password_matches = verify_password(password, user.hashed_password)
+            except Exception:
+                password_matches = False
+            if not password_matches:
+                user.hashed_password = hash_password(password)
+                password_changed = True
+            if user.role not in ADMIN_ROLES:
+                user.role = "admin"
+            user.is_active = True
+            user.force_password_change = True
+
+        if password_changed:
+            await session.execute(
+                update(UserSession)
+                .where(UserSession.user_id == user.id, UserSession.is_revoked == False)
+                .values(
+                    is_revoked=True,
+                    revoked_at=datetime.now(timezone.utc),
+                    revoke_reason="installer_initial_admin_sync",
+                )
+            )
+
+        session.add(
+            AuditLog(
+                id=uuid.uuid4(),
+                user_id=user.id,
+                action="admin.initial_credential_sync",
+                resource_type="user",
+                resource_id=str(user.id),
+                details={
+                    "email": email,
+                    "created": created,
+                    "password_changed": password_changed,
+                    "source": "installer",
+                },
+            )
+        )
+        await session.commit()
+    return 0
+
+
+raise SystemExit(asyncio.run(main()))
+PY
+  ok "Initial admin credential synchronized with database"
+}
+
+wait_frontend_http() {
+  local timeout="${1:-120}" frontend_port code
+  frontend_port="$(env_value FRONTEND_PORT 23300)"
+  log "Waiting for frontend HTTP on 127.0.0.1:${frontend_port} (timeout ${timeout}s)..."
+  for _ in $(seq 1 "$timeout"); do
+    code="$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${frontend_port}" 2>/dev/null || true)"
+    if [[ "$code" =~ ^(200|301|302|304)$ ]]; then
+      ok "Frontend responds (HTTP ${code})"
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 reconcile_postgres_password() {

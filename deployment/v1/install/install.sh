@@ -113,6 +113,7 @@ for _ in 1 2 3; do
 done
 [[ $MIGRATE_OK -eq 1 ]] || die "Database migrations failed" 11
 ensure_assessment_schema_compatibility || die "Assessment schema compatibility repair failed" 11
+sync_initial_admin_credentials || die "Initial admin credential synchronization failed" 11
 
 # --- Start application services ---
 INSTALL_PHASE="application"
@@ -123,7 +124,8 @@ if ! run_compose up -d --force-recreate backend worker frontend; then
 fi
 wait_service_healthy backend 120
 wait_service_healthy worker 60
-wait_service_healthy frontend 120
+wait_service_running frontend 60
+wait_frontend_http 120 || { print_service_diagnostics frontend; die "Frontend HTTP not reachable within 120s" 13; }
 
 # --- Health ---
 INSTALL_PHASE="verify"
