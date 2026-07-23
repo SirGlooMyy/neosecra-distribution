@@ -126,6 +126,8 @@ wait_service_healthy backend 120
 wait_service_healthy worker 60
 wait_service_running frontend 60
 wait_frontend_http 120 || { print_service_diagnostics frontend; die "Frontend HTTP not reachable within 120s" 13; }
+wait_frontend_api_proxy 120 || { print_service_diagnostics frontend backend; die "Frontend API proxy not reachable within 120s" 13; }
+verify_initial_admin_login_via_frontend || { print_service_diagnostics frontend backend; die "Initial admin login verification failed" 13; }
 
 # --- Health ---
 INSTALL_PHASE="verify"

@@ -475,6 +475,14 @@ async def main() -> int:
                 user.role = "admin"
             user.is_active = True
             user.force_password_change = True
+            if hasattr(user, "is_2fa_enabled"):
+                user.is_2fa_enabled = False
+            if hasattr(user, "require_2fa_setup"):
+                user.require_2fa_setup = False
+            if hasattr(user, "totp_secret"):
+                user.totp_secret = None
+            if hasattr(user, "backup_codes"):
+                user.backup_codes = None
 
         if password_changed:
             await session.execute(
@@ -525,6 +533,71 @@ wait_frontend_http() {
     sleep 1
   done
   return 1
+}
+
+wait_frontend_api_proxy() {
+  local timeout="${1:-120}" frontend_port code
+  frontend_port="$(env_value FRONTEND_PORT 23300)"
+  log "Waiting for frontend API proxy on 127.0.0.1:${frontend_port} (timeout ${timeout}s)..."
+  for _ in $(seq 1 "$timeout"); do
+    code="$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${frontend_port}/api/v1/health" 2>/dev/null || true)"
+    if [[ "$code" == "200" ]]; then
+      ok "Frontend API proxy responds (HTTP 200)"
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+verify_initial_admin_login_via_frontend() {
+  log "Verifying initial admin login through frontend API proxy..."
+  run_compose run --rm --no-deps -T backend python - <<'PY' >/dev/null
+import json
+import sys
+import urllib.error
+import urllib.request
+
+from app.config import settings
+
+payload = json.dumps({
+    "email": settings.first_admin_email,
+    "password": settings.first_admin_password,
+}).encode()
+
+request = urllib.request.Request(
+    "http://frontend/api/v1/auth/login",
+    data=payload,
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+
+try:
+    with urllib.request.urlopen(request, timeout=10) as response:
+        status = response.getcode()
+        body = response.read(8192)
+except urllib.error.HTTPError as exc:
+    print(f"initial admin login returned HTTP {exc.code}", file=sys.stderr)
+    sys.exit(1)
+except Exception as exc:
+    print(f"initial admin login request failed: {type(exc).__name__}", file=sys.stderr)
+    sys.exit(1)
+
+if status != 200:
+    print(f"initial admin login returned HTTP {status}", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    data = json.loads(body.decode())
+except Exception:
+    print("initial admin login returned invalid JSON", file=sys.stderr)
+    sys.exit(1)
+
+if not data.get("access_token"):
+    print("initial admin login did not return an access token", file=sys.stderr)
+    sys.exit(1)
+PY
+  ok "Initial admin login verified through frontend API proxy"
 }
 
 reconcile_postgres_password() {

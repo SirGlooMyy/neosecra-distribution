@@ -200,6 +200,8 @@ if [[ -n "$INSTALLED_VERSION" ]]; then
       wait_service_running worker 60
       wait_service_running frontend 60
       wait_frontend_http 120 || { print_service_diagnostics frontend; die "Frontend HTTP not reachable within 120s" 13; }
+      wait_frontend_api_proxy 120 || { print_service_diagnostics frontend backend; die "Frontend API proxy not reachable within 120s" 13; }
+      verify_initial_admin_login_via_frontend || { print_service_diagnostics frontend backend; die "Initial admin login verification failed" 13; }
       bash "${RELEASE_DIR}/install/postflight.sh" --timeout 120
     else
       warn "Stack is not running; database credential sync skipped"

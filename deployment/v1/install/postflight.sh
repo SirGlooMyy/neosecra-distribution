@@ -84,6 +84,20 @@ for _ in $(seq 1 "$TIMEOUT"); do
 done
 [[ "$FRONTEND_OK" -eq 1 ]] || chk_fail "Frontend HTTP ${f_code:-?}"
 
+# --- Frontend API proxy ---
+FRONTEND_API_OK=0
+fp_code="000"
+for _ in $(seq 1 "$TIMEOUT"); do
+  fp_code=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${FRONTEND_PORT}/api/v1/health" 2>/dev/null || true)
+  if [[ "$fp_code" == "200" ]]; then
+    chk_pass "Frontend API proxy responds (HTTP 200)"
+    FRONTEND_API_OK=1
+    break
+  fi
+  sleep 1
+done
+[[ "$FRONTEND_API_OK" -eq 1 ]] || chk_fail "Frontend API proxy HTTP ${fp_code:-?}"
+
 # --- API endpoints ---
 if [[ $HEALTHY -eq 1 ]]; then
   for ep in "/api/v1/health" "/api/v1/auth/login" "/api/v1/auth/me" "/api/v1/customers" \
