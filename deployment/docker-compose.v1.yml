@@ -15,7 +15,9 @@ services:
       - "${POSTGRES_PORT:-25433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-neosecra} -d ${POSTGRES_DB:-neosecra_assessment}"]
-      interval: 5s; timeout: 5s; retries: 5
+      interval: 5s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   redis:
@@ -24,7 +26,9 @@ services:
       - "${REDIS_PORT:-25639}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s; timeout: 5s; retries: 5
+      interval: 5s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   backend:
@@ -40,8 +44,10 @@ services:
     ports:
       - "${BACKEND_PORT:-25800}:8000"
     depends_on:
-      postgres: condition: service_healthy
-      redis: condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     restart: unless-stopped
 
@@ -56,8 +62,10 @@ services:
       - reports:/app/reports
       - backups:/app/backups
     depends_on:
-      postgres: condition: service_healthy
-      redis: condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     command: celery -A worker.celery_app worker --loglevel=info --concurrency=2
     restart: unless-stopped
 
