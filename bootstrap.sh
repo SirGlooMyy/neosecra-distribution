@@ -2,7 +2,8 @@
 # NeoSecra Assessment — tek komut kurulum
 set -Eeuo pipefail
 
-VERSION="1.0.0"
+VERSION="1.0.1"
+FRONTEND_IMAGE_VERSION="1.0.0"
 DISTRIBUTION_REF="${NEOSECRA_DISTRIBUTION_REF:-fix/assessment-live-installer}"
 DISTRIBUTION_ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-https://github.com/SirGlooMyy/neosecra-distribution/archive/refs/heads/${DISTRIBUTION_REF}.tar.gz}"
 
@@ -47,6 +48,10 @@ random_admin_password() {
 # --- Script'leri kalıcı dizine kopyala ---
 BASE="/opt/neosecra/assessment"
 RELEASE_DIR="${BASE}/releases/${VERSION}"
+CURRENT_RELEASE_DIR=""
+if [[ -L "${BASE}/current" ]]; then
+  CURRENT_RELEASE_DIR="$(readlink -f "${BASE}/current" 2>/dev/null || true)"
+fi
 
 INSTALLED_VERSION=""
 if [[ -f "${BASE}/state/installed-version" ]]; then
@@ -71,10 +76,14 @@ if [[ -d "$RELEASE_DIR" ]]; then
 fi
 mkdir -p "$RELEASE_DIR"
 rsync -a deployment/ "$RELEASE_DIR/" 2>/dev/null || cp -r deployment/* "$RELEASE_DIR/" 2>/dev/null || err "Script dosyaları kopyalanamadı"
-ln -sfn "$RELEASE_DIR" "${BASE}/current"
 info "Temporary distribution archive left for audit: ${TMP_DIR}"
 
 cd "$RELEASE_DIR"
+
+if [[ -n "$INSTALLED_VERSION" && -n "$CURRENT_RELEASE_DIR" && "$CURRENT_RELEASE_DIR" != "$RELEASE_DIR" && -f "${CURRENT_RELEASE_DIR}/.env.v1" && ! -f .env.v1 ]]; then
+  cp -a "${CURRENT_RELEASE_DIR}/.env.v1" .env.v1
+  chmod 0600 .env.v1 2>/dev/null || true
+fi
 
 # --- .env oluştur ---
 if [[ ! -f .env.v1 ]]; then
@@ -95,7 +104,7 @@ if [[ ! -f .env.v1 ]]; then
     "REDIS_IMAGE=redis:7.4.9-alpine3.21" \
     "BACKEND_IMAGE=ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${VERSION}" \
     "WORKER_IMAGE=ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${VERSION}" \
-    "FRONTEND_IMAGE=ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:${VERSION}" \
+    "FRONTEND_IMAGE=ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:${FRONTEND_IMAGE_VERSION}" \
     "OPENVAS_IMAGE=immauss/openvas:26.07.12.01" \
     "POSTGRES_USER=neosecra" \
     "POSTGRES_PASSWORD=${PG_PASS}" \
@@ -170,6 +179,14 @@ ln -sf "${RELEASE_DIR}/bin/neosecra" /usr/local/bin/neosecra
 chmod 0755 /usr/local/bin/neosecra 2>/dev/null || true
 
 if [[ -n "$INSTALLED_VERSION" ]]; then
+  if [[ "$INSTALLED_VERSION" != "$VERSION" ]]; then
+    info "Güncelleme uygulanıyor: v${INSTALLED_VERSION} -> v${VERSION}"
+    export HOME=/root
+    bash "${RELEASE_DIR}/upgrade/upgrade.sh" "$VERSION"
+    info "NeoSecra Assessment v${VERSION} güncellemesi tamamlandı"
+    exit 0
+  fi
+
   info "Zaten kurulu: v${INSTALLED_VERSION}. Release ve CLI onarımı uygulanıyor..."
   export HOME=/root
   (
@@ -207,6 +224,7 @@ if [[ -n "$INSTALLED_VERSION" ]]; then
       warn "Stack is not running; database credential sync skipped"
     fi
   )
+  ln -sfn "$RELEASE_DIR" "${BASE}/current"
   info "NeoSecra Assessment v${INSTALLED_VERSION} release/CLI onarımı tamamlandı"
   exit 0
 fi

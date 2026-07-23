@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Release manifest validation helpers.
 # Source after common.sh
+set -Euo pipefail
 
 # Validate product and edition from manifest
 check_product_identity() {
@@ -20,6 +21,20 @@ check_product_identity() {
 manifest_field() {
   local field="$1" manifest="${2:-$MANIFEST_FILE}"
   grep -E "^${field}:" "$manifest" 2>/dev/null | awk '{print $2}' | tr -d '"' || echo ""
+}
+
+manifest_image_ref() {
+  local service="$1" manifest="${2:-$MANIFEST_FILE}"
+  awk -v service="$service" '
+    $1 == "-" && $2 == "name:" {
+      in_service = ($3 == service)
+      next
+    }
+    in_service && $1 == "ref:" {
+      print $2
+      exit
+    }
+  ' "$manifest" 2>/dev/null
 }
 
 # Validate checksum of a file against a checksum file

@@ -194,6 +194,33 @@ ensure_env_value() {
   fi
 }
 
+release_image_ref() {
+  local service="$1" fallback="$2" ref=""
+  if declare -F manifest_image_ref >/dev/null 2>&1; then
+    ref="$(manifest_image_ref "$service" 2>/dev/null || true)"
+  fi
+  printf '%s' "${ref:-$fallback}"
+}
+
+apply_release_image_refs() {
+  local version backend_image worker_image frontend_image
+  version="${1:-$(read_version)}"
+  if [[ "$version" == "$(read_version)" ]]; then
+    backend_image="$(release_image_ref backend "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${version}")"
+    worker_image="$(release_image_ref worker "$backend_image")"
+    frontend_image="$(release_image_ref frontend "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:${version}")"
+  else
+    backend_image="ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${version}"
+    worker_image="$backend_image"
+    frontend_image="$(env_value FRONTEND_IMAGE "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:${version}")"
+  fi
+
+  upsert_env_value NEOSECRA_VERSION "$version"
+  upsert_env_value BACKEND_IMAGE "$backend_image"
+  upsert_env_value WORKER_IMAGE "$worker_image"
+  upsert_env_value FRONTEND_IMAGE "$frontend_image"
+}
+
 ensure_env_secret() {
   local key="$1" bytes="$2" current
   current="$(env_value "$key" "")"
@@ -226,12 +253,9 @@ initialize_env_file() {
     chmod 0600 "$ENV_FILE"
   fi
 
-  ensure_env_value NEOSECRA_VERSION "$version"
   ensure_env_value POSTGRES_IMAGE "postgres:15.18-alpine3.24"
   ensure_env_value REDIS_IMAGE "redis:7.4.9-alpine3.21"
-  ensure_env_value BACKEND_IMAGE "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${version}"
-  ensure_env_value WORKER_IMAGE "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${version}"
-  ensure_env_value FRONTEND_IMAGE "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:${version}"
+  apply_release_image_refs
   ensure_env_value OPENVAS_IMAGE "immauss/openvas:26.07.12.01"
 
   ensure_env_value POSTGRES_USER "neosecra"

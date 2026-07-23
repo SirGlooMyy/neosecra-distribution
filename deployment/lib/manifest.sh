@@ -23,6 +23,20 @@ manifest_field() {
   grep -E "^${field}:" "$manifest" 2>/dev/null | awk '{print $2}' | tr -d '"' || echo ""
 }
 
+manifest_image_ref() {
+  local service="$1" manifest="${2:-$MANIFEST_FILE}"
+  awk -v service="$service" '
+    $1 == "-" && $2 == "name:" {
+      in_service = ($3 == service)
+      next
+    }
+    in_service && $1 == "ref:" {
+      print $2
+      exit
+    }
+  ' "$manifest" 2>/dev/null
+}
+
 # Validate checksum of a file against a checksum file
 verify_checksum() {
   local file="$1" checksum_file="${2:-}"

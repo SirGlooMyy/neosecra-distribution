@@ -8,7 +8,7 @@
 
 product: neosecra-security-health
 edition: security-health
-version: 1.0.0
+version: 1.0.1
 channel: stable
 
 # Git commit — stamped at release time by CI.
@@ -31,9 +31,9 @@ images:
   - name: redis
     ref: redis:7.4.9-alpine3.21
   - name: backend
-    ref: ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.0
+    ref: ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.1
   - name: worker
-    ref: ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.0
+    ref: ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.1
   - name: frontend
     ref: ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.0.0
   - name: openvas
