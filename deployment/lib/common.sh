@@ -114,6 +114,13 @@ env_value() {
   echo "${val:-$default}"
 }
 
+env_file_value() {
+  local file="$1" key="$2" default="${3:-}" val
+  [[ -f "$file" ]] || { echo "$default"; return; }
+  val=$(grep -E "^${key}=" "$file" 2>/dev/null | tail -n1 | cut -d= -f2- || true)
+  echo "${val:-$default}"
+}
+
 random_hex() {
   local bytes="$1"
   if command -v openssl >/dev/null 2>&1; then
@@ -233,6 +240,53 @@ initialize_env_file() {
   ensure_env_value OPENVAS_KNOWN_HOSTS ""
 
   ok ".env.v1 initialized"
+}
+
+postgres_auth_succeeds() {
+  local password="$1" pguser pgdb
+  pguser="$(env_value POSTGRES_USER neosecra)"
+  pgdb="$(env_value POSTGRES_DB neosecra_assessment)"
+  [[ -n "$password" ]] || return 1
+
+  printf '%s\n' "$password" | run_compose exec -T postgres sh -c \
+    'IFS= read -r PGPASSWORD; export PGPASSWORD; psql -U "$1" -d "$2" -tAc "select 1" >/dev/null' \
+    sh "$pguser" "$pgdb" >/dev/null 2>&1
+}
+
+reconcile_postgres_password() {
+  local current candidate backup backup_url pguser pgdb found=0
+  current="$(env_value POSTGRES_PASSWORD "")"
+
+  if postgres_auth_succeeds "$current"; then
+    ok "PostgreSQL authentication verified"
+    return 0
+  fi
+
+  warn "PostgreSQL rejected the current .env.v1 password; checking local .env.v1 backups"
+  shopt -s nullglob
+  for backup in "$ENV_FILE".backup-*; do
+    candidate="$(env_file_value "$backup" POSTGRES_PASSWORD "")"
+    [[ -n "$candidate" ]] || continue
+
+    if postgres_auth_succeeds "$candidate"; then
+      upsert_env_value POSTGRES_PASSWORD "$candidate"
+      backup_url="$(env_file_value "$backup" DATABASE_URL "")"
+      if [[ -n "$backup_url" ]]; then
+        upsert_env_value DATABASE_URL "$backup_url"
+      else
+        pguser="$(env_value POSTGRES_USER neosecra)"
+        pgdb="$(env_value POSTGRES_DB neosecra_assessment)"
+        upsert_env_value DATABASE_URL "postgresql+asyncpg://${pguser}:${candidate}@postgres:5432/${pgdb}"
+      fi
+      ok "PostgreSQL password reconciled from local .env.v1 backup"
+      found=1
+      break
+    fi
+  done
+  shopt -u nullglob
+
+  [[ "$found" -eq 1 ]] && return 0
+  die "PostgreSQL password mismatch with existing volume; no matching .env.v1 backup found. Refusing to reset persistent data." 12
 }
 
 warn_if_placeholders() {

@@ -89,6 +89,7 @@ log "Starting PostgreSQL and Redis..."
 run_compose up -d postgres redis
 wait_service_healthy postgres 90
 wait_service_healthy redis 90
+reconcile_postgres_password
 
 # --- Verify database readiness ---
 DB_OK=0
