@@ -253,11 +253,19 @@ postgres_auth_succeeds() {
     sh "$pguser" "$pgdb" >/dev/null 2>&1
 }
 
+sync_database_url_password() {
+  local password="$1" pguser pgdb
+  pguser="$(env_value POSTGRES_USER neosecra)"
+  pgdb="$(env_value POSTGRES_DB neosecra_assessment)"
+  upsert_env_value DATABASE_URL "postgresql+asyncpg://${pguser}:${password}@postgres:5432/${pgdb}"
+}
+
 reconcile_postgres_password() {
-  local current candidate backup backup_url pguser pgdb found=0
+  local current candidate backup found=0
   current="$(env_value POSTGRES_PASSWORD "")"
 
   if postgres_auth_succeeds "$current"; then
+    sync_database_url_password "$current"
     ok "PostgreSQL authentication verified"
     return 0
   fi
@@ -270,14 +278,7 @@ reconcile_postgres_password() {
 
     if postgres_auth_succeeds "$candidate"; then
       upsert_env_value POSTGRES_PASSWORD "$candidate"
-      backup_url="$(env_file_value "$backup" DATABASE_URL "")"
-      if [[ -n "$backup_url" ]]; then
-        upsert_env_value DATABASE_URL "$backup_url"
-      else
-        pguser="$(env_value POSTGRES_USER neosecra)"
-        pgdb="$(env_value POSTGRES_DB neosecra_assessment)"
-        upsert_env_value DATABASE_URL "postgresql+asyncpg://${pguser}:${candidate}@postgres:5432/${pgdb}"
-      fi
+      sync_database_url_password "$candidate"
       ok "PostgreSQL password reconciled from local .env.v1 backup"
       found=1
       break
