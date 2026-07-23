@@ -39,12 +39,13 @@ fi
 TMP_DIR=$(mktemp -d)
 cd "$TMP_DIR"
 info "Kurulum paketi indiriliyor..."
-curl -sL "https://github.com/SirGlooMyy/neosecra-distribution/archive/main.tar.gz" | tar xz
+curl -sL -o dist.tar.gz "https://github.com/SirGlooMyy/neosecra-distribution/archive/main.tar.gz"
+tar xzf dist.tar.gz
 cd neosecra-distribution-main
 
 # Kalıcı dizine kopyala
 mkdir -p "$RELEASE_DIR"
-cp -r deployment/v1/* "$RELEASE_DIR/"
+rsync -a deployment/ "$RELEASE_DIR/" 2>/dev/null || cp -r deployment/* "$RELEASE_DIR/" 2>/dev/null || err "Script dosyaları kopyalanamadı"
 ln -sfn "$RELEASE_DIR" "${BASE}/current"
 rm -rf "$TMP_DIR"
 
@@ -52,7 +53,7 @@ cd "$RELEASE_DIR"
 
 # --- .env oluştur ---
 if [[ ! -f .env.v1 ]]; then
-  cp .env.v1.example .env.v1
+  cp .env.v1.example .env.v1 2>/dev/null || err ".env.v1.example bulunamadı"
   PG_PASS=$(python3 -c "import secrets; print(secrets.token_hex(16))")
   SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
   OTP_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
