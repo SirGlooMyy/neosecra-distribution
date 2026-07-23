@@ -71,8 +71,18 @@ run_compose ps --status running worker 2>/dev/null | grep -q worker && \
 
 # --- Frontend ---
 FRONTEND_PORT="$(env_value FRONTEND_PORT 23300)"
-f_code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${FRONTEND_PORT}" 2>/dev/null || true)
-[[ "$f_code" =~ ^(200|304|301|302)$ ]] && chk_pass "Frontend responds (HTTP ${f_code})" || chk_fail "Frontend HTTP ${f_code:-?}"
+FRONTEND_OK=0
+f_code="000"
+for _ in $(seq 1 "$TIMEOUT"); do
+  f_code=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${FRONTEND_PORT}" 2>/dev/null || true)
+  if [[ "$f_code" =~ ^(200|304|301|302)$ ]]; then
+    chk_pass "Frontend responds (HTTP ${f_code})"
+    FRONTEND_OK=1
+    break
+  fi
+  sleep 1
+done
+[[ "$FRONTEND_OK" -eq 1 ]] || chk_fail "Frontend HTTP ${f_code:-?}"
 
 # --- API endpoints ---
 if [[ $HEALTHY -eq 1 ]]; then

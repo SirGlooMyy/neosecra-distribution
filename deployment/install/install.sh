@@ -121,6 +121,9 @@ if ! run_compose up -d --force-recreate backend worker frontend; then
   print_service_diagnostics backend worker frontend
   die "Application services failed to start" 13
 fi
+wait_service_healthy backend 120
+wait_service_healthy worker 60
+wait_service_healthy frontend 120
 
 # --- Health ---
 INSTALL_PHASE="verify"
