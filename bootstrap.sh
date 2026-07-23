@@ -3,6 +3,8 @@
 set -Eeuo pipefail
 
 VERSION="1.0.0"
+DISTRIBUTION_REF="${NEOSECRA_DISTRIBUTION_REF:-fix/assessment-live-installer}"
+DISTRIBUTION_ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-https://github.com/SirGlooMyy/neosecra-distribution/archive/refs/heads/${DISTRIBUTION_REF}.tar.gz}"
 
 RED='\033[31m'; GRN='\033[32m'; RST='\033[0m'
 info() { echo -e "${GRN}[neosecra]${RST} $*"; }
@@ -41,10 +43,12 @@ fi
 
 TMP_DIR=$(mktemp -d)
 cd "$TMP_DIR"
-info "Kurulum paketi indiriliyor..."
-curl -sL -o dist.tar.gz "https://github.com/SirGlooMyy/neosecra-distribution/archive/main.tar.gz"
+info "Kurulum paketi indiriliyor: ${DISTRIBUTION_REF}"
+curl -fsSL -o dist.tar.gz "$DISTRIBUTION_ARCHIVE_URL"
 tar xzf dist.tar.gz
-cd neosecra-distribution-main
+DIST_DIR="$(find . -mindepth 1 -maxdepth 1 -type d -name 'neosecra-distribution-*' | head -n1)"
+[[ -n "$DIST_DIR" && -d "$DIST_DIR" ]] || err "Kurulum paketi açılırken dağıtım dizini bulunamadı"
+cd "$DIST_DIR"
 
 # Kalıcı dizine kopyala
 if [[ -d "$RELEASE_DIR" ]]; then

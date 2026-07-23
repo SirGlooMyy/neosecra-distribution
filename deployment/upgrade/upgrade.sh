@@ -36,6 +36,10 @@ log "Upgrade: ${CURRENT} -> ${TARGET}"
 
 acquire_lock
 
+# --- Environment initialization ---
+initialize_env_file
+validate_env_file || die ".env.v1 validation failed" 2
+
 # --- Preflight ---
 bash "${V1_ROOT}/install/preflight.sh" || die "Preflight failed" 10
 ok "Preflight passed"

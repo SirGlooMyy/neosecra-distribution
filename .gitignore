@@ -1,3 +1,6 @@
 deployment/.env.v1
+deployment/.env.v1.backup-*
 deployment/v1/.env.v1
+deployment/v1/.env.v1.backup-*
 .env.v1
+.env.v1.backup-*

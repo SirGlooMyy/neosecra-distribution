@@ -53,16 +53,17 @@ acquire_lock
 write_install_state "$INSTALL_VERSION" "$INSTALL_PHASE" "started"
 trap 'rc=$?; if [[ $rc -ne 0 ]]; then write_install_state "$INSTALL_VERSION" "$INSTALL_PHASE" "failed"; fi; release_lock' EXIT
 
+# --- Environment initialization ---
+INSTALL_PHASE="env-init"
+initialize_env_file
+validate_env_file || die ".env.v1 validation failed" 2
+
 # --- Preflight ---
 INSTALL_PHASE="preflight"
 bash "${V1_ROOT}/install/preflight.sh" || die "Preflight failed" 10
 ok "Preflight passed"
 
 [[ $DRY_RUN -eq 1 ]] && { ok "Dry-run complete"; exit 0; }
-
-# --- Check .env ---
-[[ -f "$ENV_FILE" ]] || die ".env.v1 missing — create from .env.v1.example" 2
-validate_env_file || die ".env.v1 validation failed" 2
 
 # --- Create install directories ---
 INSTALL_PHASE="prepare"

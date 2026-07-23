@@ -114,6 +114,127 @@ env_value() {
   echo "${val:-$default}"
 }
 
+random_hex() {
+  local bytes="$1"
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex "$bytes"
+  else
+    python3 -c "import secrets; print(secrets.token_hex(${bytes}))"
+  fi
+}
+
+upsert_env_value() {
+  local key="$1" value="$2" tmp
+  tmp="$(mktemp)"
+  awk -v k="$key" -v v="$value" '
+    BEGIN { done=0 }
+    $0 ~ "^" k "=" { print k "=" v; done=1; next }
+    { print }
+    END { if (!done) print k "=" v }
+  ' "$ENV_FILE" > "$tmp"
+  mv "$tmp" "$ENV_FILE"
+  chmod 0600 "$ENV_FILE"
+}
+
+ensure_env_value() {
+  local key="$1" value="$2" current
+  current="$(env_value "$key" "")"
+  if [[ -z "$current" ]] || is_placeholder_value "$current"; then
+    upsert_env_value "$key" "$value"
+  fi
+}
+
+ensure_env_secret() {
+  local key="$1" bytes="$2" current
+  current="$(env_value "$key" "")"
+  if [[ -z "$current" ]] || is_placeholder_value "$current"; then
+    upsert_env_value "$key" "$(random_hex "$bytes")"
+  fi
+}
+
+initialize_env_file() {
+  local version frontend_port postgres_password backup_path
+  version="$(read_version)"
+
+  umask 077
+  if [[ -f "$ENV_FILE" ]]; then
+    backup_path="${ENV_FILE}.backup-$(date -u +%Y%m%dT%H%M%SZ)"
+    cp -a "$ENV_FILE" "$backup_path"
+    chmod 0600 "$backup_path" 2>/dev/null || true
+    log ".env.v1 backup created: ${backup_path}"
+  else
+    mkdir -p "$(dirname "$ENV_FILE")"
+    : > "$ENV_FILE"
+    chmod 0600 "$ENV_FILE"
+  fi
+
+  ensure_env_value NEOSECRA_VERSION "$version"
+  ensure_env_value POSTGRES_IMAGE "postgres:15.18-alpine3.24"
+  ensure_env_value REDIS_IMAGE "redis:7.4.9-alpine3.21"
+  ensure_env_value BACKEND_IMAGE "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${version}"
+  ensure_env_value WORKER_IMAGE "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${version}"
+  ensure_env_value FRONTEND_IMAGE "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:${version}"
+  ensure_env_value OPENVAS_IMAGE "immauss/openvas:26.07.12.01"
+
+  ensure_env_value POSTGRES_USER "neosecra"
+  ensure_env_secret POSTGRES_PASSWORD 24
+  ensure_env_value POSTGRES_DB "neosecra_assessment"
+  ensure_env_value REDIS_URL "redis://redis:6379/0"
+  ensure_env_secret SECRET_KEY 48
+  ensure_env_secret OTP_SECRET 48
+  ensure_env_value FIRST_ADMIN_EMAIL "admin@neosecra.local"
+  ensure_env_secret FIRST_ADMIN_PASSWORD 24
+  ensure_env_secret ADMIN_RECOVERY_KEY 32
+
+  ensure_env_value POSTGRES_PORT "25433"
+  ensure_env_value REDIS_PORT "23639"
+  ensure_env_value BACKEND_PORT "23800"
+  ensure_env_value FRONTEND_PORT "23300"
+  ensure_env_value NEOSECRA_EDITION "security_health"
+  ensure_env_value VITE_NEOSECRA_EDITION "security-health"
+  ensure_env_value ENVIRONMENT "production"
+
+  postgres_password="$(env_value POSTGRES_PASSWORD "")"
+  ensure_env_value DATABASE_URL "postgresql+asyncpg://neosecra:${postgres_password}@postgres:5432/neosecra_assessment"
+  frontend_port="$(env_value FRONTEND_PORT "23300")"
+  ensure_env_value BACKEND_CORS_ORIGINS "http://localhost:${frontend_port},http://127.0.0.1:${frontend_port}"
+
+  ensure_env_value ALGORITHM "HS256"
+  ensure_env_value ACCESS_TOKEN_EXPIRE_MINUTES "15"
+  ensure_env_value REFRESH_TOKEN_EXPIRE_DAYS "7"
+  ensure_env_value UPLOAD_DIR "/app/uploads"
+  ensure_env_value REPORT_DIR "/app/reports"
+  ensure_env_value DATA_RETENTION_ENABLED "true"
+  ensure_env_value DATA_RETENTION_DAYS "365"
+  ensure_env_value DATA_RETENTION_FAILED_DAYS "90"
+
+  ensure_env_value NOTIFICATION_ENABLED "false"
+  ensure_env_value SMTP_PORT "587"
+  ensure_env_value SMTP_USE_TLS "true"
+  ensure_env_value SMTP_FROM_ADDRESS "noreply@neosecra.local"
+  ensure_env_value SMTP_FROM_NAME "NeoSecra Security Platform"
+  ensure_env_value PRODUCT_NAME "NeoSecra"
+  ensure_env_value PRODUCT_FULL_NAME "NeoSecra Assessment"
+  ensure_env_value DEEPSEEK_API_BASE_URL "https://api.deepseek.com/v1/chat/completions"
+  ensure_env_value DEEPSEEK_MODEL "deepseek-chat"
+
+  ensure_env_value OV_USER "admin"
+  ensure_env_secret OV_PASSWORD 24
+  ensure_env_value OPENVAS_SSH_PORT "23922"
+  ensure_env_value OPENVAS_GSAD_PORT "23992"
+  ensure_env_value OPENVAS_HOST "openvas"
+  ensure_env_value OPENVAS_PORT "22"
+  ensure_env_value OPENVAS_USER "gvm"
+  ensure_env_secret OPENVAS_PASS 24
+  ensure_env_value OPENVAS_GMP_USER "admin"
+  ensure_env_secret OPENVAS_GMP_PASS 24
+  ensure_env_value OPENVAS_CONFIG_ID "daba56c8-73ec-11df-a475-002264764cea"
+  ensure_env_value OPENVAS_MOCK "false"
+  ensure_env_value OPENVAS_KNOWN_HOSTS ""
+
+  ok ".env.v1 initialized"
+}
+
 warn_if_placeholders() {
   [[ -f "$ENV_FILE" ]] || return 0
   local key value failed=0
