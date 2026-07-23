@@ -1,26 +1,16 @@
 #!/usr/bin/env bash
 # NeoSecra Assessment — tek komut kurulum
-# Kullanım:
-#   curl -sL https://raw.githubusercontent.com/SirGlooMyy/neosecra-distribution/main/bootstrap.sh | sudo bash
-#
-# Gerekli environment değişkenleri (admin tarafından iletilir):
-#   NEOSECRA_GHCR_TOKEN veya GHCR_READ_TOKEN
-#   NEOSECRA_RELEASE_TOKEN veya RELEASE_READ_TOKEN
-#   NEOSECRA_VERSION (default: 1.0.0)
+# Kullanım: curl -sL https://raw.githubusercontent.com/SirGlooMyy/neosecra-distribution/main/bootstrap.sh | sudo bash
 set -Eeuo pipefail
 
-GHCR_TOKEN="${NEOSECRA_GHCR_TOKEN:-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}"
-RELEASE_TOKEN="${NEOSECRA_RELEASE_TOKEN:-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}"
-VERSION="${NEOSECRA_VERSION:-1.0.0}"
+GHCR_TOKEN="${NEOSECRA_GHCR_TOKEN:-}"
+VERSION="1.0.0"
 
-RED='\033[31m'; GRN='\033[32m'; YEL='\033[33m'; RST='\033[0m'
+RED='\033[31m'; GRN='\033[32m'; RST='\033[0m'
 info() { echo -e "${GRN}[neosecra]${RST} $*"; }
-warn() { echo -e "${YEL}[neosecra]${RST} $*"; }
 err()  { echo -e "${RED}[neosecra]${RST} $*"; exit 1; }
 
 [[ $EUID -eq 0 ]] || err "Root required: sudo bash bootstrap.sh"
-[[ -n "$GHCR_TOKEN" ]] || err "NEOSECRA_GHCR_TOKEN (GHCR_READ_TOKEN) required"
-[[ -n "$RELEASE_TOKEN" ]] || err "NEOSECRA_RELEASE_TOKEN (RELEASE_READ_TOKEN) required"
 
 info "NeoSecra Assessment v${VERSION} kurulum başlıyor..."
 
@@ -29,25 +19,17 @@ if ! command -v docker &>/dev/null; then
   info "Docker kuruluyor..."
   curl -fsSL https://get.docker.com | sh
 fi
-command -v docker >/dev/null 2>&1 || err "Docker kurulamadı"
 
-# --- Token'lar ---
-mkdir -p /etc/neosecra/credentials
-chmod 0700 /etc/neosecra/credentials
+# --- GHCR token ---
+mkdir -p /etc/neosecra/credentials && chmod 0700 /etc/neosecra/credentials
 echo -n "$GHCR_TOKEN" > /etc/neosecra/credentials/ghcr-read-token
 chmod 0600 /etc/neosecra/credentials/ghcr-read-token
-echo -n "$RELEASE_TOKEN" > /etc/neosecra/credentials/release-read-token
-chmod 0600 /etc/neosecra/credentials/release-read-token
-unset GHCR_TOKEN RELEASE_TOKEN
-info "Token'lar yerleştirildi"
+unset GHCR_TOKEN
 
-# --- Distribution repo'sunu indir (bootstrap ile aynı repo) ---
-TMP_DIR=$(mktemp -d)
-cd "$TMP_DIR"
+# --- Deployment scripts ---
+TMP_DIR=$(mktemp -d); cd "$TMP_DIR"
 info "Kurulum paketi indiriliyor..."
-curl -sfL "https://github.com/SirGlooMyy/neosecra-distribution/archive/main.tar.gz" -o dist.tar.gz 2>/dev/null || \
-  err "Dağıtım paketi indirilemedi"
-tar xzf dist.tar.gz
+curl -sL "https://github.com/SirGlooMyy/neosecra-distribution/archive/main.tar.gz" | tar xz
 cd neosecra-distribution-main/deployment/v1
 
 # --- .env oluştur ---
@@ -58,12 +40,11 @@ OTP_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 sed -i "s/POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${PG_PASS}/" .env.v1
 sed -i "s/SECRET_KEY=.*/SECRET_KEY=${SECRET_KEY}/" .env.v1
 sed -i "s/OTP_SECRET=.*/OTP_SECRET=${OTP_SECRET}/" .env.v1
-info "Güvenlik şifreleri oluşturuldu"
 
 # --- CLI ---
 ln -sf "$(pwd)/bin/neosecra" /usr/local/bin/neosecra
 
-# --- Kurulum ---
+# --- Kur ---
 neosecra install --confirm-backed-up
 
 # --- Temizlik ---
