@@ -41,17 +41,31 @@ chmod 0600 /etc/neosecra/credentials/release-read-token
 unset GHCR_TOKEN RELEASE_TOKEN
 info "Token'lar yerleştirildi"
 
-# --- Repo'yu indir (yalnız deployment) ---
+# --- Release bundle'indan kur ---
 TMP_DIR=$(mktemp -d)
 cd "$TMP_DIR"
 info "Release indiriliyor..."
-git clone --depth 1 --branch release/v1-security-health \
-  https://github.com/SirGlooMyy/neosecra-assessment.git . 2>/dev/null || \
-  git clone --depth 1 --branch release/v1-security-health \
-    https://x-access-token:$(cat /etc/neosecra/credentials/release-read-token)@github.com/SirGlooMyy/neosecra-assessment.git . 2>/dev/null || \
-  err "Repo indirilemedi"
 
-cd deployment/v1
+# GitHub Release asset'ini indir (online bundle)
+RELEASE_API="https://api.github.com/repos/SirGlooMyy/neosecra-assessment/releases/tags/security-health-v${VERSION}"
+BUNDLE_NAME="neosecra-security-health-${VERSION}-online.tar.gz"
+
+# Önce GHCR token ile dene, olmazsa token'sız public endpoint
+if ! curl -sfL -H "Authorization: token $(cat /etc/neosecra/credentials/ghcr-read-token)" \
+  "$RELEASE_API" 2>/dev/null | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for a in d.get('assets',[]):
+    if a['name']=='${BUNDLE_NAME}':
+        print(a['browser_download_url'])
+" 2>/dev/null | xargs -I{} curl -sfL -o bundle.tar.gz {} 2>/dev/null; then
+  # Public fallback
+  curl -sfL "https://github.com/SirGlooMyy/neosecra-assessment/releases/download/security-health-v${VERSION}/${BUNDLE_NAME}" -o bundle.tar.gz 2>/dev/null || \
+    err "Release bundle indirilemedi"
+fi
+
+tar xzf bundle.tar.gz
+cd neosecra-security-health-${VERSION}
 
 # --- .env oluştur ---
 cp .env.v1.example .env.v1
