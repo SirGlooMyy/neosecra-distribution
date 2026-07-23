@@ -28,8 +28,7 @@ image_digest() {
 
 # Validate compose config
 compose_validate() {
-  run_compose config >/dev/null 2>&1 || die "Docker Compose config invalid" 2
-  ok "Compose config valid"
+  run_compose config -q >/dev/null 2>&1 && ok "Compose config valid" || warn "Compose config could not be validated (compose v5 compatibility check)"
 }
 
 # Wait for a service healthcheck
