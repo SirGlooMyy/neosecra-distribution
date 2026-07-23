@@ -297,38 +297,42 @@ reset_postgres_password_to_env() {
     run_compose exec -T postgres psql -U "$pguser" -d "$pgdb" >/dev/null 2>&1
 }
 
+backend_database_url_succeeds() {
+  run_compose run --rm --no-deps -T backend python -c '
+import asyncio
+import os
+import sys
+
+import asyncpg
+
+url = os.environ.get("DATABASE_URL", "")
+if not url:
+    sys.exit(2)
+if url.startswith("postgresql+asyncpg://"):
+    url = "postgresql://" + url[len("postgresql+asyncpg://"):]
+
+async def main():
+    conn = await asyncpg.connect(url)
+    try:
+        await conn.fetchval("select 1")
+    finally:
+        await conn.close()
+
+asyncio.run(main())
+' >/dev/null 2>&1
+}
+
 reconcile_postgres_password() {
-  local current candidate backup found=0
+  local current
   current="$(env_value POSTGRES_PASSWORD "")"
+  [[ -n "$current" ]] || die "POSTGRES_PASSWORD is empty; cannot verify database authentication" 12
 
-  if postgres_auth_succeeds "$current"; then
-    sync_database_url_password "$current"
-    ok "PostgreSQL authentication verified"
-    return 0
-  fi
-
-  warn "PostgreSQL rejected the current .env.v1 password; checking local .env.v1 backups"
-  shopt -s nullglob
-  for backup in "$ENV_FILE".backup-*; do
-    candidate="$(env_file_value "$backup" POSTGRES_PASSWORD "")"
-    [[ -n "$candidate" ]] || continue
-
-    if postgres_auth_succeeds "$candidate"; then
-      upsert_env_value POSTGRES_PASSWORD "$candidate"
-      sync_database_url_password "$candidate"
-      ok "PostgreSQL password reconciled from local .env.v1 backup"
-      found=1
-      break
-    fi
-  done
-  shopt -u nullglob
-
-  [[ "$found" -eq 1 ]] && return 0
-  warn "No .env.v1 backup password matched; updating the existing PostgreSQL user password to match .env.v1"
+  warn "Synchronizing PostgreSQL user password with .env.v1 without resetting persistent data"
   reset_postgres_password_to_env || die "PostgreSQL password mismatch; failed to update existing database user password. Persistent data was not reset." 12
   postgres_auth_succeeds "$current" || die "PostgreSQL password update did not pass TCP authentication. Persistent data was not reset." 12
   sync_database_url_password "$current"
-  ok "PostgreSQL user password synchronized with .env.v1"
+  backend_database_url_succeeds || die "Backend DATABASE_URL authentication failed after PostgreSQL password synchronization. Persistent data was not reset." 12
+  ok "PostgreSQL and backend DATABASE_URL authentication verified"
 }
 
 warn_if_placeholders() {
