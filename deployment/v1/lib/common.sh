@@ -416,7 +416,7 @@ ensure_assessment_schema_compatibility() {
   pguser="$(env_value POSTGRES_USER neosecra)"
   pgdb="$(env_value POSTGRES_DB neosecra_assessment)"
 
-  run_compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$pguser" -d "$pgdb" >/dev/null <<'SQL'
+  if ! run_compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$pguser" -d "$pgdb" >/dev/null <<'SQL'
 CREATE TABLE IF NOT EXISTS audit_logs (
   id UUID PRIMARY KEY,
   user_id UUID NULL REFERENCES users(id),
@@ -431,12 +431,15 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS ix_audit_logs_user_id ON audit_logs(user_id);
 CREATE INDEX IF NOT EXISTS ix_audit_logs_created_at ON audit_logs(created_at);
 SQL
+  then
+    return 1
+  fi
   ok "Assessment schema compatibility verified"
 }
 
 sync_initial_admin_credentials() {
   log "Synchronizing initial admin credential with database..."
-  run_compose run --rm --no-deps -T backend python - <<'PY' >/dev/null
+  if ! run_compose run --rm --no-deps -T backend python - <<'PY' >/dev/null
 import asyncio
 import sys
 import uuid
@@ -541,6 +544,9 @@ async def main() -> int:
 
 raise SystemExit(asyncio.run(main()))
 PY
+  then
+    return 1
+  fi
   ok "Initial admin credential synchronized with database"
 }
 

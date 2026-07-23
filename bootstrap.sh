@@ -207,6 +207,10 @@ if [[ -n "$INSTALLED_VERSION" ]]; then
     fi
 
     if stack_is_running; then
+      run_compose up -d postgres redis
+      wait_service_healthy postgres 90
+      wait_service_healthy redis 90
+      reconcile_postgres_password
       ensure_assessment_schema_compatibility || die "Assessment schema compatibility repair failed" 11
       sync_initial_admin_credentials || die "Initial admin credential synchronization failed" 11
       if ! run_compose up -d --force-recreate backend worker frontend; then
