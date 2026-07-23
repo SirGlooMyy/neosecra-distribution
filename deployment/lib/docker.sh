@@ -5,11 +5,11 @@ set -Euo pipefail
 
 # Authenticate to GHCR without persisting or echoing the token.
 ghcr_login() {
-  [[ -t 0 ]] || die "GHCR login requires an interactive terminal for silent token entry" 4
+  [[ -r /dev/tty ]] || die "GHCR login requires an interactive terminal for silent token entry" 4
 
   local ghcr_token
-  read -rsp "GHCR read-only token: " ghcr_token
-  echo
+  read -rsp "GHCR read-only token: " ghcr_token </dev/tty
+  echo >/dev/tty
   [[ -n "$ghcr_token" ]] || die "GHCR token was empty" 4
   printf '%s' "$ghcr_token" | docker login "$GHCR_REGISTRY" \
     --username SirGlooMyy \
