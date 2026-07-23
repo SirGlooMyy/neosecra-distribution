@@ -162,6 +162,10 @@ ensure_env_admin_password() {
   local current
   current="$(env_value FIRST_ADMIN_PASSWORD "")"
   if ! admin_password_is_valid "$current"; then
+    if [[ -f "${STATE_DIR}/installed-version" && "${NEOSECRA_ROTATE_INITIAL_ADMIN:-0}" != "1" ]]; then
+      warn "FIRST_ADMIN_PASSWORD is empty/weak, but an installed system exists; preserving current credential. Set NEOSECRA_ROTATE_INITIAL_ADMIN=1 to rotate."
+      return 0
+    fi
     upsert_env_value FIRST_ADMIN_PASSWORD "$(random_admin_password)"
     warn "FIRST_ADMIN_PASSWORD was empty/invalid for production and was regenerated; credential file updated"
   fi
@@ -717,7 +721,14 @@ validate_env_file() {
 
   [[ "$(env_value NEOSECRA_EDITION "")" == "security_health" ]] || { err "NEOSECRA_EDITION must be security_health"; failed=1; }
   [[ "$(env_value VITE_NEOSECRA_EDITION "")" == "security-health" ]] || { err "VITE_NEOSECRA_EDITION must be security-health"; failed=1; }
-  admin_password_is_valid "$(env_value FIRST_ADMIN_PASSWORD "")" || { err "FIRST_ADMIN_PASSWORD does not satisfy production complexity"; failed=1; }
+  if ! admin_password_is_valid "$(env_value FIRST_ADMIN_PASSWORD "")"; then
+    if [[ -f "${STATE_DIR}/installed-version" && "${NEOSECRA_ROTATE_INITIAL_ADMIN:-0}" != "1" ]]; then
+      warn "FIRST_ADMIN_PASSWORD does not satisfy production complexity; preserving installed credential without rotation"
+    else
+      err "FIRST_ADMIN_PASSWORD does not satisfy production complexity"
+      failed=1
+    fi
+  fi
 
   return "$failed"
 }

@@ -2,7 +2,7 @@
 # NeoSecra Assessment — tek komut kurulum
 set -Eeuo pipefail
 
-VERSION="1.0.3"
+VERSION="1.0.4"
 FRONTEND_IMAGE_VERSION="1.0.0"
 DISTRIBUTION_REF="${NEOSECRA_DISTRIBUTION_REF:-fix/assessment-live-installer}"
 DISTRIBUTION_ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-https://github.com/SirGlooMyy/neosecra-distribution/archive/refs/heads/${DISTRIBUTION_REF}.tar.gz}"
