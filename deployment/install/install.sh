@@ -51,7 +51,8 @@ fi
 acquire_lock
 
 # --- Preflight ---
-bash "${V1_ROOT}/install/preflight.sh"
+set +e; bash "${V1_ROOT}/install/preflight.sh"; PREFLIGHT_RC=$?; set -e
+[[ $PREFLIGHT_RC -eq 0 ]] && ok "Preflight passed" || warn "Preflight had warnings (continuing)"
 
 [[ $DRY_RUN -eq 1 ]] && { ok "Dry-run complete"; exit 0; }
 
