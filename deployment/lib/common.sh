@@ -263,7 +263,7 @@ postgres_auth_succeeds() {
   [[ -n "$password" ]] || return 1
 
   printf '%s\n' "$password" | run_compose exec -T postgres sh -c \
-    'IFS= read -r PGPASSWORD; export PGPASSWORD; psql -U "$1" -d "$2" -tAc "select 1" >/dev/null' \
+    'IFS= read -r PGPASSWORD; export PGPASSWORD; psql -h 127.0.0.1 -U "$1" -d "$2" -tAc "select 1" >/dev/null' \
     sh "$pguser" "$pgdb" >/dev/null 2>&1
 }
 
@@ -272,6 +272,29 @@ sync_database_url_password() {
   pguser="$(env_value POSTGRES_USER neosecra)"
   pgdb="$(env_value POSTGRES_DB neosecra_assessment)"
   upsert_env_value DATABASE_URL "postgresql+asyncpg://${pguser}:${password}@postgres:5432/${pgdb}"
+}
+
+sql_literal_escape() {
+  local value="$1"
+  printf "%s" "${value//\'/\'\'}"
+}
+
+sql_identifier_escape() {
+  local value="$1"
+  printf "%s" "${value//\"/\"\"}"
+}
+
+reset_postgres_password_to_env() {
+  local current pguser pgdb escaped_user escaped_password
+  current="$(env_value POSTGRES_PASSWORD "")"
+  pguser="$(env_value POSTGRES_USER neosecra)"
+  pgdb="$(env_value POSTGRES_DB neosecra_assessment)"
+  escaped_user="$(sql_identifier_escape "$pguser")"
+  escaped_password="$(sql_literal_escape "$current")"
+
+  [[ -n "$current" ]] || return 1
+  printf 'ALTER USER "%s" WITH PASSWORD '\''%s'\'';\n' "$escaped_user" "$escaped_password" | \
+    run_compose exec -T postgres psql -U "$pguser" -d "$pgdb" >/dev/null 2>&1
 }
 
 reconcile_postgres_password() {
@@ -301,7 +324,11 @@ reconcile_postgres_password() {
   shopt -u nullglob
 
   [[ "$found" -eq 1 ]] && return 0
-  die "PostgreSQL password mismatch with existing volume; no matching .env.v1 backup found. Refusing to reset persistent data." 12
+  warn "No .env.v1 backup password matched; updating the existing PostgreSQL user password to match .env.v1"
+  reset_postgres_password_to_env || die "PostgreSQL password mismatch; failed to update existing database user password. Persistent data was not reset." 12
+  postgres_auth_succeeds "$current" || die "PostgreSQL password update did not pass TCP authentication. Persistent data was not reset." 12
+  sync_database_url_password "$current"
+  ok "PostgreSQL user password synchronized with .env.v1"
 }
 
 warn_if_placeholders() {
