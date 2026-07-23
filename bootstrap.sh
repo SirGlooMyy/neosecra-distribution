@@ -2,7 +2,7 @@
 # NeoSecra Assessment — tek komut kurulum
 set -Eeuo pipefail
 
-VERSION="1.0.2"
+VERSION="1.0.3"
 FRONTEND_IMAGE_VERSION="1.0.0"
 DISTRIBUTION_REF="${NEOSECRA_DISTRIBUTION_REF:-fix/assessment-live-installer}"
 DISTRIBUTION_ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-https://github.com/SirGlooMyy/neosecra-distribution/archive/refs/heads/${DISTRIBUTION_REF}.tar.gz}"
@@ -80,9 +80,13 @@ info "Temporary distribution archive left for audit: ${TMP_DIR}"
 
 cd "$RELEASE_DIR"
 
-if [[ -n "$INSTALLED_VERSION" && -n "$CURRENT_RELEASE_DIR" && "$CURRENT_RELEASE_DIR" != "$RELEASE_DIR" && -f "${CURRENT_RELEASE_DIR}/.env.v1" && ! -f .env.v1 ]]; then
+if [[ -n "$INSTALLED_VERSION" && -n "$CURRENT_RELEASE_DIR" && "$CURRENT_RELEASE_DIR" != "$RELEASE_DIR" && -f "${CURRENT_RELEASE_DIR}/.env.v1" ]]; then
+  if [[ -f .env.v1 ]]; then
+    cp -a .env.v1 ".env.v1.stale-target-backup-$(date -u +%Y%m%dT%H%M%SZ)"
+  fi
   cp -a "${CURRENT_RELEASE_DIR}/.env.v1" .env.v1
   chmod 0600 .env.v1 2>/dev/null || true
+  info "Existing current release environment copied into target release"
 fi
 
 # --- .env oluştur ---
