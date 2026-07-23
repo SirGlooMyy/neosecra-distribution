@@ -18,6 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=lib/common.sh
 source "${V1_ROOT}/lib/common.sh"
+source "${V1_ROOT}/lib/docker.sh"
 
 usage() {
   cat <<'EOF'
@@ -79,8 +80,8 @@ MANIFEST_VER=$(grep -E '^version:' "$MANIFEST_FILE" 2>/dev/null | awk '{print $2
 # ------------------------------------------------------------------
 # Edition baked into compose
 # ------------------------------------------------------------------
-if grep -q 'NEOSECRA_EDITION: security_health' "$COMPOSE_FILE" 2>/dev/null && \
-   grep -q 'VITE_NEOSECRA_EDITION: security-health' "$COMPOSE_FILE" 2>/dev/null; then
+if grep -q 'NEOSECRA_EDITION:' "$COMPOSE_FILE" 2>/dev/null && \
+   grep -q 'VITE_NEOSECRA_EDITION:' "$COMPOSE_FILE" 2>/dev/null; then
   chk_ok "Edition baked into compose"
 else
   chk_fail "Edition not baked into compose"
@@ -95,8 +96,8 @@ grep -q 'profiles: \["openvas"\]' "$COMPOSE_FILE" 2>/dev/null && \
 # ------------------------------------------------------------------
 # Project isolation
 # ------------------------------------------------------------------
-grep -q '^name: neosecra-v1' "$COMPOSE_FILE" 2>/dev/null && \
-  chk_ok "Compose project pinned: neosecra-v1" || chk_fail "Compose project not pinned"
+grep -q '^name: neosecra-assessment' "$COMPOSE_FILE" 2>/dev/null && \
+  chk_ok "Compose project pinned: neosecra-assessment" || chk_fail "Compose project not pinned"
 
 # ------------------------------------------------------------------
 # Docker info
@@ -107,7 +108,7 @@ if [[ $QUICK -eq 0 ]]; then
 
   # compose config validation
   if [[ -f "$ENV_FILE" ]]; then
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config >/dev/null 2>&1 && \
+    compose_validate >/dev/null 2>&1 && \
       chk_ok "Compose config valid" || chk_fail "Compose config invalid"
   else
     chk_warn ".env.v1 missing — compose validation skipped"
@@ -154,7 +155,7 @@ if [[ $RUNNING -eq 1 ]]; then
   [[ "$code" == "200" ]] && chk_ok "Live: API health 200" || chk_fail "Live: API health ${code:-?}"
 
   # --- Migration revision ---
-  CURRENT_REV=$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T backend \
+  CURRENT_REV=$(run_compose exec -T backend \
     alembic current 2>/dev/null | grep -oE '^[a-f0-9]+' || echo "unknown")
   chk_ok "Migration revision: ${CURRENT_REV}"
 

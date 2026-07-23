@@ -74,6 +74,19 @@ JOURNAL
   ok "Journal: ${JOURNAL_DIR}/${file}"
 }
 
+write_install_state() {
+  local version="$1" phase="$2" status="$3"
+  mkdir -p "$STATE_DIR"
+  cat > "${STATE_DIR}/install-${version}.state" << STATE
+timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+product=${PRODUCT}
+edition=${EDITION}
+version=${version}
+phase=${phase}
+status=${status}
+STATE
+}
+
 # Check if already installed
 is_installed() {
   [[ -f "${STATE_DIR}/installed-version" ]] && [[ -d "$(current_symlink)" ]]

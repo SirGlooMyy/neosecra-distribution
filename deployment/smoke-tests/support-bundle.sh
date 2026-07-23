@@ -112,6 +112,8 @@ if [[ -f "$COMPOSE_FILE" ]]; then
     | sed 's/OTP_SECRET=.*/OTP_SECRET=<redacted>/g' \
     | sed 's/JWT_SECRET=.*/JWT_SECRET=<redacted>/g' \
     | sed 's/ENCRYPTION_KEY=.*/ENCRYPTION_KEY=<redacted>/g' \
+    | sed 's/FIRST_ADMIN_PASSWORD=.*/FIRST_ADMIN_PASSWORD=<redacted>/g' \
+    | sed 's/ADMIN_RECOVERY_KEY=.*/ADMIN_RECOVERY_KEY=<redacted>/g' \
     > "${BUNDLE_DIR}/docker-compose.sanitized.yml" 2>/dev/null || true
 fi
 
@@ -120,16 +122,16 @@ bash "${V1_ROOT}/install/postflight.sh" --timeout 30 2>&1 | _redact_value > "${B
 
 # --- Migration revision ---
 if stack_is_running 2>/dev/null; then
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T backend \
+  run_compose exec -T backend \
     alembic current 2>/dev/null > "${BUNDLE_DIR}/migration-revision.txt" || true
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T backend \
+  run_compose exec -T backend \
     alembic history 2>/dev/null > "${BUNDLE_DIR}/migration-history.txt" || true
 fi
 
 # --- Application logs (last 200 lines, redacted) ---
 if stack_is_running 2>/dev/null; then
   for service in backend frontend worker postgres redis; do
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --tail=200 "$service" \
+    run_compose logs --tail=200 "$service" \
       2>/dev/null | _redact_value > "${BUNDLE_DIR}/logs-${service}.txt" || true
   done
 fi
@@ -176,7 +178,7 @@ fi
 
 # --- Create tarball ---
 tar czf "$OUTPUT" -C "$TMP_DIR" "neosecra-support-${STAMP}"
-rm -rf "$TMP_DIR"
+rm -r -- "$TMP_DIR"
 
 ok "Support bundle: ${OUTPUT}"
 log "Review the bundle before sharing — confirm no secrets are exposed."

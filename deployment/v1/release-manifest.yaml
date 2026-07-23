@@ -27,23 +27,17 @@ required_runtime:
 
 images:
   - name: postgres
-    ref: postgres:15
-    digest: sha256:<<stamp-at-release>>
+    ref: postgres:15.18-alpine3.24
   - name: redis
-    ref: redis:7-alpine
-    digest: sha256:<<stamp-at-release>>
+    ref: redis:7.4.9-alpine3.21
   - name: backend
-    ref: ghcr.io/<<owner>>/<<repo>>/security-health-backend:1.0.0
-    digest: sha256:<<stamp-at-release>>
+    ref: ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.0
   - name: worker
-    ref: ghcr.io/<<owner>>/<<repo>>/security-health-backend:1.0.0
-    digest: sha256:<<stamp-at-release>>
+    ref: ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.0
   - name: frontend
-    ref: ghcr.io/<<owner>>/<<repo>>/security-health-frontend:1.0.0
-    digest: sha256:<<stamp-at-release>>
+    ref: ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.0.0
   - name: openvas
-    ref: immauss/openvas:latest
-    digest: sha256:<<stamp-at-release>>
+    ref: immauss/openvas:26.07.12.01
     profile: openvas
     optional: true
 
@@ -65,19 +59,19 @@ compatibility:
 
 # Isolation contract — V1 and V2 MUST NOT share any of these namespaces.
 isolation:
-  compose_project: neosecra-v1
-  postgresql: dedicated (neosecra-v1_pgdata)
-  redis: dedicated (neosecra-v1 container)
-  network: neosecra-v1_default
+  compose_project: neosecra-assessment
+  postgresql: dedicated (neosecra-assessment_pgdata)
+  redis: dedicated (neosecra-assessment redis container)
+  network: neosecra-assessment_default
   volumes:
-    - neosecra-v1_pgdata
-    - neosecra-v1_uploads
-    - neosecra-v1_reports
-    - neosecra-v1_backups
-    - neosecra-v1_openvas-data
-  env_file: deployment/v1/.env.v1
+    - neosecra-assessment_pgdata
+    - neosecra-assessment_uploads
+    - neosecra-assessment_reports
+    - neosecra-assessment_backups
+    - neosecra-assessment_openvas-data
+  env_file: .env.v1
   ports:
-    postgres: 23543
+    postgres: 25433
     redis: 23639
     backend: 23800
     frontend: 23300
@@ -95,7 +89,7 @@ health_gates:
   negative_canonical: GET /api/v1/assets -> 404
 
 package_status:
-  package_skeleton_ready: false
+  package_skeleton_ready: true
   installer_runtime_verified: false
   upgrade_runtime_verified: false
   rollback_runtime_verified: false

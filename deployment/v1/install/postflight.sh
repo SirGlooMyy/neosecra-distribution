@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # neosecra verify — post-install health verification
-set -uo pipefail
+set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -44,28 +44,34 @@ run_compose exec -T redis redis-cli ping 2>/dev/null | grep -q PONG && \
   chk_pass "Redis healthy" || chk_fail "Redis not healthy"
 
 # --- Backend ---
-BACKEND_PORT="$(env_value BACKEND_PORT 25800)"
+BACKEND_PORT="$(env_value BACKEND_PORT 23800)"
 BASE="http://127.0.0.1:${BACKEND_PORT}"
 HEALTHY=0
+health_file="$(mktemp)"
 for _ in $(seq 1 "$TIMEOUT"); do
-  code=$(curl -s -o /tmp/.nv_h -w '%{http_code}' "${BASE}/health" 2>/dev/null || true)
+  code=$(curl -s -o "$health_file" -w '%{http_code}' "${BASE}/health" 2>/dev/null || true)
   if [[ "$code" == "200" ]]; then
-    edition=$(grep -oE '"edition"[[:space:]]*:[[:space:]]*"[^"]*"' /tmp/.nv_h 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-    [[ "$edition" == "security_health" ]] && { chk_pass "Backend healthy, edition=security_health"; HEALTHY=1; break; }
+    edition=$(grep -oE '"edition"[[:space:]]*:[[:space:]]*"[^"]*"' "$health_file" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+    version=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$health_file" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+    if [[ "$edition" =~ ^security[_-]health$ ]] && [[ "$version" == "$VERSION" ]] && grep -Eq 'NeoSecra Assessment|neosecra-security-health|security-health' "$health_file"; then
+      chk_pass "Backend healthy, product=NeoSecra Assessment, edition=${edition}, version=${version}"
+      HEALTHY=1
+      break
+    fi
   fi
   sleep 1
 done
-rm -f /tmp/.nv_h
+rm -f "$health_file"
 [[ $HEALTHY -eq 1 ]] || chk_fail "Backend not healthy within ${TIMEOUT}s"
 
 # --- Worker ---
 run_compose ps --status running worker 2>/dev/null | grep -q worker && \
-  chk_pass "Worker running" || chk_warn "Worker not running"
+  chk_pass "Worker running" || chk_fail "Worker not running"
 
 # --- Frontend ---
-FRONTEND_PORT="$(env_value FRONTEND_PORT 25300)"
+FRONTEND_PORT="$(env_value FRONTEND_PORT 23300)"
 f_code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${FRONTEND_PORT}" 2>/dev/null || true)
-[[ "$f_code" =~ ^(200|304|301|302)$ ]] && chk_pass "Frontend responds (HTTP ${f_code})" || chk_warn "Frontend HTTP ${f_code:-?}"
+[[ "$f_code" =~ ^(200|304|301|302)$ ]] && chk_pass "Frontend responds (HTTP ${f_code})" || chk_fail "Frontend HTTP ${f_code:-?}"
 
 # --- API endpoints ---
 if [[ $HEALTHY -eq 1 ]]; then
@@ -77,9 +83,29 @@ if [[ $HEALTHY -eq 1 ]]; then
   done
 fi
 
+# --- Negative SOC gates ---
+if [[ $HEALTHY -eq 1 ]]; then
+  for path in "/api/v1/soc" "/api/v1/soc/health" "/api/v1/soc/alerts"; do
+    code=$(curl -s -o /dev/null -w '%{http_code}' "${BASE}${path}" 2>/dev/null || true)
+    [[ "$code" == "404" ]] && chk_pass "SOC route absent: ${path}" || chk_fail "SOC route exposed: ${path} returned ${code:-?}"
+  done
+fi
+
 # --- Migration revision ---
-cur_rev=$(run_compose exec -T backend alembic current 2>/dev/null | grep -oE '^[a-f0-9]+' || echo "?")
-chk_pass "Migration revision: ${cur_rev}"
+expected_rev="$(manifest_field database_revision)"
+cur_rev=$(run_compose exec -T backend alembic current 2>/dev/null || true)
+if [[ -n "$expected_rev" && "$cur_rev" == *"$expected_rev"* ]]; then
+  chk_pass "Migration revision at expected head: ${expected_rev}"
+else
+  chk_fail "Migration revision is not at expected head: ${expected_rev:-unknown}"
+fi
+
+# --- Log fatal checks without printing logs ---
+if run_compose logs --tail=200 backend worker 2>/dev/null | grep -Eiq 'fatal migration|traceback|database migration failed'; then
+  chk_fail "Application logs contain a fatal migration/runtime error"
+else
+  chk_pass "Application logs contain no fatal migration/runtime error"
+fi
 
 # --- Product identity ---
 check_product_identity
@@ -90,7 +116,7 @@ chk_pass "Active version: ${act_ver}"
 
 echo ""
 if [[ $FAILS -eq 0 ]]; then
-  ok "Verify PASSED — all ${FAILS} checks"
+  ok "Verify PASSED"
   exit 0
 else
   err "Verify FAILED — ${FAILS} failure(s)"

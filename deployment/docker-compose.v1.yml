@@ -4,7 +4,7 @@ name: neosecra-assessment
 
 services:
   postgres:
-    image: postgres:15
+    image: ${POSTGRES_IMAGE:?POSTGRES_IMAGE must be set}
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-neosecra}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
@@ -21,9 +21,9 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: ${REDIS_IMAGE:?REDIS_IMAGE must be set}
     ports:
-      - "${REDIS_PORT:-25639}:6379"
+      - "${REDIS_PORT:-23639}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -32,32 +32,37 @@ services:
     restart: unless-stopped
 
   backend:
-    image: ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${NEOSECRA_VERSION:-1.0.0}
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must be set}
     env_file:
       - .env.v1
     environment:
-      NEOSECRA_EDITION: security_health
-      DATABASE_URL: ${DATABASE_URL}
+      NEOSECRA_EDITION: ${NEOSECRA_EDITION:-security_health}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
     volumes:
       - uploads:/app/uploads
       - reports:/app/reports
       - backups:/app/backups
     ports:
-      - "${BACKEND_PORT:-25800}:8000"
+      - "${BACKEND_PORT:-23800}:8000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     restart: unless-stopped
 
   worker:
-    image: ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${NEOSECRA_VERSION:-1.0.0}
+    image: ${WORKER_IMAGE:?WORKER_IMAGE must be set}
     env_file:
       - .env.v1
     environment:
-      NEOSECRA_EDITION: security_health
+      NEOSECRA_EDITION: ${NEOSECRA_EDITION:-security_health}
     volumes:
       - uploads:/app/uploads
       - reports:/app/reports
@@ -71,17 +76,23 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:${NEOSECRA_VERSION:-1.0.0}
+    image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE must be set}
     environment:
-      VITE_NEOSECRA_EDITION: security-health
+      VITE_NEOSECRA_EDITION: ${VITE_NEOSECRA_EDITION:-security-health}
     ports:
-      - "${FRONTEND_PORT:-25300}:80"
+      - "${FRONTEND_PORT:-23300}:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     restart: unless-stopped
 
   openvas:
-    image: immauss/openvas:latest
+    image: ${OPENVAS_IMAGE:?OPENVAS_IMAGE must be set}
     profiles: ["openvas"]
     privileged: true
     environment:

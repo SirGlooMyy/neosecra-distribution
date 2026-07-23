@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Shared helpers for the NeoSecra Assessment deployment scripts.
 # Sourced by install/upgrade/backup/smoke-tests scripts.
+set -Euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -9,6 +10,7 @@ V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PRODUCT="neosecra-security-health"
 EDITION="security-health"
 PROJECT="neosecra-assessment"
+PROJECT_NAME="${PROJECT}"
 
 # --- Install target ---
 INSTALL_ROOT="/opt/neosecra/assessment"
@@ -19,7 +21,7 @@ BACKUP_ROOT="${INSTALL_ROOT}/backups"
 JOURNAL_DIR="${INSTALL_ROOT}/upgrade-journal"
 CREDENTIAL_DIR="${INSTALL_ROOT}/credentials"
 LOG_DIR="${INSTALL_ROOT}/logs"
-COMPOSE_PROJECT="${PROJECT}"
+COMPOSE_PROJECT="${PROJECT_NAME}"
 
 # --- Resolve key paths from V1_ROOT ---
 COMPOSE_FILE="${V1_ROOT}/docker-compose.v1.yml"
@@ -66,8 +68,17 @@ require_compose_v2() {
     die "docker compose v2 plugin not available" 2
 }
 
+compose() {
+  docker compose \
+    --project-name "$PROJECT_NAME" \
+    --project-directory "$V1_ROOT" \
+    --env-file "$ENV_FILE" \
+    -f "$COMPOSE_FILE" \
+    "$@"
+}
+
 run_compose() {
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -p "$COMPOSE_PROJECT" "$@"
+  compose "$@"
 }
 
 stack_is_running() {
@@ -105,9 +116,80 @@ env_value() {
 
 warn_if_placeholders() {
   [[ -f "$ENV_FILE" ]] || return 0
-  local count
-  count=$(grep -c 'CHANGE_ME' "$ENV_FILE" 2>/dev/null || true)
-  [[ "${count:-0}" -gt 0 ]] && warn ".env.v1 still has ${count} CHANGE_ME placeholder(s)"
+  local key value failed=0
+  while IFS='=' read -r key value; do
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    if is_placeholder_value "$value"; then
+      warn "${key} contains a placeholder value"
+      failed=1
+    fi
+  done < "$ENV_FILE"
+  return "$failed"
+}
+
+is_placeholder_value() {
+  local value="${1:-}" lower
+  lower="${value,,}"
+  [[ -z "$value" ]] && return 1
+  [[ "$lower" == *change_me* ]] && return 0
+  [[ "$lower" == *replace_me* ]] && return 0
+  [[ "$lower" == "password" ]] && return 0
+  [[ "$lower" == "secret" ]] && return 0
+  [[ "$lower" == "example" ]] && return 0
+  [[ "$value" == \<*\> ]] && return 0
+  return 1
+}
+
+require_env_value() {
+  local key="$1" value
+  value="$(env_value "$key" "")"
+  [[ -n "$value" ]] || { err "${key} is EMPTY"; return 1; }
+  if is_placeholder_value "$value"; then
+    err "${key} is PLACEHOLDER"
+    return 1
+  fi
+  return 0
+}
+
+validate_image_ref() {
+  local key="$1" ref
+  ref="$(env_value "$key" "")"
+  [[ -n "$ref" ]] || { err "${key} is EMPTY"; return 1; }
+  [[ "$ref" != *latest* ]] || { err "${key} must not use latest"; return 1; }
+  [[ "$ref" != *'<<'* && "$ref" != *'>>'* ]] || { err "${key} contains an unstamped placeholder"; return 1; }
+  if [[ "$ref" != *@sha256:* && "$ref" != *:* ]]; then
+    err "${key} must include an exact tag or digest"
+    return 1
+  fi
+  if [[ "$ref" == ghcr.io/* && "$ref" =~ [A-Z] ]]; then
+    err "${key} contains uppercase characters in a GHCR image reference"
+    return 1
+  fi
+  return 0
+}
+
+validate_env_file() {
+  [[ -f "$ENV_FILE" ]] || { err ".env.v1 missing: ${ENV_FILE}"; return 1; }
+
+  local failed=0
+  for key in \
+    POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB DATABASE_URL REDIS_URL \
+    SECRET_KEY OTP_SECRET FIRST_ADMIN_EMAIL FIRST_ADMIN_PASSWORD ADMIN_RECOVERY_KEY \
+    BACKEND_CORS_ORIGINS POSTGRES_PORT REDIS_PORT BACKEND_PORT FRONTEND_PORT \
+    NEOSECRA_EDITION VITE_NEOSECRA_EDITION \
+    POSTGRES_IMAGE REDIS_IMAGE BACKEND_IMAGE WORKER_IMAGE FRONTEND_IMAGE OPENVAS_IMAGE
+  do
+    require_env_value "$key" || failed=1
+  done
+
+  for key in POSTGRES_IMAGE REDIS_IMAGE BACKEND_IMAGE WORKER_IMAGE FRONTEND_IMAGE OPENVAS_IMAGE; do
+    validate_image_ref "$key" || failed=1
+  done
+
+  [[ "$(env_value NEOSECRA_EDITION "")" == "security_health" ]] || { err "NEOSECRA_EDITION must be security_health"; failed=1; }
+  [[ "$(env_value VITE_NEOSECRA_EDITION "")" == "security-health" ]] || { err "VITE_NEOSECRA_EDITION must be security-health"; failed=1; }
+
+  return "$failed"
 }
 
 # --- Lock ---
@@ -119,26 +201,9 @@ acquire_lock() {
   fi
   trap 'release_lock' EXIT
 }
-release_lock() { rm -rf "$LOCK_FILE" 2>/dev/null || true; }
+release_lock() { rmdir "$LOCK_FILE" 2>/dev/null || true; }
 
 # --- Path helpers ---
 release_dir() { echo "${RELEASES_DIR}/${1}"; }
 current_symlink() { echo "${INSTALL_ROOT}/current"; }
 previous_symlink() { echo "${INSTALL_ROOT}/previous"; }
-
-# --- Credential helpers ---
-# Auto-detect token files: check /etc/neosecra first, then ~/.neosecra
-_cred_path() {
-  local name="$1"
-  if [[ -f "/etc/neosecra/credentials/${name}" ]]; then
-    echo "/etc/neosecra/credentials/${name}"
-  elif [[ -f "${HOME}/.neosecra/credentials/${name}" ]]; then
-    echo "${HOME}/.neosecra/credentials/${name}"
-  elif [[ -f "${CREDENTIAL_DIR}/${name}" ]]; then
-    echo "${CREDENTIAL_DIR}/${name}"
-  else
-    echo "${CREDENTIAL_DIR}/${name}"
-  fi
-}
-ghcr_token_file() { _cred_path "ghcr-read-token"; }
-release_token_file() { _cred_path "release-read-token"; }

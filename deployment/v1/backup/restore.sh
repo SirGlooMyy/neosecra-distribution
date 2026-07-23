@@ -69,18 +69,18 @@ cat <<EOF
 PRECONDITION: the stack is STOPPED and a verified backup exists in ${TARGET}.
 
 1. Stop services (NO -v):
-     docker compose --env-file ${ENV_FILE} -f ${COMPOSE_FILE} stop
+     run_compose stop
 
 2. Reload the database from the dump:
-     docker compose --env-file ${ENV_FILE} -f ${COMPOSE_FILE} exec -T postgres \
-       psql -U <POSTGRES_USER> -d <POSTGRES_DB> < ${TARGET}/neosecra-v1-*-db.sql
+     run_compose exec -T postgres \
+       psql -U <POSTGRES_USER> -d <POSTGRES_DB> < ${TARGET}/neosecra-*-db.sql
    (Prefer pg_restore for custom-format dumps. Reload into an isolated instance
     first to validate before touching production.)
 
 3. If the backup revision differs from the running one, align with alembic.
 
 4. Start + verify:
-     docker compose --env-file ${ENV_FILE} -f ${COMPOSE_FILE} up -d
+     run_compose up -d
      bash ${V1_ROOT}/install/postflight.sh
 ==============================================================================
 EOF

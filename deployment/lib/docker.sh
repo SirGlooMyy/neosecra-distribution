@@ -3,21 +3,26 @@
 # Source after common.sh
 set -Euo pipefail
 
-# Pull image from GHCR using credential file
-ghcr_pull() {
-  local image="$1" tag="${2:-1.0.0}"
-  local token_file; token_file=$(ghcr_token_file)
+# Authenticate to GHCR without persisting or echoing the token.
+ghcr_login() {
+  [[ -t 0 ]] || die "GHCR login requires an interactive terminal for silent token entry" 4
 
-  if [[ -f "$token_file" ]]; then
-    set +x
-    cat "$token_file" | docker login "$GHCR_REGISTRY" --username token --password-stdin 2>/dev/null || true
-  fi
+  local ghcr_token
+  read -rsp "GHCR read-only token: " ghcr_token
+  echo
+  [[ -n "$ghcr_token" ]] || die "GHCR token was empty" 4
+  printf '%s' "$ghcr_token" | docker login "$GHCR_REGISTRY" \
+    --username SirGlooMyy \
+    --password-stdin
+  unset ghcr_token
+  ok "GHCR authentication passed"
+}
 
-  local ref="${GHCR_REGISTRY}/${GHCR_NAMESPACE}/${image}:${tag}"
-  log "Pulling ${ref} ..."
-  docker pull "$ref" || die "Failed to pull ${ref}" 3
-  ok "Pulled ${ref}"
-  echo "$ref"
+pull_service_image() {
+  local service="$1"
+  log "Pulling image for service: ${service}"
+  run_compose pull "$service" || die "Failed to pull image for service: ${service}" 3
+  ok "Pulled image for service: ${service}"
 }
 
 # Get image digest
@@ -28,11 +33,12 @@ image_digest() {
 
 # Validate compose config
 compose_validate() {
-  run_compose config -q >/dev/null 2>&1 && ok "Compose config valid" || warn "Compose config could not be validated (compose v5 compatibility check)"
+  run_compose config -q
+  ok "Compose config valid"
 }
 
 # Wait for a service healthcheck
-wait_service() {
+wait_service_running() {
   local service="$1" timeout="${2:-60}"
   log "Waiting for ${service} (timeout ${timeout}s)..."
   for _ in $(seq 1 "$timeout"); do
@@ -40,4 +46,18 @@ wait_service() {
     sleep 1
   done
   die "${service} not ready within ${timeout}s" 3
+}
+
+wait_service_healthy() {
+  local service="$1" timeout="${2:-90}" cid status
+  log "Waiting for ${service} healthcheck (timeout ${timeout}s)..."
+  for _ in $(seq 1 "$timeout"); do
+    cid="$(run_compose ps -q "$service" 2>/dev/null || true)"
+    if [[ -n "$cid" ]]; then
+      status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid" 2>/dev/null || true)"
+      [[ "$status" == "healthy" || "$status" == "running" ]] && { ok "${service} healthy"; return 0; }
+    fi
+    sleep 1
+  done
+  die "${service} not healthy within ${timeout}s" 3
 }

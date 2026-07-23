@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # neosecra install — internal pilot installation
-set -uo pipefail
+set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -10,6 +10,7 @@ source "${V1_ROOT}/lib/docker.sh"
 source "${V1_ROOT}/lib/state.sh"
 
 INSTALL_VERSION="$(read_version)"
+INSTALL_PHASE="init"
 
 usage() {
   cat <<EOF
@@ -49,33 +50,46 @@ fi
 
 # --- Lock ---
 acquire_lock
+write_install_state "$INSTALL_VERSION" "$INSTALL_PHASE" "started"
+trap 'rc=$?; if [[ $rc -ne 0 ]]; then write_install_state "$INSTALL_VERSION" "$INSTALL_PHASE" "failed"; fi; release_lock' EXIT
 
 # --- Preflight ---
-set +e; bash "${V1_ROOT}/install/preflight.sh"; PREFLIGHT_RC=$?; set -e
-[[ $PREFLIGHT_RC -eq 0 ]] && ok "Preflight passed" || warn "Preflight had warnings (continuing)"
+INSTALL_PHASE="preflight"
+bash "${V1_ROOT}/install/preflight.sh" || die "Preflight failed" 10
+ok "Preflight passed"
 
 [[ $DRY_RUN -eq 1 ]] && { ok "Dry-run complete"; exit 0; }
 
 # --- Check .env ---
 [[ -f "$ENV_FILE" ]] || die ".env.v1 missing — create from .env.v1.example" 2
+validate_env_file || die ".env.v1 validation failed" 2
 
 # --- Create install directories ---
+INSTALL_PHASE="prepare"
 create_install_dirs
 
 # --- Product identity ---
 check_product_identity
 
+# --- Compose validation ---
+INSTALL_PHASE="compose-validate"
+compose_validate || die "Compose config invalid" 2
+
 # --- GHCR login + pull ---
-VERSION="$INSTALL_VERSION"
-ghcr_pull "security-health-backend" "$VERSION"
-ghcr_pull "security-health-frontend" "$VERSION"
+INSTALL_PHASE="pull"
+ghcr_login
+for service in postgres redis backend worker frontend; do
+  pull_service_image "$service"
+done
 
-# --- Start stack ---
-log "Starting stack (docker compose up -d)..."
-run_compose up -d
+# --- Start dependencies ---
+INSTALL_PHASE="dependencies"
+log "Starting PostgreSQL and Redis..."
+run_compose up -d postgres redis
+wait_service_healthy postgres 90
+wait_service_healthy redis 90
 
-# --- Wait for database ---
-log "Waiting for PostgreSQL..."
+# --- Verify database readiness ---
 DB_OK=0
 PGUSER="$(env_value POSTGRES_USER neosecra)"
 PGDB="$(env_value POSTGRES_DB neosecra_assessment)"
@@ -88,21 +102,33 @@ done
 [[ $DB_OK -eq 1 ]] || die "PostgreSQL not ready within 60s" 1
 
 # --- Migrate ---
+INSTALL_PHASE="migrate"
 log "Running database migrations..."
+MIGRATE_OK=0
 for _ in 1 2 3; do
-  run_compose exec -T backend alembic upgrade head 2>&1 && { ok "Migrations applied"; break; } || sleep 3
+  run_compose run --rm backend alembic upgrade head && { MIGRATE_OK=1; ok "Migrations applied"; break; }
+  sleep 3
 done
+[[ $MIGRATE_OK -eq 1 ]] || die "Database migrations failed" 11
+
+# --- Start application services ---
+INSTALL_PHASE="application"
+log "Starting backend, worker, and frontend..."
+run_compose up -d backend worker frontend
 
 # --- Health ---
+INSTALL_PHASE="verify"
 bash "${V1_ROOT}/install/postflight.sh" --timeout 90
 
 # --- State ---
+INSTALL_PHASE="state"
 write_installed_version "$INSTALL_VERSION"
 create_release_dir "$INSTALL_VERSION"
 switch_current "$INSTALL_VERSION"
 write_journal "install-${INSTALL_VERSION}-$(date -u +%Y%m%dT%H%M%SZ).json"
+write_install_state "$INSTALL_VERSION" "complete" "ok"
 
 echo ""
 ok "NeoSecra Assessment v${INSTALL_VERSION} installed"
-log "Access: http://<host>:$(env_value FRONTEND_PORT 25300)"
+log "Access: http://<host>:$(env_value FRONTEND_PORT 23300)"
 log "Manage: neosecra <command>"

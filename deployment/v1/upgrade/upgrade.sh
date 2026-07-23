@@ -37,8 +37,8 @@ log "Upgrade: ${CURRENT} -> ${TARGET}"
 acquire_lock
 
 # --- Preflight ---
-set +e; bash "${V1_ROOT}/install/preflight.sh"; PREFLIGHT_RC=$?; set -e
-[[ $PREFLIGHT_RC -eq 0 ]] && ok "Preflight passed" || warn "Preflight had warnings (continuing)"
+bash "${V1_ROOT}/install/preflight.sh" || die "Preflight failed" 10
+ok "Preflight passed"
 
 [[ $DRY -eq 1 ]] && { ok "Dry-run complete"; exit 0; }
 
@@ -56,10 +56,12 @@ if [[ -n "$BUNDLE" ]]; then
   for img in "$TMP_DIR"/images/*.tar; do
     [[ -f "$img" ]] && docker load -i "$img"
   done
-  rm -rf "$TMP_DIR"
+  rm -r -- "$TMP_DIR"
 else
-  ghcr_pull "security-health-backend" "$TARGET"
-  ghcr_pull "security-health-frontend" "$TARGET"
+  ghcr_login
+  for service in backend worker frontend; do
+    pull_service_image "$service"
+  done
 fi
 
 # --- Migrate ---

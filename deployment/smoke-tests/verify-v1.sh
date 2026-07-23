@@ -15,6 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=lib/common.sh
 source "${V1_ROOT}/lib/common.sh"
+source "${V1_ROOT}/lib/docker.sh"
 
 usage() {
   cat <<'EOF'
@@ -76,15 +77,15 @@ else
 fi
 
 # --- Isolation: pinned project name + dedicated volumes ---
-if grep -q '^name: neosecra-v1' "$COMPOSE_FILE"; then
-  chk_ok "compose project pinned: neosecra-v1"
+if grep -q '^name: neosecra-assessment' "$COMPOSE_FILE"; then
+  chk_ok "compose project pinned: neosecra-assessment"
 else
-  chk_fail "compose project not pinned to neosecra-v1"
+  chk_fail "compose project not pinned to neosecra-assessment"
 fi
 
 # --- compose config validates (needs .env.v1) ---
 if [[ -f "$ENV_FILE" ]]; then
-  if docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config >/dev/null 2>&1; then
+  if compose_validate >/dev/null 2>&1; then
     chk_ok "docker compose config valid"
   else
     chk_fail "docker compose config invalid"
