@@ -8,11 +8,11 @@
 
 product: neosecra-security-health
 edition: security-health
-version: 1.0.5
+version: 1.0.6
 channel: stable
 
 # Git commit — stamped at release time by CI.
-build_commit: 5ae9fe9
+build_commit: f461530
 
 # Alembic migration head this release expects the database to reach.
 database_revision: "056_findings_runtime_drift"
@@ -31,11 +31,11 @@ images:
   - name: redis
     ref: redis:7.4.9-alpine3.21
   - name: backend
-    ref: ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.5
+    ref: ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.6
   - name: worker
-    ref: ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.5
+    ref: ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.6
   - name: frontend
-    ref: ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.0.5
+    ref: ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.0.6
   - name: openvas
     ref: immauss/openvas:26.07.12.01
     profile: openvas
