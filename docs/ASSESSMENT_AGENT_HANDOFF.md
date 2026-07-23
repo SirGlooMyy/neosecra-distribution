@@ -7,7 +7,7 @@ This document is for the next engineering agent working on the live NeoSecra Ass
 - Product: NeoSecra Assessment
 - Product ID: `neosecra-security-health`
 - Edition: `security-health`
-- Current release: `1.0.4`
+- Current release: `1.0.5`
 - Assessment app repo: `/home/sirgloomy/projects/neosecra-assessment`
 - Distribution repo: `/home/sirgloomy/projects/neosecra-distribution`
 - Live install root: `/opt/neosecra/assessment`
@@ -24,12 +24,12 @@ Important operational rule:
 ## Current Known State
 
 - Assessment app branch: `release/v1-security-health`
-- Assessment app commit for `1.0.4`: `34b96473a2779101c1f2d5f28a475956952d73ad`
+- Assessment app commit for `1.0.5`: `5ae9fe9`
 - Distribution branch: `fix/assessment-live-installer`
-- Distribution commit for `1.0.4`: `a5df643730b373a0611dfbf65f6ea242728f632c`
-- Backend image: `ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.4`
+- Distribution commit for `1.0.5`: pending until this release commit is pushed
+- Backend image: `ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.5`
 - Backend digest: `sha256:a26cc9dde1cab36208dbe74b6f3633379150c5ba765d60f4635c76edafa27ada`
-- Frontend image is still `ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.0.0`
+- Frontend image: `ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.0.5`
 - Expected DB migration head: `056_findings_runtime_drift`
 
 ## Security Rules
@@ -244,10 +244,10 @@ After distribution is pushed, always give a pinned bootstrap command. Do not use
 curl -fsSL https://raw.githubusercontent.com/SirGlooMyy/neosecra-distribution/<distribution_commit>/bootstrap.sh | sudo env NEOSECRA_DISTRIBUTION_ARCHIVE_URL=https://github.com/SirGlooMyy/neosecra-distribution/archive/<distribution_commit>.tar.gz bash
 ```
 
-Current pinned `1.0.4` command:
+Current pinned `1.0.5` command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SirGlooMyy/neosecra-distribution/a5df643730b373a0611dfbf65f6ea242728f632c/bootstrap.sh | sudo env NEOSECRA_DISTRIBUTION_ARCHIVE_URL=https://github.com/SirGlooMyy/neosecra-distribution/archive/a5df643730b373a0611dfbf65f6ea242728f632c.tar.gz bash
+curl -fsSL https://raw.githubusercontent.com/SirGlooMyy/neosecra-distribution/<final_1.0.5_distribution_commit>/bootstrap.sh | sudo env NEOSECRA_DISTRIBUTION_ARCHIVE_URL=https://github.com/SirGlooMyy/neosecra-distribution/archive/<final_1.0.5_distribution_commit>.tar.gz bash
 ```
 
 Post-upgrade checks may use the CLI for verification only:
