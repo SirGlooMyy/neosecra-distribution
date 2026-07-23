@@ -2,12 +2,12 @@
   "channel": "assessment-stable",
   "product": "neosecra-security-health",
   "edition": "security-health",
-  "current_version": "1.0.1",
+  "current_version": "1.0.2",
   "releases": [
     {
-      "version": "1.0.1",
-      "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.1",
-      "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.1",
+      "version": "1.0.2",
+      "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.2",
+      "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.2",
       "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.0.0"
     }
   ],
