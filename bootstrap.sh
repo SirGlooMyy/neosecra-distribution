@@ -58,6 +58,7 @@ if [[ ! -f .env.v1 ]]; then
   SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
   OTP_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
   sed -i "s/POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${PG_PASS}/" .env.v1
+  sed -i "s|DATABASE_URL=.*|DATABASE_URL=postgresql+asyncpg://neosecra:${PG_PASS}@postgres:5432/neosecra_assessment|" .env.v1
   sed -i "s/SECRET_KEY=.*/SECRET_KEY=${SECRET_KEY}/" .env.v1
   sed -i "s/OTP_SECRET=.*/OTP_SECRET=${OTP_SECRET}/" .env.v1
 fi
