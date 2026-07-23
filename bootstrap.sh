@@ -42,10 +42,18 @@ sed -i "s/SECRET_KEY=.*/SECRET_KEY=${SECRET_KEY}/" .env.v1
 sed -i "s/OTP_SECRET=.*/OTP_SECRET=${OTP_SECRET}/" .env.v1
 
 # --- CLI ---
-ln -sf "$(pwd)/bin/neosecra" /usr/local/bin/neosecra
+mkdir -p /usr/local/bin
+ln -sf "$(pwd)/bin/neosecra" /usr/local/bin/neosecra 2>/dev/null || cp "$(pwd)/bin/neosecra" /usr/local/bin/neosecra
+chmod +x /usr/local/bin/neosecra 2>/dev/null || true
+export PATH="/usr/local/bin:$PATH"
 
 # --- Kur ---
-neosecra install --confirm-backed-up
+NEOSECRA_BIN="$(pwd)/bin/neosecra"
+if command -v neosecra &>/dev/null; then
+  neosecra install --confirm-backed-up
+else
+  bash "$NEOSECRA_BIN" install --confirm-backed-up
+fi
 
 # --- Temizlik ---
 cd / && rm -rf "$TMP_DIR"
