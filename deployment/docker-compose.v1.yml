@@ -83,6 +83,8 @@ services:
       redis:
         condition: service_healthy
     command: celery -A worker.celery_app worker --loglevel=info --concurrency=2
+    healthcheck:
+      disable: true
     restart: unless-stopped
 
   frontend:

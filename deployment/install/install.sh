@@ -117,7 +117,7 @@ ensure_assessment_schema_compatibility || die "Assessment schema compatibility r
 # --- Start application services ---
 INSTALL_PHASE="application"
 log "Starting backend, worker, and frontend..."
-if ! run_compose up -d backend worker frontend; then
+if ! run_compose up -d --force-recreate backend worker frontend; then
   print_service_diagnostics backend worker frontend
   die "Application services failed to start" 13
 fi
