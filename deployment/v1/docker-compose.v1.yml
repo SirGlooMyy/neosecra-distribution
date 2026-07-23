@@ -84,7 +84,7 @@ services:
     profiles: ["openvas"]
     privileged: true
     environment:
-      OV_PASSWORD: ${OV_PASSWORD:?OV_PASSWORD must be set when using --profile openvas}
+      OV_PASSWORD: ${OV_PASSWORD:-}
       OV_USER: ${OV_USER:-admin}
     ports:
       - "${OPENVAS_SSH_PORT:-25922}:22"

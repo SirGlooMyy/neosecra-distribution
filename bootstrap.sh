@@ -70,6 +70,7 @@ VITE_NEOSECRA_EDITION=security-health
 DATABASE_URL=postgresql+asyncpg://neosecra:${PG_PASS}@postgres:5432/neosecra_assessment
 SECRET_KEY=${SECRET_KEY}
 OTP_SECRET=${OTP_SECRET}
+OV_PASSWORD=
 EOF
 fi
 
