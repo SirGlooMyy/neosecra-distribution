@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# neosecra — NeoSecra Assessment management CLI
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${V1_ROOT}/lib/common.sh"
+
+COMMAND="${1:-help}"
+shift 2>/dev/null || true
+
+usage() {
+  cat <<'USAGE'
+neosecra — NeoSecra Assessment management CLI
+
+Usage:
+  neosecra <command> [options]
+
+Commands:
+  version              Print product version and edition
+  status               Show stack and service status
+  preflight            Run preflight checks (read-only, non-destructive)
+  install              Install the stack (requires --confirm-backed-up)
+  verify               Run smoke/health verification
+  backup               Create a database backup (requires --target)
+  restore              Restore from a backup (requires --target --confirm)
+  upgrade              Upgrade to a target version
+  rollback             Rollback to a previous version
+  support-bundle       Collect diagnostic information
+  help                 Show this help
+
+Run 'neosecra <command> --help' for command-specific help.
+USAGE
+}
+
+case "$COMMAND" in
+  version)
+    echo "NeoSecra Assessment"
+    echo "Product:  ${PRODUCT}"
+    echo "Edition:  ${EDITION}"
+    echo "Version:  $(read_version)"
+    ;;
+  status)
+    if stack_is_running 2>/dev/null; then
+      echo "Stack: RUNNING"
+      run_compose ps --status running 2>/dev/null || true
+      echo "Active version: $(read_installed_version 2>/dev/null || echo unknown)"
+    else
+      echo "Stack: NOT RUNNING"
+      echo "Installed version: $(read_installed_version 2>/dev/null || echo none)"
+    fi
+    ;;
+  preflight)
+    bash "${V1_ROOT}/install/preflight.sh" "$@"
+    ;;
+  install)
+    bash "${V1_ROOT}/install/install.sh" "$@"
+    ;;
+  verify)
+    bash "${V1_ROOT}/install/postflight.sh" "$@"
+    ;;
+  backup)
+    bash "${V1_ROOT}/backup/backup.sh" "$@"
+    ;;
+  restore)
+    bash "${V1_ROOT}/backup/restore.sh" "$@"
+    ;;
+  upgrade)
+    bash "${V1_ROOT}/upgrade/upgrade.sh" "$@"
+    ;;
+  rollback)
+    bash "${V1_ROOT}/upgrade/rollback.sh" "$@"
+    ;;
+  support-bundle)
+    bash "${V1_ROOT}/smoke-tests/support-bundle.sh" "$@"
+    ;;
+  help|--help|-h)
+    usage
+    ;;
+  *)
+    usage
+    die "unknown command: $COMMAND" 2
+    ;;
+esac

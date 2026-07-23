@@ -1,0 +1,101 @@
+# NeoSecra Security Health — Release Manifest
+#
+# Machine-readable metadata for installers, upgrade tooling, and audits.
+# This manifest is the canonical source of truth for product identity and
+# release configuration. The CI pipeline stamps values at release time.
+#
+# See deployment/v1/schemas/release-manifest.schema.json for validation.
+
+product: neosecra-security-health
+edition: security-health
+version: 1.0.0
+channel: stable
+
+# Git commit — stamped at release time by CI.
+build_commit: bcb213e
+
+# Alembic migration head this release expects the database to reach.
+database_revision: "055_asset_inventory"
+
+# First numbered V1 release — no prior V1 release exists to upgrade from.
+minimum_upgrade_version: null
+
+required_runtime:
+  docker_min: "24.0"
+  compose_min: "2.20"
+  compose_flavor: "v2 plugin (subcommand: docker compose)"
+
+images:
+  - name: postgres
+    ref: postgres:15
+    digest: sha256:<<stamp-at-release>>
+  - name: redis
+    ref: redis:7-alpine
+    digest: sha256:<<stamp-at-release>>
+  - name: backend
+    ref: ghcr.io/<<owner>>/<<repo>>/security-health-backend:1.0.0
+    digest: sha256:<<stamp-at-release>>
+  - name: worker
+    ref: ghcr.io/<<owner>>/<<repo>>/security-health-backend:1.0.0
+    digest: sha256:<<stamp-at-release>>
+  - name: frontend
+    ref: ghcr.io/<<owner>>/<<repo>>/security-health-frontend:1.0.0
+    digest: sha256:<<stamp-at-release>>
+  - name: openvas
+    ref: immauss/openvas:latest
+    digest: sha256:<<stamp-at-release>>
+    profile: openvas
+    optional: true
+
+upgrade:
+  backup_required: true
+  migration_required: true
+  maintenance_mode_required: true
+  restart_required: true
+
+rollback:
+  application_supported: true
+  database_strategy: backup_restore
+  automatic_on_health_failure: true
+
+compatibility:
+  product: neosecra-security-health
+  edition: security-health
+  version_line: 1.x
+
+# Isolation contract — V1 and V2 MUST NOT share any of these namespaces.
+isolation:
+  compose_project: neosecra-v1
+  postgresql: dedicated (neosecra-v1_pgdata)
+  redis: dedicated (neosecra-v1 container)
+  network: neosecra-v1_default
+  volumes:
+    - neosecra-v1_pgdata
+    - neosecra-v1_uploads
+    - neosecra-v1_reports
+    - neosecra-v1_backups
+    - neosecra-v1_openvas-data
+  env_file: deployment/v1/.env.v1
+  ports:
+    postgres: 23543
+    redis: 23639
+    backend: 23800
+    frontend: 23300
+    openvas_ssh: 23922
+    openvas_gsad: 23992
+
+health_gates:
+  postgres: pg_isready succeeds
+  redis: redis-cli ping returns PONG
+  backend: GET /health -> 200 with edition == "security_health"
+  backend_api: GET /api/v1/health -> 200
+  worker: container running
+  frontend: HTTP 200
+  negative_soc: GET /api/v1/soc/* -> 404
+  negative_canonical: GET /api/v1/assets -> 404
+
+package_status:
+  package_skeleton_ready: false
+  installer_runtime_verified: false
+  upgrade_runtime_verified: false
+  rollback_runtime_verified: false

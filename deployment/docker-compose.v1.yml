@@ -1,0 +1,99 @@
+# NeoSecra Assessment — internal pilot compose.
+# Production stack for the NeoSecra Security Health assessment platform.
+name: neosecra-assessment
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-neosecra}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:-neosecra_assessment}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-25433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-neosecra} -d ${POSTGRES_DB:-neosecra_assessment}"]
+      interval: 5s; timeout: 5s; retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-25639}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s; timeout: 5s; retries: 5
+    restart: unless-stopped
+
+  backend:
+    image: ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${NEOSECRA_VERSION:-1.0.0}
+    env_file:
+      - .env.v1
+    environment:
+      NEOSECRA_EDITION: security_health
+    volumes:
+      - uploads:/app/uploads
+      - reports:/app/reports
+      - backups:/app/backups
+    ports:
+      - "${BACKEND_PORT:-25800}:8000"
+    depends_on:
+      postgres: condition: service_healthy
+      redis: condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+
+  worker:
+    image: ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${NEOSECRA_VERSION:-1.0.0}
+    env_file:
+      - .env.v1
+    environment:
+      NEOSECRA_EDITION: security_health
+    volumes:
+      - uploads:/app/uploads
+      - reports:/app/reports
+      - backups:/app/backups
+    depends_on:
+      postgres: condition: service_healthy
+      redis: condition: service_healthy
+    command: celery -A worker.celery_app worker --loglevel=info --concurrency=2
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:${NEOSECRA_VERSION:-1.0.0}
+    environment:
+      VITE_NEOSECRA_EDITION: security-health
+    ports:
+      - "${FRONTEND_PORT:-25300}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  openvas:
+    image: immauss/openvas:latest
+    profiles: ["openvas"]
+    privileged: true
+    environment:
+      OV_PASSWORD: ${OV_PASSWORD:?OV_PASSWORD must be set when using --profile openvas}
+      OV_USER: ${OV_USER:-admin}
+    ports:
+      - "${OPENVAS_SSH_PORT:-25922}:22"
+      - "${OPENVAS_GSAD_PORT:-25992}:9392"
+    volumes:
+      - openvas-data:/data
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 8g
+        reservations:
+          memory: 4g
+
+volumes:
+  pgdata:
+  uploads:
+  reports:
+  backups:
+  openvas-data:

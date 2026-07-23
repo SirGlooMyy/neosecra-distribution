@@ -1,0 +1,121 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/vadidev/IT-Sec-Platform/schemas/release-manifest.schema.json",
+  "title": "NeoSecra Release Manifest",
+  "description": "Schema for NeoSecra Security Health release manifest",
+  "type": "object",
+  "required": [
+    "product",
+    "edition",
+    "version",
+    "release_channel",
+    "git_commit",
+    "build_date",
+    "target_database_revision",
+    "images"
+  ],
+  "properties": {
+    "product": {
+      "type": "string",
+      "enum": ["neosecra-security-health"],
+      "description": "Product identifier"
+    },
+    "edition": {
+      "type": "string",
+      "enum": ["security-health"],
+      "description": "Product edition"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[a-zA-Z0-9.]+)?$",
+      "description": "Semantic version"
+    },
+    "release_channel": {
+      "type": "string",
+      "enum": ["stable", "rc", "beta", "dev"],
+      "description": "Release channel"
+    },
+    "git_commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{7,40}$",
+      "description": "Full or short git commit SHA"
+    },
+    "build_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC build timestamp"
+    },
+    "minimum_upgrade_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Minimum version to upgrade from"
+    },
+    "target_database_revision": {
+      "type": "string",
+      "description": "Expected alembic revision after upgrade"
+    },
+    "config_schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "images": {
+      "type": "object",
+      "required": ["backend", "frontend"],
+      "properties": {
+        "backend": { "$ref": "#/definitions/imageRef" },
+        "frontend": { "$ref": "#/definitions/imageRef" },
+        "worker": { "$ref": "#/definitions/imageRef" }
+      }
+    },
+    "upgrade": {
+      "type": "object",
+      "required": ["backup_required", "migration_required"],
+      "properties": {
+        "backup_required": { "type": "boolean" },
+        "migration_required": { "type": "boolean" },
+        "maintenance_mode_required": { "type": "boolean" },
+        "restart_required": { "type": "boolean" }
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "properties": {
+        "application_supported": { "type": "boolean" },
+        "database_strategy": {
+          "type": "string",
+          "enum": ["backup_restore", "downgrade", "none"]
+        },
+        "automatic_on_health_failure": { "type": "boolean" }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "required": ["product", "edition", "version_line"],
+      "properties": {
+        "product": { "type": "string" },
+        "edition": { "type": "string" },
+        "version_line": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.x$"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "imageRef": {
+      "type": "object",
+      "required": ["reference", "digest"],
+      "properties": {
+        "reference": {
+          "type": "string",
+          "description": "Full image reference with tag"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "description": "Image digest"
+        }
+      }
+    }
+  }
+}
