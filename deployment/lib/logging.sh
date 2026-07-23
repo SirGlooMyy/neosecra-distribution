@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Logging helpers for the NeoSecra Assessment deployment.
 # Source this after common.sh
-set -Eeuo pipefail
+set -Euo pipefail
 
 _info()  { log "$*"; }
 _ok()    { ok "$*"; }
