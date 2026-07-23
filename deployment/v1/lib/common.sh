@@ -130,6 +130,43 @@ random_hex() {
   fi
 }
 
+random_admin_password() {
+  local candidate
+  for _ in $(seq 1 30); do
+    candidate="Ns1!$(random_hex 24)"
+    if admin_password_is_valid "$candidate"; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  printf 'Ns1!%s' "$(random_hex 32)"
+}
+
+admin_password_is_valid() {
+  local value="${1:-}" lower
+  lower="${value,,}"
+  [[ ${#value} -ge 12 ]] || return 1
+  is_placeholder_value "$value" && return 1
+  [[ "$value" != "Admin123!" && "$value" != "Admin123!sec" && "$value" != "CHANGE_ME_ADMIN_PASSWORD_12_CHARS_MIN" ]] || return 1
+  for weak in password 123456 changeme admin123 qwerty letmein; do
+    [[ "$lower" != *"$weak"* ]] || return 1
+  done
+  [[ "$value" =~ [A-Z] ]] || return 1
+  [[ "$value" =~ [a-z] ]] || return 1
+  [[ "$value" =~ [0-9] ]] || return 1
+  [[ "$value" =~ [^a-zA-Z0-9] ]] || return 1
+  return 0
+}
+
+ensure_env_admin_password() {
+  local current
+  current="$(env_value FIRST_ADMIN_PASSWORD "")"
+  if ! admin_password_is_valid "$current"; then
+    upsert_env_value FIRST_ADMIN_PASSWORD "$(random_admin_password)"
+    warn "FIRST_ADMIN_PASSWORD was empty/invalid for production and was regenerated; credential file updated"
+  fi
+}
+
 upsert_env_value() {
   local key="$1" value="$2" tmp
   tmp="$(mktemp)"
@@ -190,7 +227,7 @@ initialize_env_file() {
   ensure_env_secret SECRET_KEY 48
   ensure_env_secret OTP_SECRET 48
   ensure_env_value FIRST_ADMIN_EMAIL "admin@neosecra.local"
-  ensure_env_secret FIRST_ADMIN_PASSWORD 24
+  ensure_env_admin_password
   ensure_env_secret ADMIN_RECOVERY_KEY 32
 
   ensure_env_value POSTGRES_PORT "25433"
@@ -254,6 +291,20 @@ write_initial_admin_credentials() {
   } > "$credential_file"
   chmod 0600 "$credential_file"
   ok "Initial admin credential file: ${credential_file}"
+}
+
+redact_sensitive_output() {
+  sed -E \
+    -e 's#(postgresql(\+asyncpg)?://[^:[:space:]]+:)[^@[:space:]]+@#\1<redacted>@#g' \
+    -e 's#(Authorization:[[:space:]]*(Bearer|token)[[:space:]]+)[A-Za-z0-9._-]+#\1<redacted>#Ig' \
+    -e 's#([A-Za-z0-9_]*(PASSWORD|SECRET|TOKEN|KEY|DATABASE_URL|REDIS_URL)[A-Za-z0-9_]*=)[^[:space:]]+#\1<redacted>#Ig'
+}
+
+print_service_diagnostics() {
+  warn "Redacted service status:"
+  run_compose ps --all 2>&1 | redact_sensitive_output >&2 || true
+  warn "Redacted recent service logs:"
+  run_compose logs --tail=160 "$@" 2>&1 | redact_sensitive_output >&2 || true
 }
 
 postgres_auth_succeeds() {
@@ -409,6 +460,7 @@ validate_env_file() {
 
   [[ "$(env_value NEOSECRA_EDITION "")" == "security_health" ]] || { err "NEOSECRA_EDITION must be security_health"; failed=1; }
   [[ "$(env_value VITE_NEOSECRA_EDITION "")" == "security-health" ]] || { err "VITE_NEOSECRA_EDITION must be security-health"; failed=1; }
+  admin_password_is_valid "$(env_value FIRST_ADMIN_PASSWORD "")" || { err "FIRST_ADMIN_PASSWORD does not satisfy production complexity"; failed=1; }
 
   return "$failed"
 }

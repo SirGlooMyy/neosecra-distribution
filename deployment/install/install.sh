@@ -116,7 +116,10 @@ done
 # --- Start application services ---
 INSTALL_PHASE="application"
 log "Starting backend, worker, and frontend..."
-run_compose up -d backend worker frontend
+if ! run_compose up -d backend worker frontend; then
+  print_service_diagnostics backend worker frontend
+  die "Application services failed to start" 13
+fi
 
 # --- Health ---
 INSTALL_PHASE="verify"

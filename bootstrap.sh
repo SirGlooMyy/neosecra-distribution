@@ -30,6 +30,20 @@ random_hex() {
   fi
 }
 
+random_admin_password() {
+  local candidate lower
+  for _ in $(seq 1 30); do
+    candidate="Ns1!$(random_hex 24)"
+    lower="${candidate,,}"
+    case "$lower" in
+      *password*|*123456*|*changeme*|*admin123*|*qwerty*|*letmein*) continue ;;
+    esac
+    printf '%s' "$candidate"
+    return 0
+  done
+  printf 'Ns1!%s' "$(random_hex 32)"
+}
+
 # --- Script'leri kalıcı dizine kopyala ---
 BASE="/opt/neosecra/assessment"
 RELEASE_DIR="${BASE}/releases/${VERSION}"
@@ -70,7 +84,7 @@ if [[ ! -f .env.v1 ]]; then
   PG_PASS=$(random_hex 24)
   SECRET_KEY_VALUE=$(random_hex 48)
   OTP_SECRET_VALUE=$(random_hex 48)
-  FIRST_ADMIN_PASSWORD_VALUE=$(random_hex 24)
+  FIRST_ADMIN_PASSWORD_VALUE=$(random_admin_password)
   ADMIN_RECOVERY_KEY_VALUE=$(random_hex 32)
   OPENVAS_PASSWORD_VALUE=$(random_hex 24)
   OPENVAS_GVM_PASSWORD_VALUE=$(random_hex 24)

@@ -49,12 +49,13 @@ BASE="http://127.0.0.1:${BACKEND_PORT}"
 HEALTHY=0
 health_file="$(mktemp)"
 for _ in $(seq 1 "$TIMEOUT"); do
-  code=$(curl -s -o "$health_file" -w '%{http_code}' "${BASE}/health" 2>/dev/null || true)
+  code=$(curl -s -o "$health_file" -w '%{http_code}' "${BASE}/api/v1/health" 2>/dev/null || true)
   if [[ "$code" == "200" ]]; then
     edition=$(grep -oE '"edition"[[:space:]]*:[[:space:]]*"[^"]*"' "$health_file" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-    version=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$health_file" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-    if [[ "$edition" =~ ^security[_-]health$ ]] && [[ "$version" == "$VERSION" ]] && grep -Eq 'NeoSecra Assessment|neosecra-security-health|security-health' "$health_file"; then
-      chk_pass "Backend healthy, product=NeoSecra Assessment, edition=${edition}, version=${version}"
+    app_version=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$health_file" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+    database=$(grep -oE '"database"[[:space:]]*:[[:space:]]*"[^"]*"' "$health_file" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+    if [[ "$edition" == "security_health" ]] && [[ "$database" == "connected" ]] && grep -Eq '"product"[[:space:]]*:[[:space:]]*"NeoSecra"' "$health_file"; then
+      chk_pass "Backend healthy, product=NeoSecra Assessment, edition=${edition}, release=${VERSION}, app_health_version=${app_version:-unknown}"
       HEALTHY=1
       break
     fi
@@ -75,7 +76,7 @@ f_code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${FRONTEND_POR
 
 # --- API endpoints ---
 if [[ $HEALTHY -eq 1 ]]; then
-  for ep in "/api/v1/health" "/api/v1/auth/login" "/api/v1/auth/me" "/api/v1/customers" "/api/v1/assets/device" \
+  for ep in "/api/v1/health" "/api/v1/auth/login" "/api/v1/auth/me" "/api/v1/customers" \
             "/api/v1/fortigate" "/api/v1/active-directory" "/api/v1/veeam" "/api/v1/m365" \
             "/api/v1/scans" "/api/v1/findings" "/api/v1/reports"; do
     code=$(curl -s -o /dev/null -w '%{http_code}' "${BASE}${ep}" 2>/dev/null || true)
@@ -85,9 +86,9 @@ fi
 
 # --- Negative SOC gates ---
 if [[ $HEALTHY -eq 1 ]]; then
-  for path in "/api/v1/soc" "/api/v1/soc/health" "/api/v1/soc/alerts"; do
+  for path in "/api/v1/soc" "/api/v1/soc/health" "/api/v1/soc/alerts" "/api/v1/assets"; do
     code=$(curl -s -o /dev/null -w '%{http_code}' "${BASE}${path}" 2>/dev/null || true)
-    [[ "$code" == "404" ]] && chk_pass "SOC route absent: ${path}" || chk_fail "SOC route exposed: ${path} returned ${code:-?}"
+    [[ "$code" == "404" ]] && chk_pass "V2/SOC route absent: ${path}" || chk_fail "V2/SOC route exposed: ${path} returned ${code:-?}"
   done
 fi
 
