@@ -4,8 +4,8 @@ set -Eeuo pipefail
 
 VERSION="1.0.5"
 FRONTEND_IMAGE_VERSION="1.0.5"
-DISTRIBUTION_REF="${NEOSECRA_DISTRIBUTION_REF:-fix/assessment-live-installer}"
-DISTRIBUTION_ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-https://github.com/SirGlooMyy/neosecra-distribution/archive/refs/heads/${DISTRIBUTION_REF}.tar.gz}"
+DISTRIBUTION_REF="${NEOSECRA_DISTRIBUTION_REF:-95e540f103009d8d4f3e79c9230dc0016a77ebf2}"
+DISTRIBUTION_ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-https://github.com/SirGlooMyy/neosecra-distribution/archive/${DISTRIBUTION_REF}.tar.gz}"
 
 RED='\033[31m'; GRN='\033[32m'; RST='\033[0m'
 info() { echo -e "${GRN}[neosecra]${RST} $*"; }
