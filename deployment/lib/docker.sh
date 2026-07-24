@@ -5,7 +5,15 @@ set -Euo pipefail
 
 # Authenticate to GHCR without persisting or echoing the token.
 ghcr_login() {
-  [[ -r /dev/tty ]] || die "GHCR login requires an interactive terminal for silent token entry" 4
+  if [[ ! -r /dev/tty ]]; then
+    # Non-interactive (SSH/agent) run: reuse an existing docker login if it can
+    # already read GHCR, instead of dying on the missing terminal.
+    if docker manifest inspect ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:latest >/dev/null 2>&1; then
+      ok "GHCR auth reused from existing docker login (non-interactive)"
+      return 0
+    fi
+    die "GHCR login requires an interactive terminal for silent token entry" 4
+  fi
 
   local ghcr_token
   read -rsp "GHCR read-only token: " ghcr_token </dev/tty
