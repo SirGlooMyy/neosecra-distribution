@@ -499,25 +499,15 @@ async def main() -> int:
             created = True
             password_changed = True
         else:
-            try:
-                password_matches = verify_password(password, user.hashed_password)
-            except Exception:
-                password_matches = False
-            if not password_matches:
-                user.hashed_password = hash_password(password)
-                password_changed = True
+            # Existing admin: NEVER overwrite the password, force_password_change,
+            # or 2FA settings during sync/upgrade. The user-managed password and
+            # second-factor config must persist across upgrades. Only apply a
+            # minimal safety net so a disabled/locked admin can be recovered:
+            # ensure the admin role and that the account is active.
             if user.role not in ADMIN_ROLES:
                 user.role = "admin"
-            user.is_active = True
-            user.force_password_change = True
-            if hasattr(user, "is_2fa_enabled"):
-                user.is_2fa_enabled = False
-            if hasattr(user, "require_2fa_setup"):
-                user.require_2fa_setup = False
-            if hasattr(user, "totp_secret"):
-                user.totp_secret = None
-            if hasattr(user, "backup_codes"):
-                user.backup_codes = None
+            if not user.is_active:
+                user.is_active = True
 
         if password_changed:
             await session.execute(
