@@ -5,10 +5,12 @@ set -Euo pipefail
 
 # Authenticate to GHCR without persisting or echoing the token.
 ghcr_login() {
-  if [[ ! -r /dev/tty ]]; then
+  if [[ ! -t 0 ]]; then
     # Non-interactive (SSH/agent) run: reuse an existing docker login if it can
     # already read GHCR, instead of dying on the missing terminal.
-    if docker manifest inspect ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:latest >/dev/null 2>&1; then
+    local release_ver
+    release_ver=$(tr -d ' \n' < "${V1_ROOT}/VERSION" 2>/dev/null || true)
+    if [[ -n "$release_ver" ]] && docker manifest inspect "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${release_ver}" >/dev/null 2>&1; then
       ok "GHCR auth reused from existing docker login (non-interactive)"
       return 0
     fi
