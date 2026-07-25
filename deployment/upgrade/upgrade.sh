@@ -127,6 +127,11 @@ wait_service_healthy postgres 90
 wait_service_healthy redis 90
 reconcile_postgres_password
 
+# --- Stop app services before schema change (DEP-08) ---
+# Old code must not run against the new schema while migrations apply.
+log "Stopping application services before migration..."
+run_compose stop backend worker frontend beat || warn "Some services were not running"
+
 # --- Migrate ---
 log "Running migrations..."
 MIGRATE_OK=0
@@ -144,7 +149,7 @@ ensure_assessment_schema_compatibility || die "Assessment schema compatibility r
 sync_initial_admin_credentials || die "Initial admin credential synchronization failed" 11
 
 # --- Restart ---
-if ! run_compose up -d --force-recreate backend worker frontend; then
+if ! run_compose up -d --force-recreate backend worker beat frontend; then
   print_service_diagnostics backend worker frontend
   die "Application services failed to start after upgrade" 13
 fi
