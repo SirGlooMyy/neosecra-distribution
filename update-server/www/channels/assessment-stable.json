@@ -1,0 +1,59 @@
+{
+  "channel": "assessment-stable",
+  "product": "neosecra-security-health",
+  "edition": "security-health",
+  "current_version": "1.1.1",
+  "releases": [
+    {
+      "version": "1.0.4",
+      "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.4",
+      "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.4",
+      "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.0.0"
+    },
+    {
+      "version": "1.0.5",
+      "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.5",
+      "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.5",
+      "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.0.5"
+    },
+    {
+      "version": "1.0.6",
+      "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.6",
+      "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.6",
+      "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.0.6"
+    },
+    {
+      "version": "1.0.9",
+      "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.9",
+      "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.0.9",
+      "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.0.9"
+    },
+    {
+      "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.1",
+      "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.1",
+      "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.1.1",
+      "version": "1.1.1",
+      "released_at": "2026-07-25T19:08:18Z",
+      "archive": {
+        "url": "https://update.neosecra.com/releases/1.1.1/distribution.tar.gz",
+        "sha256": "8df44f104adb4147e55a7d66f33ea75f79a1088b697d8974e94b6922b3974530",
+        "size_bytes": 78028,
+        "signature_url": "https://update.neosecra.com/releases/1.1.1/distribution.tar.gz.minisig"
+      },
+      "bootstrap": {
+        "url": "https://update.neosecra.com/releases/1.1.1/bootstrap.sh",
+        "sha256": "64ed4ac1225fb03443997fd5fa4ddd0ed901e5e012f36ceb925cc707f9cdd590",
+        "size_bytes": 10957,
+        "signature_url": "https://update.neosecra.com/releases/1.1.1/bootstrap.sh.minisig"
+      },
+      "docker_bundle": {
+        "url": "https://update.neosecra.com/releases/1.1.1/none",
+        "sha256": "0",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.1.1/none"
+      }
+    }
+  ],
+  "status": "available",
+  "updated": "2026-07-25T19:08:18Z"
+}

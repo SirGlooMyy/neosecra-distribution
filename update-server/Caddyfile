@@ -2,6 +2,7 @@
 # update.neosecra.com → /srv/update (mounted from ./www)
 
 update.neosecra.com {
+    tls internal
     root * /srv/update
     encode zstd gzip
 
