@@ -2,10 +2,56 @@
 # NeoSecra Assessment — tek komut kurulum
 set -Eeuo pipefail
 
-VERSION="1.0.9"
-FRONTEND_IMAGE_VERSION="1.0.9"
-DISTRIBUTION_REF="${NEOSECRA_DISTRIBUTION_REF:-95e540f103009d8d4f3e79c9230dc0016a77ebf2}"
-DISTRIBUTION_ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-https://github.com/SirGlooMyy/neosecra-distribution/archive/${DISTRIBUTION_REF}.tar.gz}"
+VERSION=""
+FRONTEND_IMAGE_VERSION=""
+
+# --- Channel / version resolution ---
+CHANNEL_URL="${NEOSECRA_CHANNEL_URL:-https://update.neosecra.com/channels/assessment-stable.json}"
+CHANNEL_JSON="$(curl -fsSL "$CHANNEL_URL" 2>/dev/null || echo "")"
+
+resolve_version_from_channel() {
+  local json="$1"
+  if [[ -z "$json" ]]; then return 1; fi
+  if command -v python3 &>/dev/null; then
+    python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('current_version',''))" <<< "$json" 2>/dev/null
+  elif command -v jq &>/dev/null; then
+    jq -r '.current_version // empty' <<< "$json" 2>/dev/null
+  else
+    printf '%s\n' "$json" | sed -nE 's/.*"current_version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1
+  fi
+}
+
+VERSION="$(resolve_version_from_channel "$CHANNEL_JSON")"
+VERSION="${NEOSECRA_VERSION:-${VERSION:-1.0.9}}"
+FRONTEND_IMAGE_VERSION="$VERSION"
+
+# Resolve archive URL from channel JSON or use template
+resolve_archive_url_from_channel() {
+  local json="$1" version="$2"
+  if [[ -z "$json" ]]; then return 1; fi
+  if command -v python3 &>/dev/null; then
+    python3 -c "
+import json,sys
+d=json.loads(sys.stdin.read())
+for r in d.get('releases',[]):
+    if r.get('version')==sys.argv[1]:
+        print(r.get('archive','') or r.get('url',''))
+        break
+" "$version" <<< "$json" 2>/dev/null
+  elif command -v jq &>/dev/null; then
+    jq -r --arg v "$version" '.releases[] | select(.version==$v) | .archive // .url // empty' <<< "$json" 2>/dev/null
+  else
+    printf '%s\n' "$json" | grep -A5 "\"version\":[[:space:]]*\"$version\"" | sed -nE 's/.*"(archive|url)"[[:space:]]*:[[:space:]]*"([^"]+)".*/\2/p' | head -n1
+  fi
+}
+
+DISTRIBUTION_ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-}"
+if [[ -z "$DISTRIBUTION_ARCHIVE_URL" ]]; then
+  DISTRIBUTION_ARCHIVE_URL="$(resolve_archive_url_from_channel "$CHANNEL_JSON" "$VERSION")"
+fi
+if [[ -z "$DISTRIBUTION_ARCHIVE_URL" ]]; then
+  DISTRIBUTION_ARCHIVE_URL="https://update.neosecra.com/releases/${VERSION}/distribution.tar.gz"
+fi
 
 RED='\033[31m'; GRN='\033[32m'; RST='\033[0m'
 info() { echo -e "${GRN}[neosecra]${RST} $*"; }

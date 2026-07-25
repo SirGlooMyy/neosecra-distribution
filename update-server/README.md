@@ -137,20 +137,46 @@ minisign -G -s ~/.neosecra/update-signing-YYYYMMDD.key \
     --dry-run
 ```
 
-## Client Wiring (Next Step)
+## Client Wiring (Current State)
 
-The existing `bootstrap.sh` and `upgrade.sh` currently pull from GitHub raw
-URLs. After this server is deployed, those scripts will be updated to:
+The bootstrap and upgrade scripts in this repository are now wired to use
+`update.neosecra.com` as their primary distribution endpoint.
 
-1. Fetch channel JSON from `https://update.neosecra.com/channels/<product>-<channel>.json`
-2. Verify the channel JSON with the minisign signature and the pinned public key.
-3. Download `distribution.tar.gz` (and optionally `docker-bundle-*.tar.zst`)
-   from the release URL in the channel JSON.
-4. Verify SHA-256 checksum and minisign signature on every artifact.
-5. Fall back to GitHub if the update server is unreachable (resilience).
+### What is wired
 
-The pinned public key will be bundled in the bootstrap script or deployed
-alongside the appliance at `/opt/neosecra/assessment/state/update-pubkey`.
+| Mechanism | Status | Details |
+|-----------|--------|---------|
+| Channel URL | ✅ Wired | `upgrade.sh` fetches `https://update.neosecra.com/channels/assessment-stable.json` (overridable via `NEOSECRA_CHANNEL_URL`). |
+| Bootstrap URL | ✅ Wired | Derived from target version: `https://update.neosecra.com/releases/<version>/bootstrap.sh` |
+| Archive URL | ✅ Wired | Resolved from the channel JSON release entry (`archive`/`url` field), with fallback to `https://update.neosecra.com/releases/<version>/distribution.tar.gz`. Overridable via `NEOSECRA_DISTRIBUTION_ARCHIVE_URL`. |
+| SHA-256 verification | ✅ Wired | `upgrade.sh` verifies every downloaded distribution archive. Prefers the `sha256` field in channel JSON; falls back to the `.sha256` sidecar file. Hard-fails on mismatch. |
+| Minisign verification | ✅ Wired | `upgrade.sh` verifies `.minisig` against the pinned public key (`deployment/upgrade/update-neosecra-com.pub`). Graceful skip if minisign binary is absent (with loud warning). `NEOSECRA_REQUIRE_SIGNATURE=1` forces hard-fail when minisign is missing. |
+| Bootstrap version resolution | ✅ Wired | `bootstrap.sh` resolves the target version from channel JSON `current_version` at runtime, using `python3` / `jq` / `grep+sed` in preference order. No more hardcoded `1.0.9`. |
+| Downgrade protection | ✅ Wired | `upgrade.sh` refuses to install a version older than the installed one; `NEOSECRA_ALLOW_DOWNGRADE=1` overrides. |
+| Channel JSON parsing | ✅ Wired | Uses `python3` first, then `jq`, falls back to `grep`+`sed` if neither is available. |
+
+### Env overrides
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NEOSECRA_CHANNEL_URL` | `https://update.neosecra.com/channels/assessment-stable.json` | Channel manifest URL |
+| `NEOSECRA_DISTRIBUTION_ARCHIVE_URL` | auto-resolved from channel JSON | Distribution archive URL |
+| `NEOSECRA_VERSION` | auto-resolved from channel JSON | Pin a specific version (in bootstrap.sh) |
+| `NEOSECRA_SIGNATURE_PUBKEY` | `deployment/upgrade/update-neosecra-com.pub` | Path to minisign public key |
+| `NEOSECRA_REQUIRE_SIGNATURE` | `0` | Set to `1` to hard-fail when minisign is missing |
+| `NEOSECRA_ALLOW_DOWNGRADE` | `0` | Set to `1` to allow downgrading |
+| `NEOSECRA_UPGRADE_BOOTSTRAP` | `1` | Set to `0` to skip the bootstrap pipeline |
+
+### Not yet wired
+
+- **Minisign verification of channel JSON** itself (the channel JSON is served with
+  a `.minisig` sidecar, but verification is not yet implemented in the client).
+- **Docker bundle artifact** (`docker-bundle-*.tar.zst`) — the publish script
+  generates it, but the client does not yet consume it (future: air-gapped
+  installs).
+- **Fallback to GitHub** if the update server is unreachable — the scripts will
+  currently fail with an error; resilience fallback can be added in a future
+  iteration.
 
 ## File Layout
 
