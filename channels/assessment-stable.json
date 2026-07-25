@@ -2,7 +2,7 @@
   "channel": "assessment-stable",
   "product": "neosecra-security-health",
   "edition": "security-health",
-  "current_version": "1.1.1",
+  "current_version": "1.1.4",
   "releases": [
     {
       "version": "1.0.4",
@@ -33,8 +33,65 @@
       "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.1",
       "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.1",
       "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.1.1"
+    },
+    {
+      "version": "1.1.2",
+      "released_at": "TBD-PUBLISH",
+      "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.2",
+      "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.2",
+      "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.1.2",
+      "archive": {
+        "url": "https://update.neosecra.com/releases/1.1.2/distribution.tar.gz",
+        "sha256": "TBD-PUBLISH",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.1.2/distribution.tar.gz.minisig"
+      },
+      "bootstrap": {
+        "url": "https://update.neosecra.com/releases/1.1.2/bootstrap.sh",
+        "sha256": "TBD-PUBLISH",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.1.2/bootstrap.sh.minisig"
+      }
+    },
+    {
+      "version": "1.1.3",
+      "released_at": "TBD-PUBLISH",
+      "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.3",
+      "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.3",
+      "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.1.3",
+      "archive": {
+        "url": "https://update.neosecra.com/releases/1.1.3/distribution.tar.gz",
+        "sha256": "TBD-PUBLISH",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.1.3/distribution.tar.gz.minisig"
+      },
+      "bootstrap": {
+        "url": "https://update.neosecra.com/releases/1.1.3/bootstrap.sh",
+        "sha256": "TBD-PUBLISH",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.1.3/bootstrap.sh.minisig"
+      }
+    },
+    {
+      "version": "1.1.4",
+      "released_at": "TBD-PUBLISH",
+      "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.4",
+      "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.4",
+      "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.1.4",
+      "archive": {
+        "url": "https://update.neosecra.com/releases/1.1.4/distribution.tar.gz",
+        "sha256": "TBD-PUBLISH",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.1.4/distribution.tar.gz.minisig"
+      },
+      "bootstrap": {
+        "url": "https://update.neosecra.com/releases/1.1.4/bootstrap.sh",
+        "sha256": "TBD-PUBLISH",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.1.4/bootstrap.sh.minisig"
+      }
     }
   ],
   "status": "available",
-  "updated": "2026-07-25T00:00:00Z"
+  "updated": "2026-07-26T00:00:00Z"
 }

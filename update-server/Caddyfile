@@ -2,7 +2,7 @@
 # update.neosecra.com → /srv/update (mounted from ./www)
 
 update.neosecra.com {
-    tls internal
+    tls /etc/caddy/certs/update-neosecra-com.crt /etc/caddy/certs/update-neosecra-com.key
     root * /srv/update
     encode zstd gzip
 

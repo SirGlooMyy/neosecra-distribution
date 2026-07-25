@@ -5,7 +5,45 @@ set -Eeuo pipefail
 VERSION=""
 FRONTEND_IMAGE_VERSION=""
 
-# --- Channel / version resolution ---
+# ---------------------------------------------------------------------------
+# T4 TLS: Embedded CA certificate for update.neosecra.com
+# Extracted to system trust store before any curl to the update server.
+# ---------------------------------------------------------------------------
+NEOSECRA_CA_B64='LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUI5VENDQVp5Z0F3SUJBZ0lVT1Y5TWgwY211c2dQekxkV1U0Y1VXMjJkUVFRd0NnWUlLb1pJemowRUF3SXcKUnpFZk1CMEdBMVVFQ2d3V1RtVnZVMlZqY21FZ1ZYQmtZWFJsSUZObGNuWmxjakVrTUNJR0ExVUVBd3diVG1WdgpVMlZqY21FZ1ZYQmtZWFJsSUVsdWRHVnlibUZzSUVOQk1CNFhEVEkyTURjeU5USXpNemMwTWxvWERUTTJNRGN5Ck1qSXpNemMwTWxvd1J6RWZNQjBHQTFVRUNnd1dUbVZ2VTJWamNtRWdWWEJrWVhSbElGTmxjblpsY2pFa01DSUcKQTFVRUF3d2JUbVZ2VTJWamNtRWdWWEJrWVhSbElFbHVkR1Z5Ym1Gc0lFTkJNRmt3RXdZSEtvWkl6ajBDQVFZSQpLb1pJemowREFRY0RRZ0FFa2dsaFBkbk5FT0JrTjNiMkQrRWdSc0REWG4xNTk2Tm94TWJCb205V0NtWFltbDBpClUrVWpSbWdhZ25jSGRPWFFuUGlieXROblpTWUdSUG81TnE3NFZxTm1NR1F3SFFZRFZSME9CQllFRkVkQ0FJcmsKT0NLanBEby95ak5sZVFNM3gvVlhNQjhHQTFVZEl3UVlNQmFBRkVkQ0FJcmtPQ0tqcERvL3lqTmxlUU0zeC9WWApNQklHQTFVZEV3RUIvd1FJTUFZQkFmOENBUUF3RGdZRFZSMFBBUUgvQkFRREFnRUdNQW9HQ0NxR1NNNDlCQU1DCkEwY0FNRVFDSUNKTFdReUE3MzZpdXg2T2dHZXJUQ05oSFBZQjYyTGZvT3FRREVjdUFZWVpBaUE4d1o2ZE1zUnAKQTlOM2JSY2o1TFVqRDVRNzZMOFFiRWowRXUvcXh3bkc5QT09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K'
+
+install_update_server_ca() {
+  local ca_path="/usr/local/share/ca-certificates/update-neosecra-com.crt"
+  if [[ -f "$ca_path" ]] && openssl x509 -in "$ca_path" -noout 2>/dev/null; then
+    return 0  # Already installed
+  fi
+  local tmp_ca
+  tmp_ca="$(mktemp)"
+  printf '%s\n' "$NEOSECRA_CA_B64" | openssl base64 -d -out "$tmp_ca" 2>/dev/null || {
+    rm -f "$tmp_ca"
+    return 1
+  }
+  # Install into system trust store
+  if [[ -d /usr/local/share/ca-certificates ]]; then
+    cp "$tmp_ca" "$ca_path"
+    update-ca-certificates 2>/dev/null || true
+  elif [[ -d /usr/share/ca-certificates ]]; then
+    cp "$tmp_ca" /usr/share/ca-certificates/update-neosecra-com.crt
+    update-ca-certificates 2>/dev/null || true
+  elif command -v trust &>/dev/null; then
+    cp "$tmp_ca" "${ca_path}"
+    trust anchor "$tmp_ca" 2>/dev/null || true
+  fi
+  rm -f "$tmp_ca"
+  export CURL_CA_BUNDLE="${ca_path}"
+  return 0
+}
+
+# Install CA trust early (before any curl calls)
+install_update_server_ca || true
+
+# ---------------------------------------------------------------------------
+# Channel / version resolution
+# ---------------------------------------------------------------------------
 CHANNEL_URL="${NEOSECRA_CHANNEL_URL:-https://update.neosecra.com/channels/assessment-stable.json}"
 CHANNEL_JSON="$(curl -fsSL "$CHANNEL_URL" 2>/dev/null || echo "")"
 
@@ -25,7 +63,9 @@ VERSION="$(resolve_version_from_channel "$CHANNEL_JSON")"
 VERSION="${NEOSECRA_VERSION:-${VERSION:-1.0.9}}"
 FRONTEND_IMAGE_VERSION="$VERSION"
 
-# Resolve archive URL from channel JSON or use template
+# ---------------------------------------------------------------------------
+# T5 FIX: Backward-compatible archive URL parser (nested + flat schema)
+# ---------------------------------------------------------------------------
 resolve_archive_url_from_channel() {
   local json="$1" version="$2"
   if [[ -z "$json" ]]; then return 1; fi
@@ -35,13 +75,25 @@ import json,sys
 d=json.loads(sys.stdin.read())
 for r in d.get('releases',[]):
     if r.get('version')==sys.argv[1]:
-        print(r.get('archive','') or r.get('url',''))
+        a = r.get('archive',{})
+        if isinstance(a, dict):
+            print(a.get('url','') or '')
+        else:
+            print(a or r.get('url','') or '')
         break
 " "$version" <<< "$json" 2>/dev/null
   elif command -v jq &>/dev/null; then
-    jq -r --arg v "$version" '.releases[] | select(.version==$v) | .archive // .url // empty' <<< "$json" 2>/dev/null
+    jq -r --arg v "$version" '.releases[] | select(.version==$v) | ((.archive | if type=="object" then .url else . end) // .url // empty)' <<< "$json" 2>/dev/null
   else
-    printf '%s\n' "$json" | grep -A5 "\"version\":[[:space:]]*\"$version\"" | sed -nE 's/.*"(archive|url)"[[:space:]]*:[[:space:]]*"([^"]+)".*/\2/p' | head -n1
+    local url version_block
+    version_block=$(printf '%s\n' "$json" | grep -A10 "\"version\":[[:space:]]*\"$version\"" 2>/dev/null)
+    if [[ -n "$version_block" ]]; then
+      url=$(printf '%s\n' "$version_block" | grep -A6 '"archive":[[:space:]]*{' | grep '"url"' | sed -nE 's/.*"url"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)
+    fi
+    if [[ -z "$url" ]]; then
+      url=$(printf '%s\n' "$json" | grep -A5 "\"version\":[[:space:]]*\"$version\"" | sed -nE 's/.*"(archive|url)"[[:space:]]*:[[:space:]]*"([^"]+)".*/\2/p' | head -n1)
+    fi
+    printf '%s' "$url"
   fi
 }
 
@@ -52,7 +104,6 @@ fi
 if [[ -z "$DISTRIBUTION_ARCHIVE_URL" ]]; then
   DISTRIBUTION_ARCHIVE_URL="https://update.neosecra.com/releases/${VERSION}/distribution.tar.gz"
 fi
-
 RED='\033[31m'; GRN='\033[32m'; RST='\033[0m'
 info() { echo -e "${GRN}[neosecra]${RST} $*"; }
 err()  { echo -e "${RED}[neosecra]${RST} $*"; exit 1; }

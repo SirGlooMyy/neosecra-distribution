@@ -36,6 +36,18 @@ git ls-files | while IFS= read -r f; do
     cp -a "$f" "${ARCHIVE_ROOT}/$f"
 done
 
+# Ensure CA certificate is included in archive (for client-side TLS verification)
+# The CA cert is referenced by upgrade.sh via SCRIPT_DIR/../ca/
+if [[ -d update-server/ca ]]; then
+  mkdir -p "${ARCHIVE_ROOT}/update-server/ca"
+  cp -a update-server/ca/update-neosecra-com-root.crt "${ARCHIVE_ROOT}/update-server/ca/" 2>/dev/null || true
+fi
+if [[ -d deployment/ca ]]; then
+  mkdir -p "${ARCHIVE_ROOT}/deployment/ca"
+  cp -a deployment/ca/update-neosecra-com-root.crt "${ARCHIVE_ROOT}/deployment/ca/" 2>/dev/null || true
+fi
+
+
 # Also include untracked deployment/ files that are needed
 # (git-ls-files already covers tracked files)
 

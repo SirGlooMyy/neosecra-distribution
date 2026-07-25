@@ -7,6 +7,21 @@ V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${V1_ROOT}/lib/common.sh"
 source "${V1_ROOT}/lib/manifest.sh"
 source "${V1_ROOT}/lib/docker.sh"
+source "${V1_ROOT}/lib/logging.sh"
+
+# ---------------------------------------------------------------------------
+# T4 TLS: CA certificate for update.neosecra.com
+# The CA root cert is bundled with the distribution archive so upgrade.sh
+# can verify the update server TLS without relying on system trust store.
+# Override via NEOSECRA_CA_CERT env var.
+# ---------------------------------------------------------------------------
+NEOSECRA_CA_CERT="${NEOSECRA_CA_CERT:-${SCRIPT_DIR}/../ca/update-neosecra-com-root.crt}"
+CURL_OPTS=("-fsSL")
+if [[ -f "$NEOSECRA_CA_CERT" ]]; then
+  CURL_OPTS+=("--cacert" "$NEOSECRA_CA_CERT")
+fi
+
+
 source "${V1_ROOT}/lib/state.sh"
 
 usage() { cat <<EOF
@@ -52,7 +67,7 @@ ver_ge() {
 # ---------------------------------------------------------------------------
 fetch_channel_json() {
   local url="${1:-$CHANNEL_URL}"
-  curl -fsSL "$url" 2>/dev/null || return 1
+  curl "${CURL_OPTS[@]}" "$url" 2>/dev/null || return 1
 }
 
 parse_channel_current_version() {
@@ -74,13 +89,28 @@ import json,sys
 d=json.loads(sys.stdin.read())
 for r in d.get('releases',[]):
     if r.get('version')==sys.argv[1]:
-        print(r.get('archive','') or r.get('url',''))
+        a = r.get('archive',{})
+        if isinstance(a, dict):
+            print(a.get('url','') or '')
+        else:
+            print(a or r.get('url','') or '')
         break
 " "$version" <<< "$json" 2>/dev/null
   elif command -v jq &>/dev/null; then
-    jq -r --arg v "$version" '.releases[] | select(.version==$v) | .archive // .url // empty' <<< "$json" 2>/dev/null
+    jq -r --arg v "$version" '.releases[] | select(.version==$v) | ((.archive | if type=="object" then .url else . end) // .url // empty)' <<< "$json" 2>/dev/null
   else
-    printf '%s\n' "$json" | grep -A5 "\"version\":[[:space:]]*\"$version\"" | sed -nE 's/.*"(archive|url)"[[:space:]]*:[[:space:]]*"([^"]+)".*/\2/p' | head -n1
+    local url
+    # Try nested schema: find archive block, extract url
+    local version_block
+    version_block=$(printf '%s\n' "$json" | grep -A10 "\"version\":[[:space:]]*\"$version\"" 2>/dev/null)
+    if [[ -n "$version_block" ]]; then
+      url=$(printf '%s\n' "$version_block" | grep -A6 '"archive":[[:space:]]*{' | grep '"url"' | sed -nE 's/.*"url"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)
+    fi
+    if [[ -z "$url" ]]; then
+      # Fallback to flat schema
+      url=$(printf '%s\n' "$json" | grep -A5 "\"version\":[[:space:]]*\"$version\"" | sed -nE 's/.*"(archive|url)"[[:space:]]*:[[:space:]]*"([^"]+)".*/\2/p' | head -n1)
+    fi
+    printf '%s' "$url"
   fi
 }
 
@@ -92,13 +122,28 @@ import json,sys
 d=json.loads(sys.stdin.read())
 for r in d.get('releases',[]):
     if r.get('version')==sys.argv[1]:
-        print(r.get('sha256',''))
+        a = r.get('archive',{})
+        if isinstance(a, dict):
+            print(a.get('sha256','') or '')
+        else:
+            print(r.get('sha256','') or '')
         break
 " "$version" <<< "$json" 2>/dev/null
   elif command -v jq &>/dev/null; then
-    jq -r --arg v "$version" '.releases[] | select(.version==$v) | .sha256 // empty' <<< "$json" 2>/dev/null
+    jq -r --arg v "$version" '.releases[] | select(.version==$v) | ((.archive | if type=="object" then .sha256 else empty end) // .sha256 // empty)' <<< "$json" 2>/dev/null
   else
-    printf '%s\n' "$json" | grep -A8 "\"version\":[[:space:]]*\"$version\"" | sed -nE 's/.*"sha256"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1
+    local sha
+    local version_block
+    version_block=$(printf '%s\n' "$json" | grep -A10 "\"version\":[[:space:]]*\"$version\"" 2>/dev/null)
+    if [[ -n "$version_block" ]]; then
+      # Try nested schema: find archive block, extract sha256
+      sha=$(printf '%s\n' "$version_block" | grep -A6 '"archive":[[:space:]]*{' | grep '"sha256"' | sed -nE 's/.*"sha256"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)
+    fi
+    if [[ -z "$sha" ]]; then
+      # Fallback to flat schema: release-level sha256
+      sha=$(printf '%s\n' "$json" | grep -A8 "\"version\":[[:space:]]*\"$version\"" | sed -nE 's/.*"sha256"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)
+    fi
+    printf '%s' "$sha"
   fi
 }
 
@@ -199,14 +244,14 @@ if [[ $TARGET_FROM_ARG -eq 0 && "$TARGET" != "$(read_version)" && "${NEOSECRA_UP
   # shellcheck disable=SC2064
   trap "rm -rf '${DL_DIR}'" EXIT
 
-  curl -fsSL -o "${DL_DIR}/distribution.tar.gz" "$RESOLVED_ARCHIVE_URL"
+  curl "${CURL_OPTS[@]}" -o "${DL_DIR}/distribution.tar.gz" "$RESOLVED_ARCHIVE_URL"
 
   # SHA256 verification — prefer hash from channel JSON, else external .sha256 file
   EXPECTED_SHA256="$(parse_channel_release_sha256 "${CHANNEL_JSON:-}" "$TARGET")"
   if [[ -n "$EXPECTED_SHA256" ]]; then
     verify_sha256 "${DL_DIR}/distribution.tar.gz" "$EXPECTED_SHA256" "distribution.tar.gz (from channel JSON)"
   else
-    curl -fsSL -o "${DL_DIR}/distribution.tar.gz.sha256" "${RESOLVED_ARCHIVE_URL}.sha256" 2>/dev/null || true
+    curl "${CURL_OPTS[@]}" -o "${DL_DIR}/distribution.tar.gz.sha256" "${RESOLVED_ARCHIVE_URL}.sha256" 2>/dev/null || true
     if [[ -f "${DL_DIR}/distribution.tar.gz.sha256" ]]; then
       (cd "${DL_DIR}" && sha256sum -c "distribution.tar.gz.sha256") || \
         die "SHA-256 verification failed for distribution.tar.gz (.sha256 file)" 4
@@ -217,7 +262,7 @@ if [[ $TARGET_FROM_ARG -eq 0 && "$TARGET" != "$(read_version)" && "${NEOSECRA_UP
   fi
 
   # Minisign verification
-  if curl -fsSL -o "${DL_DIR}/distribution.tar.gz.minisig" "${RESOLVED_ARCHIVE_URL}.minisig" 2>/dev/null; then
+  if curl "${CURL_OPTS[@]}" -o "${DL_DIR}/distribution.tar.gz.minisig" "${RESOLVED_ARCHIVE_URL}.minisig" 2>/dev/null; then
     verify_minisign "${DL_DIR}/distribution.tar.gz" "${DL_DIR}/distribution.tar.gz.minisig" \
       "$SIGNATURE_PUBKEY" "distribution.tar.gz"
   else
@@ -226,7 +271,7 @@ if [[ $TARGET_FROM_ARG -eq 0 && "$TARGET" != "$(read_version)" && "${NEOSECRA_UP
 
   log "Archive verified; running bootstrap.sh..."
   NEOSECRA_DISTRIBUTION_ARCHIVE_URL="file://${DL_DIR}/distribution.tar.gz" \
-    bash <(curl -fsSL "$BOOTSTRAP_DL_URL")
+    bash <(curl "${CURL_OPTS[@]}" "$BOOTSTRAP_DL_URL")
   exit $?
 fi
 

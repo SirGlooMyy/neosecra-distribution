@@ -8,6 +8,18 @@ deployment/v1/.env.v1.backup-*
 # Secret key material — never commit
 *.key
 *.key.*
+*.srl
 **/secrets/**
 ~/.neosecra/
+
+# But DO track public certificates
+!*.crt
+!*.pub
+
+# Generated release artifacts (created by publish.sh/build-release.sh)
+update-server/www/releases/*/distribution.tar.gz
+update-server/www/releases/*/distribution.tar.gz.sha256
+update-server/www/releases/*/distribution.tar.gz.minisig
+update-server/www/releases/*/docker-bundle-*
+update-server/www/channels/*.minisig
 
