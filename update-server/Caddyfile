@@ -1,5 +1,7 @@
 # NeoSecra Update Server — Caddyfile
-# update.neosecra.com → /srv/update (mounted from ./www)
+# update.neosecra.com + license.neosecra.com TLS with persistent custom CA
+# Leaf certs signed by NeoSecra Root CA (ECDSA P-384, 10 years).
+# Private keys: /opt/neosecra/secrets/ (600, never committed).
 
 update.neosecra.com {
     tls /etc/caddy/certs/update-neosecra-com.crt /etc/caddy/certs/update-neosecra-com.key
@@ -21,23 +23,35 @@ update.neosecra.com {
     file_server
 }
 
-# ---------------------------------------------------------------------------
-# Future: License API reverse-proxy
-# Uncomment and adjust when the license service is deployed:
-#
-# license.neosecra.com {
-#     root * /srv/license
-#     # OR reverse-proxy to a backend service:
-#     # reverse_proxy /api/license/* license-backend:8080
-#     file_server
-# }
-#
-# Alternatively, mount under a path prefix:
-#
-# update.neosecra.com {
-#     ...
-#     handle_path /license/* {
-#         reverse_proxy license-backend:8080
-#     }
-# }
-# ---------------------------------------------------------------------------
+# License Server
+license.neosecra.com {
+    tls /etc/caddy/certs/license-neosecra-com.crt /etc/caddy/certs/license-neosecra-com.key
+
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    # Backend API + health
+    handle /api/* {
+        reverse_proxy license-backend-1:8000
+    }
+    handle /health {
+        reverse_proxy license-backend-1:8000
+    }
+
+    # SPA frontend
+    handle {
+        reverse_proxy license-frontend-1:8080 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+}
+
+http://license.neosecra.com {
+    redir https://license.neosecra.com{uri} permanent
+}
