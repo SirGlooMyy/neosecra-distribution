@@ -6,8 +6,16 @@ VERSION=""
 FRONTEND_IMAGE_VERSION=""
 
 # ---------------------------------------------------------------------------
+# T4 TLS: TLS mode selection
+#   NEOSECRA_TLS_MODE=public   (default) — Let's Encrypt, system trust store
+#   NEOSECRA_TLS_MODE=internal — Custom CA (embedded below, air-gap / lab)
+# ---------------------------------------------------------------------------
+NEOSECRA_TLS_MODE="${NEOSECRA_TLS_MODE:-public}"
+
+# ---------------------------------------------------------------------------
 # T4 TLS: Embedded CA certificate for update.neosecra.com
-# Extracted to system trust store before any curl to the update server.
+# Used only in internal mode (custom CA). In public mode the system trust
+# store already validates Let's Encrypt certificates, so no CA install needed.
 # ---------------------------------------------------------------------------
 NEOSECRA_CA_B64='LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUIvakNDQVlTZ0F3SUJBZ0lVS3R3SSt1NitkZTN1T1Y3MGpka3dtRWN2N2RNd0NnWUlLb1pJemowRUF3TXcKTGpFWk1CY0dBMVVFQXd3UVRtVnZVMlZqY21FZ1VtOXZkQ0JEUVRFUk1BOEdBMVVFQ2d3SVRtVnZVMlZqY21FdwpIaGNOTWpZd056STNNRGt5TkRFMFdoY05Nell3TnpJME1Ea3lOREUwV2pBdU1Sa3dGd1lEVlFRRERCQk9aVzlUClpXTnlZU0JTYjI5MElFTkJNUkV3RHdZRFZRUUtEQWhPWlc5VFpXTnlZVEIyTUJBR0J5cUdTTTQ5QWdFR0JTdUIKQkFBaUEySUFCT0NUekl2UzY0aW9XaVdmUGVEdXcvRkRqR2VHLzFVWUhaSkM2WGd4WkdVVVgwOFA0M3pheGk4YgpkSlcrNTV0OFp5cVBXSndGUHZUZHFxa3AxQmV1dyt3QW5HSFNzcmljV052OEkzeFh3NHVWeDRydmJzL3JENTFhCjhyNGczZFRRTUtOak1HRXdIUVlEVlIwT0JCWUVGRlkza25JZ0dyZ015eFU3eHk2aUJQM0dVRlpGTUI4R0ExVWQKSXdRWU1CYUFGRlkza25JZ0dyZ015eFU3eHk2aUJQM0dVRlpGTUE4R0ExVWRFd0VCL3dRRk1BTUJBZjh3RGdZRApWUjBQQVFIL0JBUURBZ0VHTUFvR0NDcUdTTTQ5QkFNREEyZ0FNR1VDTUZvbzZKSzg4b3VaM1ZVNWo1RDhwMndCCjlyL08wN25QNGdQd01YdHU1b3cybWpwVmtObWU0SURqOHphMWROSXJxZ0l4QUp5UzgzZDNoV2ZCd3FRa2NHZVoKMTU1NW9pYkg4WHl2S3I4YmtacWIveHV6TzlXY01xOUVIcTEwb2RnM3RrR3JDUT09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K'
 
@@ -38,8 +46,10 @@ install_update_server_ca() {
   return 0
 }
 
-# Install CA trust early (before any curl calls)
-install_update_server_ca || true
+# Install CA trust early (before any curl calls) — only in internal mode
+if [[ "${NEOSECRA_TLS_MODE}" == "internal" ]]; then
+  install_update_server_ca || true
+fi
 
 # ---------------------------------------------------------------------------
 # Channel / version resolution
@@ -108,6 +118,61 @@ RED='\033[31m'; GRN='\033[32m'; RST='\033[0m'
 info() { echo -e "${GRN}[neosecra]${RST} $*"; }
 err()  { echo -e "${RED}[neosecra]${RST} $*"; exit 1; }
 [[ $EUID -eq 0 ]] || err "Root required"
+
+# ---------------------------------------------------------------------------
+# GHCR authentication for customer Docker image pulls
+#   NEOSECRA_GHCR_USER      — GitHub robot account username
+#   NEOSECRA_GHCR_TOKEN     — GitHub PAT with packages:read scope
+# Required for public (customer) installs; used to pull images from ghcr.io
+# ---------------------------------------------------------------------------
+NEOSECRA_GHCR_USER="${NEOSECRA_GHCR_USER:-}"
+NEOSECRA_GHCR_TOKEN="${NEOSECRA_GHCR_TOKEN:-}"
+
+ghcr_login_customer() {
+  local user="$1" token="$2"
+  local secrets_dir="/opt/neosecra/secrets"
+  local docker_cfg="${secrets_dir}/.docker"
+
+  mkdir -p "$secrets_dir"
+  chmod 0700 "$secrets_dir"
+  mkdir -p "$docker_cfg"
+  chmod 0700 "$docker_cfg"
+
+  export DOCKER_CONFIG="$docker_cfg"
+
+  if ! printf '%s' "$token" | docker login ghcr.io \
+    --username "$user" \
+    --password-stdin 2>/dev/null; then
+    err "ghcr.io login failed — token geçersiz veya süresi dolmuş olabilir"
+  fi
+
+  # Persist credential reference for subsequent compose pull / docker calls
+  cat > "${secrets_dir}/ghcr-auth" <<-EOF
+DOCKER_CONFIG=${docker_cfg}
+NEOSECRA_GHCR_USER=${user}
+EOF
+  chmod 0600 "${secrets_dir}/ghcr-auth"
+  info "GHCR authentication configured for ${user}"
+}
+
+# --- GHCR auth logic ---
+if [[ -n "$NEOSECRA_GHCR_USER" && -n "$NEOSECRA_GHCR_TOKEN" ]]; then
+  ghcr_login_customer "$NEOSECRA_GHCR_USER" "$NEOSECRA_GHCR_TOKEN"
+  unset NEOSECRA_GHCR_TOKEN
+elif [[ -z "$NEOSECRA_GHCR_USER" && -z "$NEOSECRA_GHCR_TOKEN" ]]; then
+  # Neither set — check if docker already has valid ghcr credentials
+  if ! DOCKER_CONFIG="${DOCKER_CONFIG:-$HOME/.docker}" \
+    docker manifest inspect "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${VERSION}" >/dev/null 2>&1; then
+    err "GHCR robot token gerekli — NeoSecra'dan alınan CUSTOMER-INSTALL paketine bakın"
+  fi
+  info "GHCR: existing Docker credentials detected"
+elif [[ -z "$NEOSECRA_GHCR_USER" ]]; then
+  err "NEOSECRA_GHCR_USER gerekli (NEOSECRA_GHCR_TOKEN set edilmişken)"
+elif [[ -z "$NEOSECRA_GHCR_TOKEN" ]]; then
+  err "NEOSECRA_GHCR_TOKEN gerekli (NEOSECRA_GHCR_USER set edilmişken)"
+fi
+
+
 
 info "NeoSecra Assessment v${VERSION} kurulum başlıyor..."
 

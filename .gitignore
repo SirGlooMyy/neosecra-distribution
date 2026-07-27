@@ -24,3 +24,4 @@ update-server/www/releases/*/docker-bundle-*
 update-server/www/channels/*.minisig
 
 .secrets-ca/
+test-results/
