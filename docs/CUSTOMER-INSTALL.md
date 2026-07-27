@@ -13,9 +13,10 @@
 3. [Adım Adım Manuel Kurulum](#3-adım-adım-manuel-kurulum)
 4. [İlk Açılış](#4-i̇lk-açılış)
 5. [Upgrade Akışı](#5-upgrade-akışı)
-6. [Air-Gap (İzole Ağ) Varyantı](#6-air-gap-i̇zole-ağ-varyantı)
-7. [Sorun Giderme](#7-sorun-giderme)
-8. [Referanslar](#8-referanslar)
+6. [Yedekleme ve Geri Yükleme](#6-yedekleme-ve-geri-yükleme)
+7. [Air-Gap (İzole Ağ) Varyantı](#7-air-gap-i̇zole-ağ-varyantı)
+8. [Sorun Giderme](#8-sorun-giderme)
+9. [Referanslar](#9-referanslar)
 
 ---
 
@@ -242,7 +243,76 @@ sudo bash /opt/neosecra/assessment/current/install/postflight.sh --timeout 120
 
 ---
 
-## 6. Air-Gap (İzole Ağ) Varyantı
+## 6. Yedekleme ve Geri Yükleme
+
+> Detaylı runbook için [BACKUP-RESTORE.md](BACKUP-RESTORE.md) dosyasına bakın.
+
+NeoSecra Assessment, aşağıdaki bileşenleri içeren otomatik yedekleme sunar:
+
+| Bileşen | Yöntem |
+|---------|--------|
+| PostgreSQL veritabanı | `pg_dump -Fc` (custom format, compress) |
+| Uygulama konfigürasyonu (`.env.v1`) | Anlık kopya |
+| Secret'lar (`/opt/neosecra/secrets/`) | Varsa dahil edilir |
+| Upgrade journal | Varsa dahil edilir |
+
+### 6.1 Zamanlanmış Yedek (Önerilen)
+
+```bash
+# Systemd timer'ı etkinleştir
+sudo cp /opt/neosecra/assessment/current/deployment/neosecra-backup.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now neosecra-backup.timer
+
+# Doğrulama
+sudo systemctl status neosecra-backup.timer
+```
+
+Yedekler her gün **03:17**'de alınır ve `/opt/neosecra/backups/` altında saklanır.
+Varsayılan saklama: **14 gün** (`BACKUP_RETENTION_DAYS`). En az 1 yedek her zaman korunur.
+
+### 6.2 Manuel Yedek
+
+```bash
+sudo bash /opt/neosecra/assessment/current/scripts/backup.sh
+```
+
+Çıktı: `/opt/neosecra/backups/neosecra-backup-YYYYMMDD-HHMMSS.tar.gz` + `.sha256`
+
+### 6.3 Geri Yükleme
+
+> **UYARI:** Restore mevcut veritabanını üzerine yazar. Önce pre-restore safety dump alınır.
+
+```bash
+# Etkileşimli (onay ister)
+sudo bash /opt/neosecra/assessment/current/scripts/restore.sh \
+  /opt/neosecra/backups/neosecra-backup-20260727-031700.tar.gz
+
+# Onaysız (otomasyon)
+sudo bash /opt/neosecra/assessment/current/scripts/restore.sh \
+  /opt/neosecra/backups/neosecra-backup-20260727-031700.tar.gz --yes
+```
+
+Restore akışı: SHA256 doğrula → servisleri durdur → safety dump → pg_restore → alembic kontrol → servisleri başlat → /health smoke test.
+
+### 6.4 Off-Site Yedekleme
+
+Otomatik yedekler yalnızca yereldir. Off-site kopya için:
+
+```bash
+# rsync örneği
+rsync -avz /opt/neosecra/backups/ backup@uzak-sunucu:/backups/neosecra/
+
+# S3 örneği (AWS CLI)
+aws s3 sync /opt/neosecra/backups/ s3://neosecra-backups/musteri-adi/
+```
+
+> **ÖNEMLİ:** Ayda en az bir kez test restore yapılması önerilir.  
+> Detaylı prosedür: [BACKUP-RESTORE.md#6-aylık-test-restore-hatırlatıcısı](BACKUP-RESTORE.md#6-aylık-test-restore-hatırlatıcısı)
+
+---
+
+## 7. Air-Gap (İzole Ağ) Varyantı
 
 İnternet erişimi olmayan ortamlar için **docker-bundle** ile offline dağıtım.
 
@@ -272,9 +342,9 @@ Detaylı air-gap prosedürü için: [CUSTOM-CA.md](CUSTOM-CA.md) ve
 
 ---
 
-## 7. Sorun Giderme
+## 8. Sorun Giderme
 
-### 7.1 "GHCR robot token gerekli"
+### 8.1 "GHCR robot token gerekli"
 
 **Hata:** `[neosecra] GHCR robot token gerekli — NeoSecra'dan alınan
 CUSTOMER-INSTALL paketine bakın`
@@ -282,7 +352,7 @@ CUSTOMER-INSTALL paketine bakın`
 **Çözüm:** NeoSecra'dan sağlanan kullanıcı adı ve token'ı `NEOSECRA_GHCR_USER` /
 `NEOSECRA_GHCR_TOKEN` olarak ayarlayın.
 
-### 7.2 Yetersiz Disk Alanı
+### 8.2 Yetersiz Disk Alanı
 
 **Hata:** Kurulum sırasında "No space left on device" veya Docker pull hatası.
 
@@ -298,7 +368,7 @@ docker system prune -af
 ls -d /opt/neosecra/assessment/releases/*/ | head -n -2 | xargs sudo rm -rf
 ```
 
-### 7.3 DNS Çözümleme Hatası
+### 8.3 DNS Çözümleme Hatası
 
 **Hata:** `Could not resolve host: update.neosecra.com`
 
@@ -315,14 +385,14 @@ export HTTP_PROXY=http://proxy:8080
 export HTTPS_PROXY=http://proxy:8080
 ```
 
-### 7.4 "docker login failed — token expired"
+### 8.4 "docker login failed — token expired"
 
 **Hata:** ghcr.io girişi başarısız.
 
 **Çözüm:** Token süresi dolmuş olabilir. NeoSecra ops ile iletişime geçerek
 yeni token talep edin.
 
-### 7.5 Migration Hatası / Rollback
+### 8.5 Migration Hatası / Rollback
 
 **Hata:** `Upgrade failed at migration`
 
@@ -338,7 +408,7 @@ sudo bash /opt/neosecra/assessment/current/upgrade/rollback.sh \
   --from-backup /opt/neosecra/assessment/backups/<backup-dizini>
 ```
 
-### 7.6 "Frontend HTTP not reachable"
+### 8.6 "Frontend HTTP not reachable"
 
 **Hata:** UI 23300 portunda erişilebilir değil.
 
@@ -355,7 +425,7 @@ sudo firewall-cmd --list-ports  # RHEL 9
 sudo ufw status                  # Ubuntu
 ```
 
-### 7.7 SELinux (RHEL 9)
+### 8.7 SELinux (RHEL 9)
 
 ```bash
 # SELinux modunu kontrol et
@@ -370,10 +440,11 @@ sudo restorecon -Rv /opt/neosecra/
 
 ---
 
-## 8. Referanslar
+## 9. Referanslar
 
 | Doküman | İçerik | Hedef Kitle |
 |---------|--------|-------------|
+| [BACKUP-RESTORE.md](BACKUP-RESTORE.md) | Yedekleme ve geri yükleme runbook'u | Müşteri admin / Ops |
 | [CUSTOM-CA.md](CUSTOM-CA.md) | Custom CA oluşturma ve rotasyon | Air-gap müşteriler |
 | [PUBLIC-UPDATE-SERVER.md](PUBLIC-UPDATE-SERVER.md) | Public update server mimarisi | Ops / İlgili müşteri IT |
 | [CUSTOMER-UPDATER-AUTH.md](CUSTOMER-UPDATER-AUTH.md) | Token yönetimi detayları | Ops / Müşteri IT |

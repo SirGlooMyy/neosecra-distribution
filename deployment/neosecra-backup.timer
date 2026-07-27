@@ -1,0 +1,11 @@
+[Unit]
+Description=NeoSecra Assessment — daily backup timer
+Documentation=https://docs.neosecra.com
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
