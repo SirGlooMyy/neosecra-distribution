@@ -2,7 +2,7 @@
   "channel": "assessment-stable",
   "product": "neosecra-security-health",
   "edition": "security-health",
-  "current_version": "1.1.1",
+  "current_version": "1.1.6",
   "releases": [
     {
       "version": "1.0.4",
@@ -29,31 +29,105 @@
       "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.0.9"
     },
     {
+      "version": "1.1.1",
       "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.1",
       "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.1",
-      "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.1.1",
-      "version": "1.1.1",
-      "released_at": "2026-07-25T19:08:18Z",
+      "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.1.1"
+    },
+    {
+      "version": "1.1.2",
+      "released_at": "TBD-PUBLISH",
+      "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.2",
+      "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.2",
+      "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.1.2",
       "archive": {
-        "url": "https://update.neosecra.com/releases/1.1.1/distribution.tar.gz",
-        "sha256": "8df44f104adb4147e55a7d66f33ea75f79a1088b697d8974e94b6922b3974530",
-        "size_bytes": 78028,
-        "signature_url": "https://update.neosecra.com/releases/1.1.1/distribution.tar.gz.minisig"
+        "url": "https://update.neosecra.com/releases/1.1.2/distribution.tar.gz",
+        "sha256": "TBD-PUBLISH",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.1.2/distribution.tar.gz.minisig"
       },
       "bootstrap": {
-        "url": "https://update.neosecra.com/releases/1.1.1/bootstrap.sh",
-        "sha256": "64ed4ac1225fb03443997fd5fa4ddd0ed901e5e012f36ceb925cc707f9cdd590",
-        "size_bytes": 10957,
-        "signature_url": "https://update.neosecra.com/releases/1.1.1/bootstrap.sh.minisig"
-      },
-      "docker_bundle": {
-        "url": "https://update.neosecra.com/releases/1.1.1/none",
-        "sha256": "0",
+        "url": "https://update.neosecra.com/releases/1.1.2/bootstrap.sh",
+        "sha256": "TBD-PUBLISH",
         "size_bytes": 0,
-        "signature_url": "https://update.neosecra.com/releases/1.1.1/none"
+        "signature_url": "https://update.neosecra.com/releases/1.1.2/bootstrap.sh.minisig"
+      }
+    },
+    {
+      "version": "1.1.3",
+      "released_at": "TBD-PUBLISH",
+      "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.3",
+      "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.3",
+      "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.1.3",
+      "archive": {
+        "url": "https://update.neosecra.com/releases/1.1.3/distribution.tar.gz",
+        "sha256": "TBD-PUBLISH",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.1.3/distribution.tar.gz.minisig"
+      },
+      "bootstrap": {
+        "url": "https://update.neosecra.com/releases/1.1.3/bootstrap.sh",
+        "sha256": "TBD-PUBLISH",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.1.3/bootstrap.sh.minisig"
+      }
+    },
+    {
+      "version": "1.1.4",
+      "released_at": "TBD-PUBLISH",
+      "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.4",
+      "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.4",
+      "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.1.4",
+      "archive": {
+        "url": "https://update.neosecra.com/releases/1.1.4/distribution.tar.gz",
+        "sha256": "TBD-PUBLISH",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.1.4/distribution.tar.gz.minisig"
+      },
+      "bootstrap": {
+        "url": "https://update.neosecra.com/releases/1.1.4/bootstrap.sh",
+        "sha256": "TBD-PUBLISH",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.1.4/bootstrap.sh.minisig"
+      }
+    },
+    {
+      "version": "1.1.5",
+      "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.5",
+      "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.5",
+      "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.1.5",
+      "archive": {
+        "url": "https://update.neosecra.com/releases/1.1.5/distribution.tar.gz",
+        "sha256": "TBD-PUBLISH",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.1.5/distribution.tar.gz.minisig"
+      },
+      "bootstrap": {
+        "url": "https://update.neosecra.com/releases/1.1.5/bootstrap.sh",
+        "sha256": "TBD-PUBLISH",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.1.5/bootstrap.sh.minisig"
+      }
+    },
+    {
+      "version": "1.1.6",
+      "backend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.6",
+      "worker_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:1.1.6",
+      "frontend_image": "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:1.1.6",
+      "archive": {
+        "url": "https://update.neosecra.com/releases/1.1.6/distribution.tar.gz",
+        "sha256": "TBD-PUBLISH",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.1.6/distribution.tar.gz.minisig"
+      },
+      "bootstrap": {
+        "url": "https://update.neosecra.com/releases/1.1.6/bootstrap.sh",
+        "sha256": "TBD-PUBLISH",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.1.6/bootstrap.sh.minisig"
       }
     }
   ],
   "status": "available",
-  "updated": "2026-07-25T19:08:18Z"
+  "updated": "2026-07-26T13:00:00Z"
 }

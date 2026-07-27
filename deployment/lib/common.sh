@@ -220,7 +220,7 @@ apply_release_image_refs() {
   else
     backend_image="ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${version}"
     worker_image="$backend_image"
-    frontend_image="$(env_value FRONTEND_IMAGE "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:${version}")"
+    frontend_image="ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:${version}"
   fi
 
   upsert_env_value NEOSECRA_VERSION "$version"
