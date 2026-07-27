@@ -2,7 +2,7 @@
   "channel": "assessment-stable",
   "product": "neosecra-security-health",
   "edition": "security-health",
-  "current_version": "1.1.7",
+  "current_version": "1.2.0",
   "releases": [
     {
       "version": "1.0.4",
@@ -144,8 +144,30 @@
         "size_bytes": 0,
         "signature_url": "https://update.neosecra.com/releases/1.1.7/bootstrap.sh.minisig"
       }
+    },
+    {
+      "version": "1.2.0",
+      "released_at": "2026-07-27T23:48:16Z",
+      "archive": {
+        "url": "https://update.neosecra.com/releases/1.2.0/distribution-1.2.0.tar.gz",
+        "sha256": "88050a4273931d90bfe3b380e2e86e09bcceedf71ff44e63b73e9a938eead37a",
+        "size_bytes": 120948,
+        "signature_url": "https://update.neosecra.com/releases/1.2.0/distribution-1.2.0.tar.gz.minisig"
+      },
+      "bootstrap": {
+        "url": "https://update.neosecra.com/releases/1.2.0/bootstrap.sh",
+        "sha256": "5c266fe5ac298afb3ab053516a3840952364339bbbbd7b29f780106212f499be",
+        "size_bytes": 16877,
+        "signature_url": "https://update.neosecra.com/releases/1.2.0/bootstrap.sh.minisig"
+      },
+      "docker_bundle": {
+        "url": "https://update.neosecra.com/releases/1.2.0/none",
+        "sha256": "0",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.2.0/none"
+      }
     }
   ],
   "status": "available",
-  "updated": "2026-07-27T16:00:00Z"
+  "updated": "2026-07-27T23:48:16Z"
 }
