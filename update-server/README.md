@@ -26,30 +26,42 @@ Serves release artifacts, channel metadata, and signatures via HTTPS.
 
 ## DNS Setup
 
-**Production (public DNS):**
-```
+### Public / Let's Encrypt (Production)
+
+```dns
 update.neosecra.com.  A  <server-public-ip>
+license.neosecra.com. A  <server-public-ip>
 ```
 
-**LAN / testing (hosts file on each appliance or DNS override):**
-```
-192.168.2.101  update.neosecra.com
-```
-
-Caddy auto-HTTPS (Let's Encrypt / ZeroSSL) requires:
+Caddy auto-HTTPS (Let's Encrypt) requires:
 - A public DNS record pointing to the server's public IP.
 - Ports 80 and 443 reachable from the internet.
+- Use `Caddyfile.public` (no `tls` directive, Caddy auto-provisions).
 
-**For LAN-only testing without public DNS:**
-Use a self-signed certificate or internal CA. Run Caddy with the `tls internal`
-directive, or mount your own cert. Example:
-
-```caddyfile
-update.neosecra.com {
-    tls internal
-    # ... rest of config
-}
+**Start public server:**
+```bash
+CADDY_MODE=public CADDYFILE=./Caddyfile.public docker compose up -d
 ```
+
+### Internal / Custom CA (LAN / Air-Gap / Lab)
+
+```dns
+; /etc/hosts on each appliance or internal DNS
+192.168.2.101  update.neosecra.com license.neosecra.com
+```
+
+Use `Caddyfile` (default, with `tls /etc/caddy/certs/...` directive) and
+the custom CA from `update-server/certs/` and `update-server/ca/`.
+
+**Start internal server:**
+```bash
+docker compose up -d
+# or explicitly:
+CADDY_MODE=internal docker compose up -d
+```
+
+For full custom CA documentation see [docs/CUSTOM-CA.md](../docs/CUSTOM-CA.md).
+For public deployment details see [docs/PUBLIC-UPDATE-SERVER.md](../docs/PUBLIC-UPDATE-SERVER.md).
 
 ## First Deploy
 

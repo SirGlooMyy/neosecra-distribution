@@ -34,6 +34,11 @@ Options:
   --rsync <target>       rsync target, e.g. user@host:/srv/update
   --dry-run              Print actions without executing
   --help                 Show this help and exit
+
+Environment:
+  UPDATE_SERVER_TARGETS   Space-separated rsync targets (alternative to --rsync).
+                          When combined with --rsync, all targets are synced.
+                          Example: UPDATE_SERVER_TARGETS="user@lab:/srv/update user@public:/srv/update"
 EOF
     exit 0
 }
@@ -412,15 +417,28 @@ if [[ $DRY_RUN -eq 0 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Optional rsync to production server
+# 4. Optional rsync to one or more production servers
 # --------------------------------------------------------------------------
+# Multiple targets can be specified in UPDATE_SERVER_TARGETS env var
+# (space-separated), or via the --rsync flag (single target).
+# --------------------------------------------------------------------------
+RSYNC_TARGETS=()
+if [[ -n "${UPDATE_SERVER_TARGETS:-}" ]]; then
+  read -ra RSYNC_TARGETS <<< "$UPDATE_SERVER_TARGETS"
+fi
 if [[ -n "$RSYNC_TARGET" ]]; then
-    log "Rsync to ${RSYNC_TARGET}"
+  RSYNC_TARGETS+=("$RSYNC_TARGET")
+fi
+
+if [[ ${#RSYNC_TARGETS[@]} -gt 0 ]]; then
+  for target in "${RSYNC_TARGETS[@]}"; do
+    log "Rsync to ${target}"
     if [[ $DRY_RUN -eq 1 ]]; then
-        echo "[DRY-RUN] rsync -az --delete-after ${WWW}/ ${RSYNC_TARGET}"
+      echo "[DRY-RUN] rsync -az --delete-after ${WWW}/ ${target}"
     else
-        run_cmd rsync -az --delete-after "${WWW}/" "${RSYNC_TARGET}"
+      run_cmd rsync -az --delete-after "${WWW}/" "${target}"
     fi
+  done
 fi
 
 # ---------------------------------------------------------------------------

@@ -14,11 +14,18 @@ source "${V1_ROOT}/lib/logging.sh"
 # The CA root cert is bundled with the distribution archive so upgrade.sh
 # can verify the update server TLS without relying on system trust store.
 # Override via NEOSECRA_CA_CERT env var.
+#
+# TLS mode selection:
+#   NEOSECRA_TLS_MODE=public   (default) — Let's Encrypt, no CA cert needed
+#   NEOSECRA_TLS_MODE=internal — Custom CA, uses --cacert
 # ---------------------------------------------------------------------------
-NEOSECRA_CA_CERT="${NEOSECRA_CA_CERT:-${SCRIPT_DIR}/../ca/update-neosecra-com-root.crt}"
+NEOSECRA_TLS_MODE="${NEOSECRA_TLS_MODE:-public}"
 CURL_OPTS=("-fsSL")
-if [[ -f "$NEOSECRA_CA_CERT" ]]; then
-  CURL_OPTS+=("--cacert" "$NEOSECRA_CA_CERT")
+if [[ "${NEOSECRA_TLS_MODE}" == "internal" ]]; then
+  NEOSECRA_CA_CERT="${NEOSECRA_CA_CERT:-${SCRIPT_DIR}/../ca/update-neosecra-com-root.crt}"
+  if [[ -f "$NEOSECRA_CA_CERT" ]]; then
+    CURL_OPTS+=("--cacert" "$NEOSECRA_CA_CERT")
+  fi
 fi
 
 

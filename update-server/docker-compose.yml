@@ -2,6 +2,12 @@
 # Serves release artifacts via Caddy with automatic HTTPS.
 # /srv/update can later be changed to a host path (e.g. /data/update)
 # so the www directory lives outside the compose project.
+#
+# TLS mode selection:
+#   CADDY_MODE=internal     → Custom CA (update-server/certs/*.crt+.key)
+#                              Uses Caddyfile        (default, backward-compatible)
+#   CADDY_MODE=public       → Let's Encrypt (auto-provision)
+#                              Uses Caddyfile.public
 
 services:
   caddy:
@@ -11,12 +17,16 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./certs:/etc/caddy/certs:ro
-      - ./ca:/etc/caddy/ca:ro
+      # CADDYFILE: selectable via env; default to Caddyfile (internal/custom CA)
+      - ${CADDYFILE:-./Caddyfile}:/etc/caddy/Caddyfile:ro
+      # Internal TLS: certs + CA are only needed in custom-CA mode
+      - ${CADDY_CERTS_DIR:-./certs}:/etc/caddy/certs:ro
+      - ${CADDY_CA_DIR:-./ca}:/etc/caddy/ca:ro
       - ./www:/srv/update:ro
       - caddy_data:/data
       - caddy_config:/config
+    environment:
+      - CADDY_MODE=${CADDY_MODE:-internal}
 
 volumes:
   caddy_data:
