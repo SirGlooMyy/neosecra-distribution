@@ -17,6 +17,13 @@ build_commit: f461530
 # Alembic migration head this release expects the database to reach.
 database_revision: "063_add_finding_closure_workflow"
 
+# Release date — stamped at build-release time (U7).
+release_date: ""
+
+# SHA-256 checksums of key deployment scripts (U6). Stamped at build-release time.
+# Format: "path=sha256,path=sha256,..."
+script_checksums: ""
+
 # First numbered V1 release — no prior V1 release exists to upgrade from.
 minimum_upgrade_version: "1.2.0"
 

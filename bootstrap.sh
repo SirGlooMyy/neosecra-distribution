@@ -238,6 +238,30 @@ if [[ -d "$RELEASE_DIR" ]]; then
 fi
 mkdir -p "$RELEASE_DIR"
 rsync -a deployment/ "$RELEASE_DIR/" 2>/dev/null || cp -r deployment/* "$RELEASE_DIR/" 2>/dev/null || err "Script dosyaları kopyalanamadı"
+
+# U6: Script checksum divergence check — compare deployed scripts against manifest
+if [[ -f "${RELEASE_DIR}/release-manifest.yaml" ]]; then
+    manifest_checksums=$(grep -E '^script_checksums:' "${RELEASE_DIR}/release-manifest.yaml" 2>/dev/null | cut -d' ' -f2- | tr -d '"' || true)
+    if [[ -n "$manifest_checksums" ]]; then
+        divergence=0
+        IFS=',' read -ra CHECKS <<< "$manifest_checksums"
+        for entry in "${CHECKS[@]}"; do
+            script_path="${entry%%=*}"
+            expected_hash="${entry#*=}"
+            [[ -z "$script_path" || -z "$expected_hash" ]] && continue
+            # The manifest path is relative to deployment/ repo root; in release dir it's under <release>/
+            actual_hash=$(sha256sum "${RELEASE_DIR}/${script_path#deployment/}" 2>/dev/null | cut -d' ' -f1 || true)
+            if [[ -n "$actual_hash" && "$actual_hash" != "$expected_hash" ]]; then
+                info "[warn] Script divergence: ${script_path} checksum ${actual_hash} != manifest ${expected_hash}"
+                divergence=1
+            fi
+        done
+        if [[ $divergence -eq 1 ]]; then
+            info "[warn] Script checksum divergence detected — live skeleton may have been edited outside release process"
+        fi
+    fi
+fi
+
 info "Temporary distribution archive left for audit: ${TMP_DIR}"
 
 cd "$RELEASE_DIR"

@@ -58,6 +58,22 @@ SIGNATURE_PUBKEY="${NEOSECRA_SIGNATURE_PUBKEY:-${SCRIPT_DIR}/update-neosecra-com
 NEOSECRA_REQUIRE_SIGNATURE="${NEOSECRA_REQUIRE_SIGNATURE:-0}"
 
 # ---------------------------------------------------------------------------
+# U1: State tracking for fail recovery
+# ---------------------------------------------------------------------------
+_SERVICES_STOPPED=0
+_COMMITTED=0
+_PREVIOUS_VERSION=""
+
+_upgrade_cleanup() {
+  local rc=$?
+  release_lock
+  if [[ $rc -ne 0 && $_SERVICES_STOPPED -eq 1 && $_COMMITTED -eq 0 ]]; then
+    err "Upgrade failed — attempting to restore previous release services"
+    recover_previous_release || err "Automatic recovery failed — services may be down"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Version comparison (semver-aware, returns 0 if a >= b)
 # ---------------------------------------------------------------------------
 ver_ge() {
@@ -107,14 +123,12 @@ for r in d.get('releases',[]):
     jq -r --arg v "$version" '.releases[] | select(.version==$v) | ((.archive | if type=="object" then .url else . end) // .url // empty)' <<< "$json" 2>/dev/null
   else
     local url
-    # Try nested schema: find archive block, extract url
     local version_block
     version_block=$(printf '%s\n' "$json" | grep -A10 "\"version\":[[:space:]]*\"$version\"" 2>/dev/null)
     if [[ -n "$version_block" ]]; then
       url=$(printf '%s\n' "$version_block" | grep -A6 '"archive":[[:space:]]*{' | grep '"url"' | sed -nE 's/.*"url"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)
     fi
     if [[ -z "$url" ]]; then
-      # Fallback to flat schema
       url=$(printf '%s\n' "$json" | grep -A5 "\"version\":[[:space:]]*\"$version\"" | sed -nE 's/.*"(archive|url)"[[:space:]]*:[[:space:]]*"([^"]+)".*/\2/p' | head -n1)
     fi
     printf '%s' "$url"
@@ -143,11 +157,9 @@ for r in d.get('releases',[]):
     local version_block
     version_block=$(printf '%s\n' "$json" | grep -A10 "\"version\":[[:space:]]*\"$version\"" 2>/dev/null)
     if [[ -n "$version_block" ]]; then
-      # Try nested schema: find archive block, extract sha256
       sha=$(printf '%s\n' "$version_block" | grep -A6 '"archive":[[:space:]]*{' | grep '"sha256"' | sed -nE 's/.*"sha256"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)
     fi
     if [[ -z "$sha" ]]; then
-      # Fallback to flat schema: release-level sha256
       sha=$(printf '%s\n' "$json" | grep -A8 "\"version\":[[:space:]]*\"$version\"" | sed -nE 's/.*"sha256"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)
     fi
     printf '%s' "$sha"
@@ -199,6 +211,32 @@ if [[ -z "$TARGET" ]]; then
   [[ -n "$TARGET" ]] || TARGET="$(read_version)"
 fi
 
+# ---------------------------------------------------------------------------
+# U6: Script checksum divergence check
+# Compare own script checksums against the release-artifact manifest.
+# Warn-only (backward compat), logs divergence to journal.
+# ---------------------------------------------------------------------------
+check_script_divergence() {
+  local manifest_checksums
+  manifest_checksums="$(manifest_field script_checksums 2>/dev/null || true)"
+  [[ -z "$manifest_checksums" ]] && return 0  # No checksums in manifest (pre-U7 artifact)
+  local divergence=0
+  for script in upgrade.sh install/preflight.sh install/postflight.sh lib/common.sh lib/manifest.sh lib/state.sh lib/docker.sh lib/logging.sh; do
+    local expected actual
+    expected=$(echo "$manifest_checksums" | grep -o "${script}=[^, }]*" | cut -d= -f2 || true)
+    [[ -z "$expected" ]] && continue
+    actual=$(sha256sum "${V1_ROOT}/${script}" 2>/dev/null | cut -d' ' -f1 || true)
+    if [[ -n "$actual" && "$actual" != "$expected" ]]; then
+      warn "Script divergence: ${script} checksum ${actual} != manifest ${expected}"
+      divergence=1
+    fi
+  done
+  if [[ $divergence -eq 1 ]]; then
+    warn "Script checksum divergence detected — live skeleton may have been edited outside release process"
+    write_journal "divergence-$(date -u +%Y%m%dT%H%M%SZ).json" "$CURRENT" "divergence-warn"
+  fi
+}
+
 prepare_target_release() {
   local target="$1" dest backup_path tmp_manifest
   dest="$(release_dir "$target")"
@@ -237,23 +275,19 @@ if [[ $TARGET_FROM_ARG -eq 0 && "$TARGET" != "$(read_version)" && "${NEOSECRA_UP
 
   BOOTSTRAP_DL_URL="https://update.neosecra.com/releases/${TARGET}/bootstrap.sh"
 
-  # Fetch channel JSON to resolve artifact URLs
   CHANNEL_JSON="$(fetch_channel_json "$CHANNEL_URL")" || true
 
-  # Resolve archive URL: prefer from channel JSON, fall back to template
   RESOLVED_ARCHIVE_URL="$(parse_channel_archive_url "${CHANNEL_JSON:-}" "$TARGET")"
   [[ -z "$RESOLVED_ARCHIVE_URL" ]] && \
     RESOLVED_ARCHIVE_URL="https://update.neosecra.com/releases/${TARGET}/distribution.tar.gz"
   RESOLVED_ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-$RESOLVED_ARCHIVE_URL}"
 
-  # Download and verify distribution archive before bootstrapping
   DL_DIR="$(mktemp -d)"
   # shellcheck disable=SC2064
   trap "rm -rf '${DL_DIR}'" EXIT
 
   curl "${CURL_OPTS[@]}" -o "${DL_DIR}/distribution.tar.gz" "$RESOLVED_ARCHIVE_URL"
 
-  # SHA256 verification — prefer hash from channel JSON, else external .sha256 file
   EXPECTED_SHA256="$(parse_channel_release_sha256 "${CHANNEL_JSON:-}" "$TARGET")"
   if [[ -n "$EXPECTED_SHA256" ]]; then
     verify_sha256 "${DL_DIR}/distribution.tar.gz" "$EXPECTED_SHA256" "distribution.tar.gz (from channel JSON)"
@@ -268,7 +302,6 @@ if [[ $TARGET_FROM_ARG -eq 0 && "$TARGET" != "$(read_version)" && "${NEOSECRA_UP
     fi
   fi
 
-  # Minisign verification
   if curl "${CURL_OPTS[@]}" -o "${DL_DIR}/distribution.tar.gz.minisig" "${RESOLVED_ARCHIVE_URL}.minisig" 2>/dev/null; then
     verify_minisign "${DL_DIR}/distribution.tar.gz" "${DL_DIR}/distribution.tar.gz.minisig" \
       "$SIGNATURE_PUBKEY" "distribution.tar.gz"
@@ -282,11 +315,15 @@ if [[ $TARGET_FROM_ARG -eq 0 && "$TARGET" != "$(read_version)" && "${NEOSECRA_UP
   exit $?
 fi
 
-log "Upgrade: ${CURRENT} -> ${TARGET}"
+# ---------------------------------------------------------------------------
+# U8 fix: target == current → no-op, don't touch services
+# ---------------------------------------------------------------------------
 if [[ "$TARGET" == "$CURRENT" ]]; then
-  ok "Already on latest version: ${TARGET}"
+  ok "Already on target version: ${TARGET} — no upgrade needed"
   exit 0
 fi
+
+log "Upgrade: ${CURRENT} -> ${TARGET}"
 
 # ---------------------------------------------------------------------------
 # Downgrade protection
@@ -299,6 +336,9 @@ if ver_ge "$CURRENT" "$TARGET"; then
 fi
 
 acquire_lock
+trap _upgrade_cleanup EXIT
+
+_PREVIOUS_VERSION="$CURRENT"
 
 # --- Environment initialization ---
 initialize_env_file
@@ -310,6 +350,15 @@ bash "${V1_ROOT}/install/preflight.sh" || die "Preflight failed" 10
 ok "Preflight passed"
 
 [[ $DRY -eq 1 ]] && { ok "Dry-run complete"; exit 0; }
+
+# --- Script divergence check (U6) ---
+check_script_divergence
+
+# --- Prepare target release dir early (U1: needed for postflight target manifest) ---
+prepare_target_release "$TARGET"
+TARGET_MANIFEST="$(release_dir "$TARGET")/release-manifest.yaml"
+TARGET_DB_REV=""
+[[ -f "$TARGET_MANIFEST" ]] && TARGET_DB_REV="$(manifest_field database_revision "$TARGET_MANIFEST" 2>/dev/null || true)"
 
 # --- Backup ---
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
@@ -341,9 +390,9 @@ wait_service_healthy redis 90
 reconcile_postgres_password
 
 # --- Stop app services before schema change (DEP-08) ---
-# Old code must not run against the new schema while migrations apply.
 log "Stopping application services before migration..."
 run_compose stop backend worker frontend beat || warn "Some services were not running"
+_SERVICES_STOPPED=1
 
 # --- Migrate ---
 log "Running migrations..."
@@ -373,8 +422,11 @@ wait_frontend_http 120 || { print_service_diagnostics frontend; die "Frontend HT
 wait_frontend_api_proxy 120 || { print_service_diagnostics frontend backend; die "Frontend API proxy not reachable within 120s" 13; }
 verify_initial_admin_login_via_frontend || { print_service_diagnostics frontend backend; die "Initial admin login verification failed" 13; }
 
-# --- Verify ---
-if bash "${V1_ROOT}/install/postflight.sh" --timeout 120; then
+# --- U2: Postflight reads TARGET manifest (pass --target and expected db revision) ---
+POSTFLIGHT_ARGS=(--timeout 120 --target "$TARGET")
+[[ -n "$TARGET_DB_REV" ]] && POSTFLIGHT_ARGS+=(--expected-revision "$TARGET_DB_REV")
+
+if bash "${V1_ROOT}/install/postflight.sh" "${POSTFLIGHT_ARGS[@]}"; then
   ok "Health verification passed"
 else
   err "Health verification failed"
@@ -382,10 +434,10 @@ else
   die "Upgrade failed at health check" 1
 fi
 
-# --- State ---
-prepare_target_release "$TARGET"
+# --- State (commit) ---
 write_installed_version "$TARGET"
 switch_current "$TARGET"
-write_journal "upgrade-${CURRENT}-to-${TARGET}-$(date -u +%Y%m%dT%H%M%SZ).json"
+write_journal "upgrade-${CURRENT}-to-${TARGET}-$(date -u +%Y%m%dT%H%M%SZ).json" "$CURRENT" "completed"
+_COMMITTED=1
 
 ok "Upgrade complete: ${CURRENT} -> ${TARGET}"

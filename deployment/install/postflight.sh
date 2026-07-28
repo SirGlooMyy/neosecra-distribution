@@ -8,10 +8,10 @@ source "${V1_ROOT}/lib/common.sh"
 source "${V1_ROOT}/lib/manifest.sh"
 source "${V1_ROOT}/lib/state.sh"
 
-TIMEOUT=60; FAILS=0
-usage() { cat <<'EOF'
+TIMEOUT=60; FAILS=0; TARGET=""; EXPECTED_REVISION=""
+usage() { cat <<EOF
 neosecra verify — stack health verification
-Usage: neosecra verify [--timeout 60] [--help]
+Usage: neosecra verify [--timeout 60] [--target X.Y.Z] [--expected-revision <rev>] [--help]
 EOF
 }
 
@@ -19,6 +19,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --help|-h)    usage; exit 0 ;;
     --timeout)    shift; TIMEOUT="$1" ;;
+    --target)     shift; TARGET="$1" ;;
+    --expected-revision) shift; EXPECTED_REVISION="$1" ;;
     *) usage; die "unexpected argument: $1" 2 ;;
   esac
   shift
@@ -104,7 +106,17 @@ if [[ $HEALTHY -eq 1 ]]; then
             "/api/v1/fortigate" "/api/v1/active-directory" "/api/v1/veeam" "/api/v1/m365" \
             "/api/v1/scans" "/api/v1/findings" "/api/v1/reports"; do
     code=$(curl -s -o /dev/null -w '%{http_code}' "${BASE}${ep}" 2>/dev/null || true)
-    [[ "$code" != "000" ]] && chk_pass "  ${ep} (${code})" || chk_fail "  ${ep} unreachable"
+    # Reachability probe (no auth token): 2xx/3xx/401/403/404 all prove the API
+    # is alive and routing — module roots legitimately answer 404, protected
+    # endpoints 401, /scans 307. Only 000 (unreachable) and 5xx are failures.
+    # Strict credential verification lives in verify_initial_admin_login_via_frontend.
+    if [[ "$code" == "000" ]]; then
+      chk_fail "  ${ep} unreachable"
+    elif [[ "$code" =~ ^5[0-9][0-9]$ ]]; then
+      chk_fail "  ${ep} returned ${code} (server error)"
+    else
+      chk_pass "  ${ep} (${code})"
+    fi
   done
 fi
 
@@ -116,8 +128,22 @@ if [[ $HEALTHY -eq 1 ]]; then
   done
 fi
 
-# --- Migration revision ---
-expected_rev="$(manifest_field database_revision)"
+# --- Migration revision (U2: read from TARGET manifest, not current) ---
+expected_rev=""
+if [[ -n "$EXPECTED_REVISION" ]]; then
+  expected_rev="$EXPECTED_REVISION"
+elif [[ -n "$TARGET" ]]; then
+  target_manifest="$(release_dir "$TARGET")/release-manifest.yaml"
+  [[ -f "$target_manifest" ]] && expected_rev="$(manifest_field database_revision "$target_manifest" 2>/dev/null || true)"
+fi
+# Fallback: try container alembic heads directly
+if [[ -z "$expected_rev" ]]; then
+  expected_rev="$(manifest_field database_revision 2>/dev/null || true)"
+fi
+if [[ -z "$expected_rev" ]]; then
+  expected_rev=$(run_compose exec -T backend alembic heads 2>/dev/null | head -1 | cut -d' ' -f1 || true)
+fi
+
 cur_rev=$(run_compose exec -T backend alembic current 2>/dev/null || true)
 if [[ -n "$expected_rev" && "$cur_rev" == *"$expected_rev"* ]]; then
   chk_pass "Migration revision at expected head: ${expected_rev}"

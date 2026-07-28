@@ -229,11 +229,18 @@ else
         BUILD_COMMIT=$(git rev-parse --short HEAD)
         log " Build commit (pre-bump HEAD): ${BUILD_COMMIT}"
 
-        # Update release-manifest.yaml
+        # U7: Stamped fields — release_date, script_checksums
+        RELEASE_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
         sed -i "s/^version:.*/version: ${VERSION}/" deployment/v1/release-manifest.yaml
         sed -i "s/^minimum_upgrade_version:.*/minimum_upgrade_version: \"${CURRENT_VERSION}\"/" deployment/v1/release-manifest.yaml
         sed -i "s/^build_commit:.*/build_commit: ${BUILD_COMMIT}/" deployment/v1/release-manifest.yaml
         sed -i "s/^database_revision:.*/database_revision: \"${DATABASE_REVISION}\"/" deployment/v1/release-manifest.yaml
+        if grep -q '^release_date:' deployment/v1/release-manifest.yaml; then
+            sed -i "s/^release_date:.*/release_date: \"${RELEASE_DATE}\"/" deployment/v1/release-manifest.yaml
+        else
+            sed -i "/^database_revision:/a release_date: \"${RELEASE_DATE}\"" deployment/v1/release-manifest.yaml
+        fi
         log " release-manifest.yaml updated"
 
         # Stage all modified files

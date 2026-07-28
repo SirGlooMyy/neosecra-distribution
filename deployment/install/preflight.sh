@@ -39,7 +39,7 @@ log "NeoSecra Assessment preflight — ${VERSION}"
 
 # --- OS ---
 OS="$(uname -s)"; ARCH="$(uname -m)"
-[[ "$OS" == "Linux" ]] && chk "OS: ${OS} ${ARCH}" || chk_warn "OS: ${OS} (Linux recommended)"
+[[ "$OS" == "Linux" ]] && chk "OS: ${OS} ${ARCH}" || chk_fail "OS: ${OS} (Linux required)"
 
 # --- CPU/RAM/Disk ---
 CORES=$(nproc 2>/dev/null || echo 0)
@@ -47,14 +47,35 @@ MEM=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{printf "%.0f", $2/1048576}
 DISK=$(df /var/lib/docker 2>/dev/null | awk 'NR==2{printf "%.0f", $4/1048576}' || echo 0)
 [[ $CORES -ge 2 ]] && chk "CPU: ${CORES} cores" || chk_fail "CPU: ${CORES} (min 2)"
 [[ $MEM -ge 4 ]] && chk "RAM: ${MEM} GB" || chk_fail "RAM: ${MEM} GB (min 4)"
-[[ $DISK -ge 20 ]] && chk "Disk: ${DISK} GB free" || chk_warn "Disk: ${DISK} GB (min 20 recommended)"
+# U3: Disk is critical — must fail if below minimum
+[[ $DISK -ge 20 ]] && chk "Disk: ${DISK} GB free" || chk_fail "Disk: ${DISK} GB free (min 20 GB required)"
 
-# --- Docker ---
+# --- Docker / Compose version check against manifest required_runtime ---
 require_compose_v2
 DOCKER_VER="$(docker --version 2>/dev/null || echo '?')"
 COMPOSE_VER="$(docker compose version 2>/dev/null || echo '?')"
+
+REQUIRED_DOCKER="$(manifest_field docker_min 2>/dev/null || echo "24.0")"
+REQUIRED_COMPOSE="$(manifest_field compose_min 2>/dev/null || echo "2.20")"
+
+docker_version_ok() {
+  local ver="$1" required="$2"
+  local v_num r_num
+  v_num=$(printf '%s' "$ver" | grep -oE '[0-9]+\.[0-9]+' | head -1 || echo "0.0")
+  r_num="$required"
+  local vpad rpad
+  vpad=$(printf '%s' "$v_num" | awk -F. '{printf "%05d_%05d", $1, $2}' 2>/dev/null)
+  rpad=$(printf '%s' "$r_num" | awk -F. '{printf "%05d_%05d", $1, $2}' 2>/dev/null)
+  [[ "$vpad" < "$rpad" ]] && return 1
+  return 0
+}
+
 chk "Docker: ${DOCKER_VER}"
 chk "Compose: ${COMPOSE_VER}"
+
+docker_version_ok "$DOCKER_VER" "$REQUIRED_DOCKER" || chk_fail "Docker version ${DOCKER_VER} < required ${REQUIRED_DOCKER}"
+docker_version_ok "$COMPOSE_VER" "$REQUIRED_COMPOSE" || chk_fail "Compose version ${COMPOSE_VER} < required ${REQUIRED_COMPOSE}"
+
 docker info >/dev/null 2>&1 || chk_fail "Docker daemon unavailable or not accessible to the current user"
 
 # --- Package files ---
@@ -93,9 +114,9 @@ for spec in "POSTGRES_PORT:25433" "REDIS_PORT:23639" "BACKEND_PORT:23800" "FRONT
   if port_is_free "$port"; then
     chk "Port ${port} (${key}) free"
   elif port_belongs_to_project "$port" "$COMPOSE_PROJECT"; then
-    chk_warn "Port ${port} already bound by this stack"
+    chk "Port ${port} (${key}) already bound by this stack (expected)"
   else
-    chk_fail "Port ${port} (${key}) in use"
+    chk_fail "Port ${port} (${key}) in use by another process"
     PORT_FAIL=1
   fi
 done

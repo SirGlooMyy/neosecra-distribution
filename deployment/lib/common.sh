@@ -737,9 +737,45 @@ acquire_lock() {
   if ! mkdir "$LOCK_FILE" 2>/dev/null; then
     die "Another install/upgrade is in progress (lock: ${LOCK_FILE})" 5
   fi
-  trap 'release_lock' EXIT
 }
 release_lock() { rmdir "$LOCK_FILE" 2>/dev/null || true; }
+
+# --- Upgrade failure recovery ---
+# Start previous release's compose when upgrade fails mid-flight.
+# Reads previous version from journal or state, then starts compose
+# from that release's deployment directory.
+recover_previous_release() {
+  local prev_ver prev_dir
+  prev_ver="$(read_installed_version 2>/dev/null || true)"
+  [[ -n "$prev_ver" && "$prev_ver" != "none" ]] || prev_ver="$(journal_previous_version 2>/dev/null || true)"
+  [[ -n "$prev_ver" && "$prev_ver" != "none" ]] || { warn "Cannot determine previous version for recovery — services may be down."; return 1; }
+
+  prev_dir="$(release_dir "$prev_ver")"
+  if [[ ! -d "$prev_dir" ]]; then
+    warn "Previous release directory missing: ${prev_dir}"
+    return 1
+  fi
+
+  log "Recovering: starting compose from ${prev_ver} (${prev_dir})..."
+  if [[ -f "${prev_dir}/.env.v1" && -f "${prev_dir}/docker-compose.v1.yml" ]]; then
+    (
+      export V1_ROOT="${prev_dir}"
+      export COMPOSE_FILE="${prev_dir}/docker-compose.v1.yml"
+      export ENV_FILE="${prev_dir}/.env.v1"
+      cd "$prev_dir"
+      docker compose \
+        --project-name "$COMPOSE_PROJECT" \
+        --project-directory "$prev_dir" \
+        --env-file "${prev_dir}/.env.v1" \
+        -f "${prev_dir}/docker-compose.v1.yml" \
+        up -d 2>/dev/null || warn "Recovery compose up failed — manual intervention may be needed"
+    )
+    ok "Recovery: previous release compose started (${prev_ver})"
+  else
+    warn "Previous release missing .env.v1 or docker-compose.v1.yml — cannot recover compose"
+    return 1
+  fi
+}
 
 # --- Path helpers ---
 release_dir() { echo "${RELEASES_DIR}/${1}"; }

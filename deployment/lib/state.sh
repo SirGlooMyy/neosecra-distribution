@@ -62,16 +62,27 @@ create_install_dirs() {
 
 # Write upgrade journal
 write_journal() {
-  local file="$1"
+  local file="$1" previous="${2:-}" status="${3:-completed}"
   mkdir -p "$JOURNAL_DIR"
   cat > "${JOURNAL_DIR}/${file}" << JOURNAL
 {
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "product": "${PRODUCT}",
-  "edition": "${EDITION}"
+  "edition": "${EDITION}",
+  "previous_version": "${previous}",
+  "status": "${status}"
 }
 JOURNAL
   ok "Journal: ${JOURNAL_DIR}/${file}"
+}
+
+# Read most recent journal entry's previous_version
+journal_previous_version() {
+  local latest
+  latest="$(ls -t "${JOURNAL_DIR}" 2>/dev/null | head -1)" || return 1
+  [[ -n "$latest" ]] || return 1
+  python3 -c "import json; d=json.load(open('${JOURNAL_DIR}/${latest}')); print(d.get('previous_version',''))" 2>/dev/null || \
+    grep -o '"previous_version"[[:space:]]*:[[:space:]]*"\([^"]*\)"' "${JOURNAL_DIR}/${latest}" 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' || return 1
 }
 
 write_install_state() {
