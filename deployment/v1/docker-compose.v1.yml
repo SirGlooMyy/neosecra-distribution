@@ -47,6 +47,7 @@ services:
       - uploads:/app/uploads
       - reports:/app/reports
       - backups:/app/backups
+      - ./ca:/app/ca:ro
     ports:
       - "${BACKEND_PORT:-23800}:8000"
     depends_on:

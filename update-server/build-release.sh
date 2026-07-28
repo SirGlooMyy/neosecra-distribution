@@ -90,20 +90,21 @@ if [[ -f "$MANIFEST" ]]; then
     sed -i "s|security-health-frontend:[0-9.]*\$|security-health-frontend:${VERSION}|g" "$MANIFEST"
 
     # U7: Add or update script_checksums, release_date, database_revision fields
+    # NOTE: | delimiter — SCRIPT_CHECKSUMS contains / (paths like deployment/upgrade/upgrade.sh=...)
     if grep -q '^script_checksums:' "$MANIFEST"; then
-        sed -i "s/^script_checksums:.*/script_checksums: \"${SCRIPT_CHECKSUMS}\"/" "$MANIFEST"
+        sed -i "s|^script_checksums:.*|script_checksums: \"${SCRIPT_CHECKSUMS}\"|" "$MANIFEST"
     else
         sed -i "/^database_revision:/a script_checksums: \"${SCRIPT_CHECKSUMS}\"" "$MANIFEST"
     fi
 
     if grep -q '^release_date:' "$MANIFEST"; then
-        sed -i "s/^release_date:.*/release_date: \"${RELEASE_DATE}\"/" "$MANIFEST"
+        sed -i "s|^release_date:.*|release_date: \"${RELEASE_DATE}\"|" "$MANIFEST"
     else
         sed -i "/^script_checksums:/a release_date: \"${RELEASE_DATE}\"" "$MANIFEST"
     fi
 
     if [[ -n "$DB_REVISION" ]]; then
-        sed -i "s/^database_revision:.*/database_revision: \"${DB_REVISION}\"/" "$MANIFEST"
+        sed -i "s|^database_revision:.*|database_revision: \"${DB_REVISION}\"|" "$MANIFEST"
     fi
 
     echo "[build-release] Manifest stamped:"
