@@ -8,17 +8,17 @@
 
 product: neosecra-security-health
 edition: security-health
-version: 1.1.1
+version: 1.3.2
 channel: stable
 
 # Git commit — stamped at release time by CI.
 build_commit: f461530
 
 # Alembic migration head this release expects the database to reach.
-database_revision: "056_findings_runtime_drift"
+database_revision: "063_add_finding_closure_workflow"
 
 # First numbered V1 release — no prior V1 release exists to upgrade from.
-minimum_upgrade_version: null
+minimum_upgrade_version: "1.2.0"
 
 required_runtime:
   docker_min: "24.0"
