@@ -74,5 +74,5 @@ tar czf "${OUTPUT_DIR}/${ARCHIVE_NAME}" "${ARCHIVE_DIRNAME}"
 echo "[build-release] Archive created: ${OUTPUT_DIR}/${ARCHIVE_NAME}"
 echo "[build-release] Size: $(du -h "${OUTPUT_DIR}/${ARCHIVE_NAME}" | cut -f1)"
 echo "[build-release] Contents:"
-tar tzf "${OUTPUT_DIR}/${ARCHIVE_NAME}" | head -20
+tar tzf "${OUTPUT_DIR}/${ARCHIVE_NAME}" | head -20 || true  # SIGPIPE under pipefail is cosmetic-only here
 echo "[build-release] Done."

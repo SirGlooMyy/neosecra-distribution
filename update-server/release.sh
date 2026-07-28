@@ -212,41 +212,17 @@ else
             log " VERSION files updated to ${VERSION}"
         fi
 
-        # Find database revision head
-        DATABASE_REVISION=$(python3 << 'PYEOF'
-import os, re
-
-versions_dir = "backend/alembic/versions"
-all_revisions = {}
-down_references = set()
-
-for f in os.listdir(versions_dir):
-    if not f.endswith('.py') or f == '__init__.py':
-        continue
-    content = open(os.path.join(versions_dir, f)).read()
-    rev_match = re.search(r'^revision\s*=\s*[\'"]([^\'"]+)[\'"]', content, re.MULTILINE)
-    if not rev_match:
-        continue
-    rev = rev_match.group(1)
-    all_revisions[rev] = f
-
-    down_match = re.search(r'^down_revision\s*=\s*[\'"]([^\'"]+)[\'"]', content, re.MULTILINE)
-    if down_match:
-        down_references.add(down_match.group(1))
-    else:
-        down_match2 = re.search(r'^down_revision\s*=\s*(.+)', content, re.MULTILINE)
-        if down_match2:
-            val = down_match2.group(1).strip()
-            if val != 'None':
-                for g in re.findall(r'[\'"]([^\'"]+)[\'"]', val):
-                    down_references.add(g)
-
-for rev in all_revisions:
-    if rev not in down_references:
-        print(rev)
-        break
-PYEOF
-)
+        # Find database revision head — via alembic itself (naive file parsing
+        # is unreliable with branches/type annotations). Requires alembic on PATH.
+        DATABASE_REVISION=$(
+            cd backend
+            DATABASE_URL=sqlite+aiosqlite:///:memory: alembic heads 2>/dev/null | awk '/\(head\)/{print $1}'
+        )
+        HEAD_COUNT=$(printf '%s\n' "${DATABASE_REVISION}" | grep -c . || true)
+        if [[ "${HEAD_COUNT}" != "1" ]]; then
+            echo "[ERROR] alembic heads did not return exactly one head (got: '${DATABASE_REVISION}'). Install alembic or resolve branches."
+            exit 1
+        fi
         log " Database revision head: ${DATABASE_REVISION}"
 
         # Current HEAD short hash for build_commit (first pass)
@@ -300,9 +276,19 @@ elif [[ $TAG_EXISTS -eq 1 ]]; then
     log " [SKIP] Tag already existed — no new CI run to wait for."
 else
     guard_gh
-    CI_RUN_ID=$(gh run list --workflow security-health-release.yml --limit 1 --json databaseId --jq '.[0].databaseId' --repo SirGlooMyy/neosecra-assessment)
+    # Wait for a run belonging to THIS tag's commit — right after push,
+    # `gh run list --limit 1` can still return the previous release's run.
+    TAG_SHA=$(git -C "${ASSESSMENT_REPO}" rev-parse "refs/tags/${TAG}^{commit}" 2>/dev/null || true)
+    CI_RUN_ID=""
+    for _ in $(seq 1 30); do
+        if [[ -n "$TAG_SHA" ]]; then
+            CI_RUN_ID=$(gh run list --workflow security-health-release.yml --limit 10 --json databaseId,headSha --jq ".[] | select(.headSha == \"$TAG_SHA\") | .databaseId" --repo SirGlooMyy/neosecra-assessment | head -1)
+        fi
+        [[ -n "$CI_RUN_ID" ]] && break
+        sleep 10
+    done
     if [[ -z "$CI_RUN_ID" ]]; then
-        echo "[ERROR] No workflow run found for security-health-release.yml"
+        echo "[ERROR] No workflow run found for tag $TAG (sha ${TAG_SHA:-unknown}) after 5 minutes"
         exit 1
     fi
     log " Watching CI run #${CI_RUN_ID}..."
