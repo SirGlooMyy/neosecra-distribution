@@ -30,9 +30,9 @@ ENV_EXAMPLE="${V1_ROOT}/.env.v1.example"
 VERSION_FILE="${V1_ROOT}/VERSION"
 MANIFEST_FILE="${V1_ROOT}/release-manifest.yaml"
 
-# --- GHCR images ---
-GHCR_REGISTRY="ghcr.io"
-GHCR_NAMESPACE="sirgloomyy/neosecra-assessment"
+# --- Image registry (kendi sunucumuz — ghcr bagimliligi kalmadi) ---
+GHCR_REGISTRY="registry.neosecra.com"
+GHCR_NAMESPACE=""
 
 # --- Logging ---
 if [[ -t 2 ]]; then
@@ -214,13 +214,13 @@ apply_release_image_refs() {
   local version backend_image worker_image frontend_image
   version="${1:-$(read_version)}"
   if [[ "$version" == "$(read_version)" ]]; then
-    backend_image="$(release_image_ref backend "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${version}")"
+    backend_image="$(release_image_ref backend "registry.neosecra.com/security-health-backend:${version}")"
     worker_image="$(release_image_ref worker "$backend_image")"
-    frontend_image="$(release_image_ref frontend "ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:${version}")"
+    frontend_image="$(release_image_ref frontend "registry.neosecra.com/security-health-frontend:${version}")"
   else
-    backend_image="ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${version}"
+    backend_image="registry.neosecra.com/security-health-backend:${version}"
     worker_image="$backend_image"
-    frontend_image="ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:${version}"
+    frontend_image="registry.neosecra.com/security-health-frontend:${version}"
   fi
 
   upsert_env_value NEOSECRA_VERSION "$version"
@@ -695,8 +695,8 @@ validate_image_ref() {
     err "${key} must include an exact tag or digest"
     return 1
   fi
-  if [[ "$ref" == ghcr.io/* && "$ref" =~ [A-Z] ]]; then
-    err "${key} contains uppercase characters in a GHCR image reference"
+  if [[ "$ref" =~ [A-Z] ]]; then
+    err "${key} contains uppercase characters in an image reference"
     return 1
   fi
   return 0

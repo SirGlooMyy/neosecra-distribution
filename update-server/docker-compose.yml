@@ -28,6 +28,20 @@ services:
     environment:
       - CADDY_MODE=${CADDY_MODE:-internal}
 
+  # Docker Registry — image'lar artik kendi sunucumuzdan (ghcr bagimliligi yok).
+  # Caddy registry.neosecra.com vhost'u ile disari TLS'li acilir.
+  # 127.0.0.1:5000 bu makineden sifresiz push icin (docker localhost'a insecure davranir).
+  registry:
+    image: registry:2
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - registry_data:/var/lib/registry
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+
 volumes:
+  registry_data:
   caddy_data:
   caddy_config:

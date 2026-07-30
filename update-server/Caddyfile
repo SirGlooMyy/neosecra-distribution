@@ -52,6 +52,17 @@ license.neosecra.com {
     }
 }
 
+
+# Docker Registry — kendi image sunucumuz (ghcr yerine)
+registry.neosecra.com {
+    tls /etc/caddy/certs/registry.neosecra.com.crt /etc/caddy/certs/registry.neosecra.com.key
+    reverse_proxy registry:5000
+}
+
+http://registry.neosecra.com {
+    redir https://registry.neosecra.com{uri} permanent
+}
+
 http://license.neosecra.com {
     redir https://license.neosecra.com{uri} permanent
 }

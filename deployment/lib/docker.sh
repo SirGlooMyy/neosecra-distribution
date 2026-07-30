@@ -3,29 +3,24 @@
 # Source after common.sh
 set -Euo pipefail
 
-# Authenticate to GHCR without persisting or echoing the token.
+# Registry erisim kontrolu — artik GHCR degil kendi registry'miz (registry.neosecra.com).
+# Token/login GEREKMEZ: registry Tailscale/LAN ici acik, TLS custom CA ile.
+# Fonksiyon adi geriye donuk uyumluluk icin korunuyor (install.sh/upgrade.sh cagiriyor).
 ghcr_login() {
-  if [[ ! -t 0 ]]; then
-    # Non-interactive (SSH/agent) run: reuse an existing docker login if it can
-    # already read GHCR, instead of dying on the missing terminal.
-    local release_ver
-    release_ver=$(tr -d ' \n' < "${V1_ROOT}/VERSION" 2>/dev/null || true)
-    if [[ -n "$release_ver" ]] && docker manifest inspect "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${release_ver}" >/dev/null 2>&1; then
-      ok "GHCR auth reused from existing docker login (non-interactive)"
-      return 0
-    fi
-    die "GHCR login requires an interactive terminal for silent token entry" 4
+  local release_ver
+  release_ver=$(tr -d ' 
+' < "${V1_ROOT}/VERSION" 2>/dev/null || true)
+  local ref="registry.neosecra.com/security-health-backend:${release_ver:-latest}"
+  if docker manifest inspect "$ref" >/dev/null 2>&1; then
+    ok "NeoSecra registry erisilebilir (registry.neosecra.com)"
+    return 0
   fi
-
-  local ghcr_token
-  read -rsp "GHCR read-only token: " ghcr_token </dev/tty
-  echo >/dev/tty
-  [[ -n "$ghcr_token" ]] || die "GHCR token was empty" 4
-  printf '%s' "$ghcr_token" | docker login "$GHCR_REGISTRY" \
-    --username SirGlooMyy \
-    --password-stdin
-  unset ghcr_token
-  ok "GHCR authentication passed"
+  # manifest inspect auth'suz calismazsa /v2/ ping dene
+  if curl -fsS --max-time 10 "https://registry.neosecra.com/v2/" >/dev/null 2>&1; then
+    ok "NeoSecra registry API erisilebilir (v2 ping)"
+    return 0
+  fi
+  die "registry.neosecra.com erisilemiyor — /etc/hosts kaydi ve CA sertifikasi kurulumunu kontrol edin (bootstrap.sh internal mod)" 4
 }
 
 pull_service_image() {
