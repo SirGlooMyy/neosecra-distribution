@@ -12,7 +12,9 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-OUTPUT_DIR="${SCRIPT_DIR}/www/releases/${VERSION}"
+# Default publishes into the update-server web tree; override with
+# NEOSECRA_BUILD_OUTPUT_DIR for local/test builds (keeps www/releases clean).
+OUTPUT_DIR="${NEOSECRA_BUILD_OUTPUT_DIR:-${SCRIPT_DIR}/www/releases/${VERSION}}"
 ARCHIVE_NAME="distribution.tar.gz"
 ARCHIVE_DIRNAME="neosecra-distribution-${VERSION}"
 
@@ -31,16 +33,24 @@ echo "[build-release] Copying repository contents..."
 cd "${REPO_ROOT}"
 
 # Copy only tracked files to avoid .git, secrets, etc.
+# Exclude the entire update-server/ tree: it is the *publisher* (build/sign/
+# serve tooling plus previously-published artifacts). It is not customer
+# payload, bloats the archive with nested tarballs and old bootstrap.sh copies,
+# and its build scripts (this one) carry ghcr.io patterns that must NOT be
+# rewritten by the stamping step below. The CA cert is added separately.
 git ls-files | while IFS= read -r f; do
+    case "$f" in
+        update-server/*) continue ;;
+    esac
     mkdir -p "${ARCHIVE_ROOT}/$(dirname "$f")"
     cp -a "$f" "${ARCHIVE_ROOT}/$f"
 done
 
-# Ensure CA certificate is included in archive (for client-side TLS verification)
-if [[ -d update-server/ca ]]; then
-  mkdir -p "${ARCHIVE_ROOT}/update-server/ca"
-  cp -a update-server/ca/update-neosecra-com-root.crt "${ARCHIVE_ROOT}/update-server/ca/" 2>/dev/null || true
-fi
+# Ensure CA certificate is included in archive (for client-side TLS verification).
+# The runtime (bootstrap/upgrade) reads it from deployment/ca/, which is the
+# only copy shipped. update-server/ is excluded below as it is the publisher,
+# not customer payload, and its build-tool scripts would otherwise self-collide
+# with the ghcr stamping step below.
 if [[ -d deployment/ca ]]; then
   mkdir -p "${ARCHIVE_ROOT}/deployment/ca"
   cp -a deployment/ca/update-neosecra-com-root.crt "${ARCHIVE_ROOT}/deployment/ca/" 2>/dev/null || true
@@ -110,6 +120,28 @@ if [[ -f "$MANIFEST" ]]; then
     echo "[build-release] Manifest stamped:"
     grep -E '^(version:|database_revision:|script_checksums:|release_date:)' "$MANIFEST" | sed 's/^/  /'
 fi
+
+# U9: Pin every image reference to registry.neosecra.com and assert the archive
+# carries NO ghcr.io reference in any artifact. The 1.3.13 regression was caused
+# by stale ghcr refs leaking into .env.v1; this is the hard contract that
+# prevents recurrence. Two rewrites:
+#   1. ghcr.io/sirgloomyy/neosecra-assessment/<img>  -> registry.neosecra.com/<img>
+#   2. residual bare ghcr.io (login/firewall prose)   -> registry.neosecra.com
+echo "[build-release] Stamping image refs -> registry.neosecra.com ..."
+while IFS= read -r -d '' f; do
+    sed -i \
+        -e 's|ghcr.io/sirgloomyy/neosecra-assessment|registry.neosecra.com|g' \
+        -e 's|ghcr\.io|registry.neosecra.com|g' "$f"
+done < <(grep -rIl --null 'ghcr\.io' "$ARCHIVE_ROOT" 2>/dev/null || true)
+
+# Hard contract: no ghcr.io may remain in the shipped archive.
+mapfile -t -d '' GHCR_HITS < <(grep -rIl --null 'ghcr\.io' "$ARCHIVE_ROOT" 2>/dev/null || true)
+if [[ ${#GHCR_HITS[@]} -ne 0 ]]; then
+    echo "[build-release] ERROR: ghcr.io references remain in archive after stamping:" >&2
+    printf '  %s\n' "${GHCR_HITS[@]}" >&2
+    exit 1
+fi
+echo "[build-release] Verified: no ghcr.io references in archive"
 
 # Create the tarball
 echo "[build-release] Creating archive..."

@@ -59,7 +59,8 @@ sudo systemctl enable --now docker
 | **Inbound** | 23300 | TCP | NeoSecra Web UI |
 | **Inbound** | 22 | TCP | SSH (opsiyonel) |
 | **Outbound** | 443 | TCP | `update.neosecra.com` — güncelleme/metadata |
-| **Outbound** | 443 | TCP | `ghcr.io` — Docker image pull |
+| **Outbound** | 443 | TCP | `registry.neosecra.com` — NeoSecra image pull (backend/frontend) |
+| **Outbound** | 443 | TCP | Docker Hub — kamusal image pull (postgres/redis/openvas) |
 | **Outbound** | 443 | TCP | `api.github.com` — lisans doğrulama |
 | Internal | 5432 | TCP | PostgreSQL (yalnızca container'lar arası) |
 | Internal | 6379 | TCP | Redis (yalnızca container'lar arası) |
@@ -86,10 +87,13 @@ sudo ufw allow 23300/tcp
 ```bash
 curl -fsSL https://update.neosecra.com/bootstrap.sh 
   | sudo NEOSECRA_TLS_MODE=public 
-    NEOSECRA_GHCR_USER=<musteri-robot-adi> 
-    NEOSECRA_GHCR_TOKEN=<ghcr-readonly-pat> 
     bash
 ```
+
+> **Kimlik doğrulama:** NeoSecra image'ları `registry.neosecra.com`'dadır ve
+> Tailscale/LAN üzerinden TLS ile erişilir — Docker `login`/token **gerektirmez**.
+> Eski `NEOSECRA_GHCR_USER`/`NEOSECRA_GHCR_TOKEN` değişkenleri geriye dönük uyumluluk
+> için kabul edilir ama artık kullanılmaz.
 
 **Yayın sonrası geçerlidir.** Öncesinde [Adım Adım Manuel Kurulum](#3-adım-adım-manuel-kurulum)'u kullanın.
 
@@ -113,25 +117,22 @@ sha256sum bootstrap.sh
 less bootstrap.sh
 ```
 
-### 3.2 GHCR Kimlik Doğrulama
+### 3.2 Image Registry Erişimi
 
-NeoSecra size bir **GitHub robot kullanıcı adı** ve **read-only PAT (Personal
-Access Token)** sağlayacaktır. Token'ın `packages:read` yetkisi vardır.
+NeoSecra image'ları `registry.neosecra.com`'da barındırılır. Registry, müşteri
+sunucusunun bağlı olduğu Tailscale/LAN ağı üzerinden **TLS ile** erişilir —
+Docker `login` veya token **gerekmez**. (Eski `NEOSECRA_GHCR_*` değişkenleri
+geriye dönük uyumluluk için kabul edilir ama artık kullanılmaz.)
 
 ```bash
-# Token'ı bir env değişkenine ata (shell oturumu boyunca)
-read -rsp "GHCR Token: " NEOSECRA_GHCR_TOKEN
-export NEOSECRA_GHCR_USER="<musteri-robot-adi>"
-export NEOSECRA_GHCR_TOKEN
-export NEOSECRA_TLS_MODE=public
+# Registry erişilebilirliğini doğrula (custom CA kullanılmıyorsa --cacert gerekmez)
+curl -fsS https://registry.neosecra.com/v2/ >/dev/null && echo "registry OK"
 ```
 
 ### 3.3 Kurulumu Başlat
 
 ```bash
 sudo NEOSECRA_TLS_MODE=public \
-  NEOSECRA_GHCR_USER="$NEOSECRA_GHCR_USER" \
-  NEOSECRA_GHCR_TOKEN="$NEOSECRA_GHCR_TOKEN" \
   bash bootstrap.sh
 ```
 
@@ -142,7 +143,10 @@ Kurulum sırasında:
 3. Dağıtım paketi (`distribution.tar.gz`) indirilir ve `/opt/neosecra/assessment/`
    altına açılır
 4. Rastgele parolalar üretilir ve `.env.v1` dosyasına yazılır
-5. Docker image'ları `ghcr.io`'dan çekilir
+5. Docker image'ları çekilir: NeoSecra image'ları `registry.neosecra.com`'dan
+   (backend/worker/frontend); kamusal image'lar Docker Hub'dan
+   (`postgres`/`redis`/`openvas`) — kurulum/upgrade paketi kamusal image içermez,
+   hepsi kurulum anında `docker compose pull` ile çekilir
 6. PostgreSQL + Redis başlatılır
 7. Veritabanı migrasyonları çalıştırılır
 8. Backend, worker ve frontend servisleri başlatılır
@@ -225,8 +229,9 @@ sudo neosecra upgrade 1.2.0
 sudo neosecra upgrade --rollback-on-failure
 ```
 
-> **Not:** upgrade.sh bootstrap.sh ile aynı GHCR kimlik bilgilerini kullanır.
-> `/opt/neosecra/secrets/ghcr-auth` dosyası mevcutsa otomatik olarak algılanır.
+> **Not:** upgrade.sh, image'leri `registry.neosecra.com`'dan çeker (token'siz,
+> TLS tabanlı erişim). Kamusal image'lar (postgres/redis/openvas) Docker Hub'dan
+> çekilir; upgrade bundle yalnızca değişen NeoSecra image'larını (backend/frontend) içerir.
 
 ### 5.3 Upgrade Sonrası Doğrulama
 
@@ -344,13 +349,15 @@ Detaylı air-gap prosedürü için: [CUSTOM-CA.md](CUSTOM-CA.md) ve
 
 ## 8. Sorun Giderme
 
-### 8.1 "GHCR robot token gerekli"
+### 8.1 "registry.neosecra.com erişilemiyor"
 
-**Hata:** `[neosecra] GHCR robot token gerekli — NeoSecra'dan alınan
-CUSTOMER-INSTALL paketine bakın`
+**Hata:** `[neosecra] [warn] registry.neosecra.com şimdilik erişilemedi` veya
+image pull sırasında `not found` / timeout.
 
-**Çözüm:** NeoSecra'dan sağlanan kullanıcı adı ve token'ı `NEOSECRA_GHCR_USER` /
-`NEOSECRA_GHCR_TOKEN` olarak ayarlayın.
+**Çözüm:** Sunucunun Tailscale/LAN ağında olduğunu doğrulayın. Internal TLS
+modunda `/etc/hosts` kaydının ve custom CA sertifikasının kurulu olduğundan emin
+olun. Kamusal image'lar (postgres/redis) Docker Hub'dan çekilir — Docker Hub
+erişilebilirliğini kontrol edin.
 
 ### 8.2 Yetersiz Disk Alanı
 
@@ -385,12 +392,14 @@ export HTTP_PROXY=http://proxy:8080
 export HTTPS_PROXY=http://proxy:8080
 ```
 
-### 8.4 "docker login failed — token expired"
+### 8.4 "docker pull" / image çekme hatası
 
-**Hata:** ghcr.io girişi başarısız.
+**Hata:** `registry.neosecra.com` image çekme hatası (örn. `not found`, timeout).
 
-**Çözüm:** Token süresi dolmuş olabilir. NeoSecra ops ile iletişime geçerek
-yeni token talep edin.
+**Çözüm:** `registry.neosecra.com` Tailscale/LAN üzerinden erişilir. Sunucunun
+Tailscale ağında olduğunu, `/etc/hosts` kaydının ve custom CA sertifikasının
+(internal TLS modu) kurulu olduğunu doğrulayın. Kamusal image'lar (postgres/redis)
+Docker Hub'dan çekilir — Docker Hub erişilebilirliğini kontrol edin.
 
 ### 8.5 Migration Hatası / Rollback
 

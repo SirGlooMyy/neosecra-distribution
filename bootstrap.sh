@@ -120,56 +120,45 @@ err()  { echo -e "${RED}[neosecra]${RST} $*"; exit 1; }
 [[ $EUID -eq 0 ]] || err "Root required"
 
 # ---------------------------------------------------------------------------
-# GHCR authentication for customer Docker image pulls
-#   NEOSECRA_GHCR_USER      — GitHub robot account username
-#   NEOSECRA_GHCR_TOKEN     — GitHub PAT with packages:read scope
-# Required for public (customer) installs; used to pull images from ghcr.io
+# Image registry — NeoSecra images live at registry.neosecra.com (our own
+# registry on the Tailscale/LAN, TLS via custom CA in internal mode).
+# No Docker login/token is required: the registry is reached over the private
+# network and authenticated by TLS, not by Docker credentials.
+#
+# Legacy NEOSECRA_GHCR_USER / NEOSECRA_GHCR_TOKEN env vars are accepted for
+# backward compatibility with existing customer runbooks but are intentionally
+# unused — GHCR is no longer in the image supply chain.
 # ---------------------------------------------------------------------------
-NEOSECRA_GHCR_USER="${NEOSECRA_GHCR_USER:-}"
-NEOSECRA_GHCR_TOKEN="${NEOSECRA_GHCR_TOKEN:-}"
+NEOSECRA_REGISTRY="${NEOSECRA_REGISTRY:-registry.neosecra.com}"
+: "${NEOSECRA_GHCR_USER:=}"
+: "${NEOSECRA_GHCR_TOKEN:=}"
+if [[ -n "$NEOSECRA_GHCR_USER" || -n "$NEOSECRA_GHCR_TOKEN" ]]; then
+  info "NEOSECRA_GHCR_* algılandı ama artık kullanılmıyor (registry.neosecra.com token'siz)"
+  unset NEOSECRA_GHCR_TOKEN
+fi
 
-ghcr_login_customer() {
-  local user="$1" token="$2"
-  local secrets_dir="/opt/neosecra/secrets"
-  local docker_cfg="${secrets_dir}/.docker"
-
-  mkdir -p "$secrets_dir"
-  chmod 0700 "$secrets_dir"
-  mkdir -p "$docker_cfg"
-  chmod 0700 "$docker_cfg"
-
-  export DOCKER_CONFIG="$docker_cfg"
-
-  if ! printf '%s' "$token" | docker login ghcr.io \
-    --username "$user" \
-    --password-stdin 2>/dev/null; then
-    err "ghcr.io login failed — token geçersiz veya süresi dolmuş olabilir"
+registry_reachable() {
+  local ref="${NEOSECRA_REGISTRY}/security-health-backend:${VERSION}"
+  if docker manifest inspect "$ref" >/dev/null 2>&1; then
+    info "NeoSecra registry erişilebilir (${NEOSECRA_REGISTRY})"
+    return 0
   fi
-
-  # Persist credential reference for subsequent compose pull / docker calls
-  cat > "${secrets_dir}/ghcr-auth" <<-EOF
-DOCKER_CONFIG=${docker_cfg}
-NEOSECRA_GHCR_USER=${user}
-EOF
-  chmod 0600 "${secrets_dir}/ghcr-auth"
-  info "GHCR authentication configured for ${user}"
+  # TLS-protected registry: try the unauthenticated /v2/ ping (honours custom CA)
+  local curl_args=(-fsS --max-time 10)
+  if [[ -n "${CURL_CA_BUNDLE:-}" && -f "${CURL_CA_BUNDLE:-}" ]]; then
+    curl_args+=(--cacert "$CURL_CA_BUNDLE")
+  fi
+  if curl "${curl_args[@]}" "https://${NEOSECRA_REGISTRY}/v2/" >/dev/null 2>&1; then
+    info "NeoSecra registry API erişilebilir (${NEOSECRA_REGISTRY}/v2)"
+    return 0
+  fi
+  return 1
 }
 
-# --- GHCR auth logic ---
-if [[ -n "$NEOSECRA_GHCR_USER" && -n "$NEOSECRA_GHCR_TOKEN" ]]; then
-  ghcr_login_customer "$NEOSECRA_GHCR_USER" "$NEOSECRA_GHCR_TOKEN"
-  unset NEOSECRA_GHCR_TOKEN
-elif [[ -z "$NEOSECRA_GHCR_USER" && -z "$NEOSECRA_GHCR_TOKEN" ]]; then
-  # Neither set — check if docker already has valid ghcr credentials
-  if ! DOCKER_CONFIG="${DOCKER_CONFIG:-$HOME/.docker}" \
-    docker manifest inspect "ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${VERSION}" >/dev/null 2>&1; then
-    err "GHCR robot token gerekli — NeoSecra'dan alınan CUSTOMER-INSTALL paketine bakın"
-  fi
-  info "GHCR: existing Docker credentials detected"
-elif [[ -z "$NEOSECRA_GHCR_USER" ]]; then
-  err "NEOSECRA_GHCR_USER gerekli (NEOSECRA_GHCR_TOKEN set edilmişken)"
-elif [[ -z "$NEOSECRA_GHCR_TOKEN" ]]; then
-  err "NEOSECRA_GHCR_TOKEN gerekli (NEOSECRA_GHCR_USER set edilmişken)"
+# Soft preflight: warn (do not hard-fail) so a transient DNS/CA issue does not
+# block install. The real gate is `docker compose pull` later in install.sh.
+if ! registry_reachable; then
+  info "[warn] ${NEOSECRA_REGISTRY} şimdilik erişilemedi — /etc/hosts ve CA sertifikasını kontrol edin; pull sırasında tekrar denenecek"
 fi
 
 
@@ -292,9 +281,9 @@ if [[ ! -f .env.v1 ]]; then
     "NEOSECRA_VERSION=${VERSION}" \
     "POSTGRES_IMAGE=postgres:15.18-alpine3.24" \
     "REDIS_IMAGE=redis:7.4.9-alpine3.21" \
-    "BACKEND_IMAGE=ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${VERSION}" \
-    "WORKER_IMAGE=ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${VERSION}" \
-    "FRONTEND_IMAGE=ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:${FRONTEND_IMAGE_VERSION}" \
+    "BACKEND_IMAGE=${NEOSECRA_REGISTRY}/security-health-backend:${VERSION}" \
+    "WORKER_IMAGE=${NEOSECRA_REGISTRY}/security-health-backend:${VERSION}" \
+    "FRONTEND_IMAGE=${NEOSECRA_REGISTRY}/security-health-frontend:${FRONTEND_IMAGE_VERSION}" \
     "OPENVAS_IMAGE=immauss/openvas:26.07.12.01" \
     "POSTGRES_USER=neosecra" \
     "POSTGRES_PASSWORD=${PG_PASS}" \
