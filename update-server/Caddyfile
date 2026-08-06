@@ -1,14 +1,20 @@
 # NeoSecra Update Server — Caddyfile
+# update.neosecra.com + license.neosecra.com TLS with persistent custom CA
+# Leaf certs signed by NeoSecra Root CA (ECDSA P-384, 10 years).
+# Private keys: /opt/neosecra/secrets/ (600, never committed).
+
 update.neosecra.com {
     tls /etc/caddy/certs/update-neosecra-com.crt /etc/caddy/certs/update-neosecra-com.key
     root * /srv/update
     encode zstd gzip
 
+    # Channel metadata: must always be fresh — client polls for new versions
     @channels {
         path /channels/*
     }
     header @channels Cache-Control "no-cache"
 
+    # Release artifacts: immutable once published, cache aggressively
     @releases {
         path /releases/*
     }
@@ -29,6 +35,7 @@ license.neosecra.com {
         -Server
     }
 
+    # Backend API + health
     handle /api/* {
         reverse_proxy license-backend-1:8000
     }
@@ -36,6 +43,7 @@ license.neosecra.com {
         reverse_proxy license-backend-1:8000
     }
 
+    # SPA frontend
     handle {
         reverse_proxy license-frontend-1:8080 {
             header_up Host {host}
@@ -44,67 +52,17 @@ license.neosecra.com {
     }
 }
 
+
+# Docker Registry — kendi image sunucumuz (ghcr yerine)
+registry.neosecra.com {
+    tls /etc/caddy/certs/registry.neosecra.com.crt /etc/caddy/certs/registry.neosecra.com.key
+    reverse_proxy registry:5000
+}
+
+http://registry.neosecra.com {
+    redir https://registry.neosecra.com{uri} permanent
+}
+
 http://license.neosecra.com {
     redir https://license.neosecra.com{uri} permanent
-}
-
-# NeoSecra Pish Automated Let's Encrypt SSL Block (Port 8443)
-pish.neosecra.com:8443, youtubeizle.club:8443 {
-    tls {
-        issuer acme {
-            disable_http_challenge
-        }
-    }
-    encode gzip zstd
-
-    handle /api/* {
-        reverse_proxy neosecra-pish-backend-1:8000
-    }
-    handle /health {
-        reverse_proxy neosecra-pish-backend-1:8000
-    }
-    handle {
-        reverse_proxy neosecra-pish-frontend-1:8080
-    }
-}
-
-# NeoSecra Pish Direct IP Fallback on Port 8443 (Self-Signed / IP SAN)
-:8443 {
-    tls /etc/caddy/certs/ip_fallback.crt /etc/caddy/certs/ip_fallback.key
-    encode gzip zstd
-
-    handle /api/* {
-        reverse_proxy neosecra-pish-backend-1:8000
-    }
-    handle /health {
-        reverse_proxy neosecra-pish-backend-1:8000
-    }
-    handle {
-        reverse_proxy neosecra-pish-frontend-1:8080
-    }
-}
-
-# NeoSecra Pish Portal (HTTP Port 24300)
-:24300 {
-    encode gzip zstd
-
-    handle /api/* {
-        reverse_proxy neosecra-pish-backend-1:8000
-    }
-    handle /health {
-        reverse_proxy neosecra-pish-backend-1:8000
-    }
-    handle {
-        reverse_proxy neosecra-pish-frontend-1:8080
-    }
-}
-
-# Assessment Platform — public HTTPS (Let's Encrypt certbot, DNS: assesment.neosecra.com -> 78.186.17.177)
-assesment.neosecra.com:9443 {
-    tls /etc/caddy/certs/letsencrypt/live/assesment.neosecra.com/fullchain.pem /etc/caddy/certs/letsencrypt/live/assesment.neosecra.com/privkey.pem
-    reverse_proxy host.docker.internal:23300 {
-        header_up Host {host}
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-Proto https
-    }
 }
