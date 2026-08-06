@@ -1,9 +1,14 @@
 # NeoSecra Update Server — Caddyfile
-# update.neosecra.com + license.neosecra.com TLS with persistent custom CA
-# Leaf certs signed by NeoSecra Root CA (ECDSA P-384, 10 years).
-# Private keys: /opt/neosecra/secrets/ (600, never committed).
+# Cloudflare tunnel hazirligi (kullanici onayli FINAL port plani):
+#   update.neosecra.com    -> :9445
+#   license.neosecra.com   -> :9446
+#   registry.neosecra.com  -> :9447
+#   assesment.neosecra.com -> :9443 (AYRI assessment stack — bu dosyada yok)
+# TLS internal CA aynen duruyor. Host port mapping 127.0.0.1:944X (docker-compose).
+# Geri donus plani: compose'daki 80/443 satirlarini actiktan sonra asagidaki
+# vhost portlarini kaldirmak yeterli.
 
-update.neosecra.com {
+update.neosecra.com:9445 {
     tls /etc/caddy/certs/update-neosecra-com.crt /etc/caddy/certs/update-neosecra-com.key
     root * /srv/update
     encode zstd gzip
@@ -24,7 +29,7 @@ update.neosecra.com {
 }
 
 # License Server
-license.neosecra.com {
+license.neosecra.com:9446 {
     tls /etc/caddy/certs/license-neosecra-com.crt /etc/caddy/certs/license-neosecra-com.key
 
     header {
@@ -54,15 +59,17 @@ license.neosecra.com {
 
 
 # Docker Registry — kendi image sunucumuz (ghcr yerine)
-registry.neosecra.com {
+registry.neosecra.com:9447 {
     tls /etc/caddy/certs/registry.neosecra.com.crt /etc/caddy/certs/registry.neosecra.com.key
     reverse_proxy registry:5000
 }
 
-http://registry.neosecra.com {
-    redir https://registry.neosecra.com{uri} permanent
-}
-
-http://license.neosecra.com {
-    redir https://license.neosecra.com{uri} permanent
-}
+# http redir bloklari kapali — port 80 mapping yorum (geri donus plani). Cloudflare
+# tunnel ic portlara yonelir; eski public 80->443 redir gerekmiyor.
+# http://registry.neosecra.com {
+#     redir https://registry.neosecra.com{uri} permanent
+# }
+#
+# http://license.neosecra.com {
+#     redir https://license.neosecra.com{uri} permanent
+# }
