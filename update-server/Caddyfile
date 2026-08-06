@@ -4,7 +4,7 @@
 #   license.neosecra.com   -> :9446
 #   registry.neosecra.com  -> :9447
 #   assesment.neosecra.com -> :9443 (AYRI assessment stack — bu dosyada yok)
-# TLS internal CA aynen duruyor. Host port mapping 127.0.0.1:944X (docker-compose).
+# TLS internal CA aynen duruyor. Host port mapping 944X (docker-compose, 0.0.0.0).
 # Geri donus plani: compose'daki 80/443 satirlarini actiktan sonra asagidaki
 # vhost portlarini kaldirmak yeterli.
 

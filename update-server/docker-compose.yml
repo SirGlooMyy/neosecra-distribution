@@ -14,11 +14,11 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     ports:
-      # Cloudflare tunnel ic portlari — hostname -> localhost:944X.
-      # 127.0.0.1'e bagli: yalnizca ayni makinedeki cloudflared erisir.
-      - "127.0.0.1:9445:9445"
-      - "127.0.0.1:9446:9446"
-      - "127.0.0.1:9447:9447"
+      # Router port-forward ic portlari — hostname -> LAN:944X.
+      # Tum arayuzlere bagli (0.0.0.0): LAN'daki router bu portlara forward eder.
+      - "9445:9445"
+      - "9446:9446"
+      - "9447:9447"
       # Geri donus plani (eski public davranis; Cloudflare gecis oncesi):
       # - "80:80"
       # - "443:443"
