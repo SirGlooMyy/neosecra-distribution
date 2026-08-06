@@ -22,6 +22,8 @@ update-server/www/releases/*/distribution.tar.gz.sha256
 update-server/www/releases/*/distribution.tar.gz.minisig
 update-server/www/releases/*/docker-bundle-*
 update-server/www/channels/*.minisig
+# Oversized self-referential snapshot — publish to server, never commit
+update-server/www/releases/1.3.13/distribution-1.3.13.tar.gz
 
 .secrets-ca/
 test-results/
