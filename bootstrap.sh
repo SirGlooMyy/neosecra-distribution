@@ -166,8 +166,41 @@ fi
 info "NeoSecra Assessment v${VERSION} kurulum başlıyor..."
 
 # --- Docker ---
+install_docker() {
+  info "Docker bulunamadı — otomatik kurulum başlatılıyor"
+  local os_id=""
+  if [[ -f /etc/os-release ]]; then
+    os_id="$(. /etc/os-release && echo "${ID:-}")"
+  fi
+
+  if command -v apt-get &>/dev/null && [[ "$os_id" =~ ^(debian|ubuntu)$ ]]; then
+    export DEBIAN_FRONTEND=noninteractive
+    info "Docker.io Debian/Ubuntu paket deposundan kuruluyor..."
+    apt-get update -qq || { err "apt-get update başarısız — Docker kurulamadı"; }
+    if ! apt-get install -y -qq docker.io; then
+      info "[warn] docker.io paketi bulunamadı — resmi get.docker.com script'ine düşülüyor"
+      curl -fsSL https://get.docker.com | sh || err "Docker kurulumu başarısız oldu (get.docker.com)"
+    fi
+    if ! docker compose version &>/dev/null; then
+      info "Docker Compose v2 plugin kuruluyor..."
+      apt-get install -y -qq docker-compose-v2 2>/dev/null \
+        || apt-get install -y -qq docker-compose-plugin 2>/dev/null \
+        || apt-get install -y -qq docker-compose 2>/dev/null \
+        || true
+    fi
+  else
+    info "Resmi get.docker.com script'i kullanılıyor..."
+    curl -fsSL https://get.docker.com | sh || err "Docker kurulumu başarısız oldu (get.docker.com)"
+  fi
+
+  systemctl enable --now docker >/dev/null 2>&1 || systemctl start docker >/dev/null 2>&1 || true
+  docker --version >/dev/null 2>&1 || err "Docker kurulumu doğrulanamadı — 'docker --version' çalışmıyor"
+  docker compose version >/dev/null 2>&1 || err "Docker Compose v2 plugin doğrulanamadı — 'docker compose version' çalışmıyor"
+  info "Docker hazır: $(docker --version 2>/dev/null) / $(docker compose version 2>/dev/null)"
+}
+
 if ! command -v docker &>/dev/null; then
-  err "Docker is required; install/upgrade Docker before running this bootstrap"
+  install_docker
 fi
 if ! docker compose version &>/dev/null; then
   err "Docker Compose v2 plugin is required"
