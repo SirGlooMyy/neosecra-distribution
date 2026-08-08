@@ -28,3 +28,18 @@ docs/             Customer updater documentation
 - **GHCR packages**: Customer `read:packages` only
 
 See `docs/CUSTOMER-UPDATER-AUTH.md` for credential requirements.
+
+## Release Gate (zorunlu)
+
+**Her yayın, publish edilmeden önce `bin/prerelease-gate.sh` ile temiz bir
+VM üzerinde geçmelidir.** Gate, hedef VM'e yayınlanmış `bootstrap.sh`'i SSH ile
+çalıştırır ve kurulum sonrası 7 container'ın ayakta olduğunu, `.env.v1`'de
+lisans/kanal/admin değerlerinin bulunduğunu, backend health/version/login ve
+openvas readiness uç noktalarının doğru yanıt verdiğini, loglarda kanal hatası
+olmadığını ve veritabanı yedeklenebilirliğini doğrular. Herhangi bir madde
+FAIL dönerse gate exit 1 ile başarısız olur ve publish yapılmamalıdır:
+
+```bash
+bin/prerelease-gate.sh --host root@<temiz-vm>        # bootstrap + tüm kontroller
+bin/prerelease-gate.sh --host root@<temiz-vm> --dry-run   # komut/kontrol önizleme
+```
