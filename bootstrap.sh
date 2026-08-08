@@ -303,7 +303,7 @@ if [[ ! -f .env.v1 ]]; then
   PG_PASS=$(random_hex 24)
   SECRET_KEY_VALUE=$(random_hex 48)
   OTP_SECRET_VALUE=$(random_hex 48)
-  FIRST_ADMIN_PASSWORD_VALUE=$(random_admin_password)
+  FIRST_ADMIN_PASSWORD_VALUE="${NEOSECRA_FIRST_ADMIN_PASSWORD:-Neosecra123!}"
   ADMIN_RECOVERY_KEY_VALUE=$(random_hex 32)
   OPENVAS_PASSWORD_VALUE=$(random_hex 24)
   OPENVAS_GVM_PASSWORD_VALUE=$(random_hex 24)
@@ -325,7 +325,7 @@ if [[ ! -f .env.v1 ]]; then
     "REDIS_URL=redis://redis:6379/0" \
     "SECRET_KEY=${SECRET_KEY_VALUE}" \
     "OTP_SECRET=${OTP_SECRET_VALUE}" \
-    "FIRST_ADMIN_EMAIL=admin@neosecra.io" \
+    "FIRST_ADMIN_EMAIL=${NEOSECRA_FIRST_ADMIN_EMAIL:-admin@neosecra.com}" \
     "FIRST_ADMIN_PASSWORD=${FIRST_ADMIN_PASSWORD_VALUE}" \
     "ADMIN_RECOVERY_KEY=${ADMIN_RECOVERY_KEY_VALUE}" \
     "POSTGRES_PORT=25433" \

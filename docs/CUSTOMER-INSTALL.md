@@ -170,8 +170,12 @@ Kurulum sırasında:
 Kurulum tamamlandığında aşağıdaki bilgilerle giriş yapabilirsiniz:
 
 - **Adres:** `http://<sunucu-ip>:23300`
-- **E-posta:** `admin@neosecra.io`
-- **Parola:** `.env.v1` dosyasında `FIRST_ADMIN_PASSWORD` olarak kaydedilir
+- **E-posta:** `admin@neosecra.com`
+- **Parola:** `Neosecra123!` (ilk girişte değiştirilmelidir)
+
+> Kurulum anında ortam değişkeniyle farklı bir admin tanımlanabilir:
+> `NEOSECRA_FIRST_ADMIN_EMAIL` / `NEOSECRA_FIRST_ADMIN_PASSWORD` ile
+> bootstrap çalıştırılırken ezilebilir. Aksi halde yukarıdaki standart bilgiler kullanılır.
 
 ```bash
 # Admin parolasını görüntüle
