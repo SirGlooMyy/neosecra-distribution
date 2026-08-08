@@ -13,6 +13,15 @@ FRONTEND_IMAGE_VERSION=""
 NEOSECRA_TLS_MODE="${NEOSECRA_TLS_MODE:-public}"
 
 # ---------------------------------------------------------------------------
+# Centralised curl options — carries User-Agent + optional --cacert
+# ---------------------------------------------------------------------------
+CURL_OPTS=("-fsSL" "-H" "User-Agent: NeoSecra-Bootstrap/1.0")
+NEOSECRA_CA_CERT="${NEOSECRA_CA_CERT:-}"
+if [[ "${NEOSECRA_TLS_MODE}" == "internal" && -n "${NEOSECRA_CA_CERT}" && -f "${NEOSECRA_CA_CERT}" ]]; then
+  CURL_OPTS+=("--cacert" "$NEOSECRA_CA_CERT")
+fi
+
+# ---------------------------------------------------------------------------
 # T4 TLS: Embedded CA certificate for update.neosecra.com
 # Used only in internal mode (custom CA). In public mode the system trust
 # store already validates Let's Encrypt certificates, so no CA install needed.
@@ -55,7 +64,7 @@ fi
 # Channel / version resolution
 # ---------------------------------------------------------------------------
 CHANNEL_URL="${NEOSECRA_CHANNEL_URL:-https://update.neosecra.com/channels/assessment-stable.json}"
-CHANNEL_JSON="$(curl -fsSL "$CHANNEL_URL" 2>/dev/null || echo "")"
+CHANNEL_JSON="$(curl "${CURL_OPTS[@]}" "$CHANNEL_URL" 2>/dev/null || echo "")"
 
 resolve_version_from_channel() {
   local json="$1"
@@ -107,6 +116,37 @@ for r in d.get('releases',[]):
   fi
 }
 
+resolve_archive_sha256_from_channel() {
+  local json="$1" version="$2"
+  if [[ -z "$json" ]]; then return 1; fi
+  if command -v python3 &>/dev/null; then
+    python3 -c "
+import json,sys
+d=json.loads(sys.stdin.read())
+for r in d.get('releases',[]):
+    if r.get('version')==sys.argv[1]:
+        a = r.get('archive',{})
+        if isinstance(a, dict):
+            print(a.get('sha256','') or '')
+        else:
+            print(r.get('sha256','') or '')
+        break
+" "$version" <<< "$json" 2>/dev/null
+  elif command -v jq &>/dev/null; then
+    jq -r --arg v "$version" '.releases[] | select(.version==$v) | ((.archive | if type=="object" then .sha256 else empty end) // .sha256 // empty)' <<< "$json" 2>/dev/null
+  else
+    local sha version_block
+    version_block=$(printf '%s\n' "$json" | grep -A10 "\"version\":[[:space:]]*\"$version\"" 2>/dev/null)
+    if [[ -n "$version_block" ]]; then
+      sha=$(printf '%s\n' "$version_block" | grep -A6 '"archive":[[:space:]]*{' | grep '"sha256"' | sed -nE 's/.*"sha256"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)
+    fi
+    if [[ -z "$sha" ]]; then
+      sha=$(printf '%s\n' "$json" | grep -A8 "\"version\":[[:space:]]*\"$version\"" | sed -nE 's/.*"sha256"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)
+    fi
+    printf '%s' "$sha"
+  fi
+}
+
 DISTRIBUTION_ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-}"
 if [[ -z "$DISTRIBUTION_ARCHIVE_URL" ]]; then
   DISTRIBUTION_ARCHIVE_URL="$(resolve_archive_url_from_channel "$CHANNEL_JSON" "$VERSION")"
@@ -114,6 +154,10 @@ fi
 if [[ -z "$DISTRIBUTION_ARCHIVE_URL" ]]; then
   DISTRIBUTION_ARCHIVE_URL="https://update.neosecra.com/releases/${VERSION}/distribution.tar.gz"
 fi
+
+EXPECTED_SHA256="$(resolve_archive_sha256_from_channel "$CHANNEL_JSON" "$VERSION" || true)"
+SIGNATURE_PUBKEY="${NEOSECRA_SIGNATURE_PUBKEY:-}"
+NEOSECRA_REQUIRE_SIGNATURE="${NEOSECRA_REQUIRE_SIGNATURE:-1}"
 RED='\033[31m'; GRN='\033[32m'; RST='\033[0m'
 info() { echo -e "${GRN}[neosecra]${RST} $*"; }
 err()  { echo -e "${RED}[neosecra]${RST} $*"; exit 1; }
@@ -144,7 +188,7 @@ registry_reachable() {
     return 0
   fi
   # TLS-protected registry: try the unauthenticated /v2/ ping (honours custom CA)
-  local curl_args=(-fsS --max-time 10)
+  local curl_args=(-fsS --max-time 10 -H "User-Agent: NeoSecra-Bootstrap/1.0")
   if [[ -n "${CURL_CA_BUNDLE:-}" && -f "${CURL_CA_BUNDLE:-}" ]]; then
     curl_args+=(--cacert "$CURL_CA_BUNDLE")
   fi
@@ -179,7 +223,7 @@ install_docker() {
     apt-get update -qq || { err "apt-get update başarısız — Docker kurulamadı"; }
     if ! apt-get install -y -qq docker.io; then
       info "[warn] docker.io paketi bulunamadı — resmi get.docker.com script'ine düşülüyor"
-      curl -fsSL https://get.docker.com | sh || err "Docker kurulumu başarısız oldu (get.docker.com)"
+      curl "${CURL_OPTS[@]}" https://get.docker.com | sh || err "Docker kurulumu başarısız oldu (get.docker.com)"
     fi
     if ! docker compose version &>/dev/null; then
       info "Docker Compose v2 plugin kuruluyor..."
@@ -190,7 +234,7 @@ install_docker() {
     fi
   else
     info "Resmi get.docker.com script'i kullanılıyor..."
-    curl -fsSL https://get.docker.com | sh || err "Docker kurulumu başarısız oldu (get.docker.com)"
+    curl "${CURL_OPTS[@]}" https://get.docker.com | sh || err "Docker kurulumu başarısız oldu (get.docker.com)"
   fi
 
   systemctl enable --now docker >/dev/null 2>&1 || systemctl start docker >/dev/null 2>&1 || true
@@ -309,7 +353,50 @@ fi
 TMP_DIR=$(mktemp -d)
 cd "$TMP_DIR"
 info "Kurulum paketi indiriliyor: ${DISTRIBUTION_ARCHIVE_URL}"
-curl -fsSL -o dist.tar.gz "$DISTRIBUTION_ARCHIVE_URL"
+curl "${CURL_OPTS[@]}" -o dist.tar.gz "$DISTRIBUTION_ARCHIVE_URL"
+
+info "Kurulum paketi doğrulanıyor..."
+if [[ -n "$EXPECTED_SHA256" ]]; then
+  actual=$(sha256sum dist.tar.gz | cut -d' ' -f1)
+  if [[ "$actual" != "$EXPECTED_SHA256" ]]; then
+    err "SHA-256 uyuşmazlığı: beklenen ${EXPECTED_SHA256}, alınan ${actual}"
+  fi
+  info "SHA-256 doğrulandı (channel JSON)"
+else
+  if curl "${CURL_OPTS[@]}" -o dist.tar.gz.sha256 "${DISTRIBUTION_ARCHIVE_URL}.sha256" 2>/dev/null; then
+    (cd "$TMP_DIR" && sha256sum -c dist.tar.gz.sha256) || \
+      err "SHA-256 doğrulaması başarısız (dist.tar.gz.sha256)"
+    info "SHA-256 doğrulandı (.sha256 sidecar)"
+  else
+    err "SHA-256 hash dosyası bulunamadı — doğrulanmamış arşiv reddedildi"
+  fi
+fi
+
+if curl "${CURL_OPTS[@]}" -o dist.tar.gz.minisig "${DISTRIBUTION_ARCHIVE_URL}.minisig" 2>/dev/null; then
+  if ! command -v minisign &>/dev/null; then
+    if [[ "${NEOSECRA_REQUIRE_SIGNATURE}" == "1" ]]; then
+      err "Minisign gerekli (NEOSECRA_REQUIRE_SIGNATURE=1) ama bulunamadı"
+    fi
+    info "[warn] minisign bulunamadı — imza doğrulaması ATLANDI (TLS + checksum uygulandı)"
+  else
+    PUBKEY_PATH="${SIGNATURE_PUBKEY}"
+    if [[ -z "$PUBKEY_PATH" ]]; then
+      PUBKEY_PATH="$(dirname "${BASH_SOURCE[0]}")/deployment/ca/update-neosecra-com.pub"
+    fi
+    if [[ ! -f "$PUBKEY_PATH" ]]; then
+      err "Minisign public key bulunamadı: ${PUBKEY_PATH}"
+    fi
+    minisign -Vm dist.tar.gz -P "$(cat "$PUBKEY_PATH")" -x dist.tar.gz.minisig 2>/dev/null || \
+      err "Minisign imza doğrulaması BAŞARISIZ"
+    info "Minisign imza doğrulandı"
+  fi
+else
+  if [[ "${NEOSECRA_REQUIRE_SIGNATURE}" == "1" ]]; then
+    err "Minisign imza dosyası bulunamadı (${DISTRIBUTION_ARCHIVE_URL}.minisig) — NEOSECRA_REQUIRE_SIGNATURE=1 ile reddedildi"
+  fi
+  info "[warn] Minisign imza dosyası bulunamadı — imza doğrulaması ATLANDI"
+fi
+
 tar xzf dist.tar.gz
 DIST_DIR="$(find . -mindepth 1 -maxdepth 1 -type d -name 'neosecra-distribution-*' | head -n1)"
 [[ -n "$DIST_DIR" && -d "$DIST_DIR" ]] || err "Kurulum paketi açılırken dağıtım dizini bulunamadı"
