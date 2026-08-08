@@ -117,8 +117,9 @@ sync_initial_admin_credentials || die "Initial admin credential synchronization 
 
 # --- Start application services ---
 INSTALL_PHASE="application"
-log "Starting backend, worker, and frontend..."
-if ! run_compose up -d --force-recreate backend worker frontend; then
+log "Starting application services (backend, worker, beat, frontend, openvas)..."
+run_compose pull -q openvas || true
+if ! run_compose --profile openvas up -d; then
   print_service_diagnostics backend worker frontend
   die "Application services failed to start" 13
 fi
