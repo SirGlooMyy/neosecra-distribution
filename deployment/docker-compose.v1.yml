@@ -47,6 +47,7 @@ services:
       - uploads:/app/uploads
       - reports:/app/reports
       - backups:/app/backups
+      - ./ca:/app/ca:ro
     ports:
       - "${BACKEND_PORT:-23800}:8000"
     depends_on:
@@ -77,6 +78,7 @@ services:
       - uploads:/app/uploads
       - reports:/app/reports
       - backups:/app/backups
+      - ./ca:/app/ca:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -103,6 +105,7 @@ services:
       - reports:/app/reports
       - backups:/app/backups
       - beat-schedule:/app/.celery
+      - ./ca:/app/ca:ro
     depends_on:
       postgres:
         condition: service_healthy
