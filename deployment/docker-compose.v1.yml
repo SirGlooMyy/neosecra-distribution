@@ -37,8 +37,8 @@ services:
       - .env.v1
     environment:
       NEOSECRA_EDITION: ${NEOSECRA_EDITION:-security_health}
-      NEOSECRA_VERSION: ${NEOSECRA_VERSION:-1.0.0}
-      PRODUCT_VERSION: ${NEOSECRA_VERSION:-1.0.0}
+      NEOSECRA_VERSION: ${NEOSECRA_VERSION:-1.3.26}
+      PRODUCT_VERSION: ${NEOSECRA_VERSION:-1.3.26}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
       HOME: /tmp
       XDG_CACHE_HOME: /tmp/.cache
@@ -68,8 +68,8 @@ services:
       - .env.v1
     environment:
       NEOSECRA_EDITION: ${NEOSECRA_EDITION:-security_health}
-      NEOSECRA_VERSION: ${NEOSECRA_VERSION:-1.0.0}
-      PRODUCT_VERSION: ${NEOSECRA_VERSION:-1.0.0}
+      NEOSECRA_VERSION: ${NEOSECRA_VERSION:-1.3.26}
+      PRODUCT_VERSION: ${NEOSECRA_VERSION:-1.3.26}
       HOME: /tmp
       XDG_CACHE_HOME: /tmp/.cache
       MPLCONFIGDIR: /tmp/.cache/matplotlib
@@ -93,8 +93,8 @@ services:
       - .env.v1
     environment:
       NEOSECRA_EDITION: ${NEOSECRA_EDITION:-security_health}
-      NEOSECRA_VERSION: ${NEOSECRA_VERSION:-1.0.0}
-      PRODUCT_VERSION: ${NEOSECRA_VERSION:-1.0.0}
+      NEOSECRA_VERSION: ${NEOSECRA_VERSION:-1.3.26}
+      PRODUCT_VERSION: ${NEOSECRA_VERSION:-1.3.26}
       HOME: /tmp
       XDG_CACHE_HOME: /tmp/.cache
       MPLCONFIGDIR: /tmp/.cache/matplotlib

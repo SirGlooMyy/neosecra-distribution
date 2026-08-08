@@ -70,7 +70,7 @@ resolve_version_from_channel() {
 }
 
 VERSION="$(resolve_version_from_channel "$CHANNEL_JSON")"
-VERSION="${NEOSECRA_VERSION:-${VERSION:-1.0.9}}"
+VERSION="${NEOSECRA_VERSION:-${VERSION:-1.3.26}}"
 FRONTEND_IMAGE_VERSION="$VERSION"
 
 # ---------------------------------------------------------------------------
