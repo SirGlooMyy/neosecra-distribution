@@ -55,7 +55,7 @@ done
 CHANNEL_URL="${NEOSECRA_CHANNEL_URL:-https://update.neosecra.com/channels/assessment-stable.json}"
 ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-}"
 SIGNATURE_PUBKEY="${NEOSECRA_SIGNATURE_PUBKEY:-${SCRIPT_DIR}/update-neosecra-com.pub}"
-NEOSECRA_REQUIRE_SIGNATURE="${NEOSECRA_REQUIRE_SIGNATURE:-0}"
+NEOSECRA_REQUIRE_SIGNATURE="${NEOSECRA_REQUIRE_SIGNATURE:-1}"
 
 # ---------------------------------------------------------------------------
 # U1: State tracking for fail recovery
@@ -183,7 +183,7 @@ verify_sha256() {
 verify_minisign() {
   local file="$1" sig_file="$2" pubkey="$3" label="${4:-artifact}"
   if ! command -v minisign &>/dev/null; then
-    if [[ "${NEOSECRA_REQUIRE_SIGNATURE:-0}" == "1" ]]; then
+    if [[ "${NEOSECRA_REQUIRE_SIGNATURE:-1}" == "1" ]]; then
       die "Minisign binary required (NEOSECRA_REQUIRE_SIGNATURE=1) but not found" 4
     fi
     warn "minisign not found — signature verification SKIPPED for ${label} (checksum+TLS still enforced)"
