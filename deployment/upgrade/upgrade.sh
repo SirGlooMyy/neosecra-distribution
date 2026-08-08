@@ -309,9 +309,20 @@ if [[ $TARGET_FROM_ARG -eq 0 && "$TARGET" != "$(read_version)" && "${NEOSECRA_UP
     warn "No minisign signature file found at ${RESOLVED_ARCHIVE_URL}.minisig — skipping signature verification"
   fi
 
-  log "Archive verified; running bootstrap.sh..."
+  log "Archive verified; downloading and verifying bootstrap.sh..."
+  curl "${CURL_OPTS[@]}" -o "${DL_DIR}/bootstrap.sh" "$BOOTSTRAP_DL_URL"
+  curl "${CURL_OPTS[@]}" -o "${DL_DIR}/bootstrap.sh.sha256" "${BOOTSTRAP_DL_URL}.sha256" 2>/dev/null || true
+  if [[ -f "${DL_DIR}/bootstrap.sh.sha256" ]]; then
+    (cd "${DL_DIR}" && sha256sum -c "bootstrap.sh.sha256") || \
+      die "SHA-256 verification failed for bootstrap.sh" 4
+    ok "SHA-256 verified for bootstrap.sh"
+  else
+    die "No SHA-256 hash available for bootstrap.sh — refusing to execute unverified script" 4
+  fi
+
+  chmod +x "${DL_DIR}/bootstrap.sh"
   NEOSECRA_DISTRIBUTION_ARCHIVE_URL="file://${DL_DIR}/distribution.tar.gz" \
-    bash <(curl "${CURL_OPTS[@]}" "$BOOTSTRAP_DL_URL")
+    bash "${DL_DIR}/bootstrap.sh"
   exit $?
 fi
 
