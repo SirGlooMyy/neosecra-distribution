@@ -431,7 +431,8 @@ if [[ -n "$INSTALLED_VERSION" ]]; then
       reconcile_postgres_password
       ensure_assessment_schema_compatibility || die "Assessment schema compatibility repair failed" 11
       sync_initial_admin_credentials || die "Initial admin credential synchronization failed" 11
-      if ! run_compose up -d --force-recreate backend worker frontend; then
+      run_compose pull -q openvas || true
+      if ! run_compose --profile openvas up -d; then
         print_service_diagnostics backend worker frontend
         die "Application services failed to restart after repair" 13
       fi
