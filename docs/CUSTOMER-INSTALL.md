@@ -188,6 +188,7 @@ sudo grep FIRST_ADMIN_PASSWORD /opt/neosecra/assessment/current/.env.v1
 
 NeoSecra lisansı, bir **lisans envelope** (JSON dosyası) aracılığıyla yüklenir.
 Lisans dosyası NeoSecra tarafından sağlanır.
+Lisans imzasını doğrulayan genel anahtar (public key) kurulum paketine gömülüdür — ayrıca bir işlem gerekmez.
 
 1. Admin panele giriş yapın
 2. Sol menüden **"Lisans"** sayfasına gidin
