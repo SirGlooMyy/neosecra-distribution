@@ -516,6 +516,9 @@ if [[ ! -f .env.v1 ]]; then
     "DATA_RETENTION_ENABLED=true" \
     "DATA_RETENTION_DAYS=365" \
     "DATA_RETENTION_FAILED_DAYS=90" \
+    "UPGRADE_CHANNEL_URL=https://update.neosecra.com/channels/assessment-stable.json" \
+    "UPGRADE_CHANNEL_CA_BUNDLE=/app/ca/update-neosecra-com-root.crt" \
+    "UPGRADE_CHANNEL_PUBLIC_KEY=/app/ca/update-neosecra-com.pub" \
     "NOTIFICATION_ENABLED=false" \
     "SMTP_HOST=" \
     "SMTP_PORT=587" \
