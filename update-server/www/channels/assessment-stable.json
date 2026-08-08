@@ -2,8 +2,35 @@
   "channel": "assessment-stable",
   "product": "neosecra-security-health",
   "edition": "security-health",
-  "current_version": "1.3.23",
+  "current_version": "1.3.25",
   "releases": [
+    {
+      "minimum_current_version": "1.0.0",
+      "release_notes": "v1.3.25: SettingsCenter redesign with global search bar, restored SMTP notification settings & test email sender, cleaned AI Governance provider grid and fallback select.",
+      "backend_image": "registry.neosecra.com/security-health-backend:1.3.25",
+      "worker_image": "registry.neosecra.com/security-health-backend:1.3.25",
+      "frontend_image": "registry.neosecra.com/security-health-frontend:1.3.25",
+      "version": "1.3.25",
+      "released_at": "2026-08-08T12:59:17Z",
+      "archive": {
+        "url": "https://update.neosecra.com/releases/1.3.25/distribution.tar.gz",
+        "sha256": "1d80b2eff20032d0fd6bc5702ce3199672f38b2ddbd8adba927b206255fb238a",
+        "size_bytes": 105329,
+        "signature_url": "https://update.neosecra.com/releases/1.3.25/distribution.tar.gz.minisig"
+      },
+      "bootstrap": {
+        "url": "https://update.neosecra.com/releases/1.3.25/bootstrap.sh",
+        "sha256": "5edd4d3b3660f1cfce60e0d5569b4f2994c5d5d98fd815a6cb67a2e2b15fd511",
+        "size_bytes": 17897,
+        "signature_url": "https://update.neosecra.com/releases/1.3.25/bootstrap.sh.minisig"
+      },
+      "docker_bundle": {
+        "url": "https://update.neosecra.com/releases/1.3.25/none",
+        "sha256": "0",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/1.3.25/none"
+      }
+    },
     {
       "version": "1.3.23",
       "released_at": "2026-08-06T14:25:15Z",
@@ -579,5 +606,5 @@
     }
   ],
   "status": "available",
-  "updated": "2026-08-06T17:12:22Z"
+  "updated": "2026-08-08T12:59:17Z"
 }
