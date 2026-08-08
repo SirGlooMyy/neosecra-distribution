@@ -47,7 +47,7 @@ CADDY_MODE=public CADDYFILE=./Caddyfile.public docker compose up -d
 
 ```dns
 ; /etc/hosts on each appliance or internal DNS
-192.168.2.101  update.neosecra.com license.neosecra.com
+100.125.0.108  update.neosecra.com license.neosecra.com
 ```
 
 Use `Caddyfile` (default, with `tls /etc/caddy/certs/...` directive) and

@@ -52,7 +52,7 @@
 
 | Ortam | TLS | Adres | Kullanım |
 |-------|-----|-------|----------|
-| **Lab** (192.168.2.101) | Custom CA (internal) | update.neosecra.com (hosts) | Geliştirme/test |
+| **Lab** (100.125.0.108) | Custom CA (internal) | update.neosecra.com (hosts) | Geliştirme/test |
 | **Public** (<public-ip>) | Let's Encrypt (public) | update.neosecra.com (DNS) | Müşteri dağıtımı |
 
 Her iki sunucu da aynı `www/` dizininden beslenir — `publish.sh` çoklu rsync hedefine
@@ -173,7 +173,7 @@ update server ile TLS doğrulaması bu özel CA üzerinden yapılır.
 
 - **Air-gap / kapalı devre:** Sunucu public DNS'te değil, yalnızca LAN'da erişilebilir
 - **Custom domain:** Müşteri kendi domain'ini kullanıyor, sertifikalarını kendi yönetiyor
-- **Lab ortamı:** Geliştirme/test sunucusu (ör. 192.168.2.101)
+- **Lab ortamı:** Geliştirme/test sunucusu (ör. 100.125.0.108)
 
 ### Internal modda sunucu başlatma
 
@@ -210,16 +210,16 @@ yapabilir. Bu sayede lab ve public sunucuları tek komutla güncellenir.
 bash update-server/publish.sh \
   --product assessment --channel stable --version 1.1.7 \
   --archive /path/to/distribution.tar.gz \
-  --rsync user@192.168.2.101:/srv/update
+  --rsync user@100.125.0.108:/srv/update
 
 # Çoklu hedef (UPDATE_SERVER_TARGETS env var ile):
-UPDATE_SERVER_TARGETS="user@192.168.2.101:/srv/update user@<public-ip>:/srv/update" \
+UPDATE_SERVER_TARGETS="user@100.125.0.108:/srv/update user@<public-ip>:/srv/update" \
   bash update-server/publish.sh \
   --product assessment --channel stable --version 1.1.7 \
   --archive /path/to/distribution.tar.gz
 
 # --rsync ile UPDATE_SERVER_TARGETS birleşebilir (tüm hedeflere gider):
-UPDATE_SERVER_TARGETS="user@192.168.2.101:/srv/update" \
+UPDATE_SERVER_TARGETS="user@100.125.0.108:/srv/update" \
   bash update-server/publish.sh \
   --product assessment --channel stable --version 1.1.7 \
   --archive /path/to/distribution.tar.gz \
@@ -232,7 +232,7 @@ Rsync SSH üzerinden çalışır. Publish workstation'ın public SSH anahtarı h
 update sunucusunun `authorized_keys`'ine eklenmelidir:
 
 ```bash
-ssh-copy-id user@192.168.2.101
+ssh-copy-id user@100.125.0.108
 ssh-copy-id user@<public-ip>
 ```
 
@@ -265,7 +265,7 @@ Bu nedenle:
 
 ## 8. Lab → Public Geçiş
 
-Mevcut lab sunucusu (192.168.2.101) internal CA ile çalışıyor. Public sunucu
+Mevcut lab sunucusu (100.125.0.108) internal CA ile çalışıyor. Public sunucu
 **ayrı bir host** olacak (kullanıcı kuracak). İki ortam birbirinden bağımsızdır.
 
 ### Geçiş Adımları
@@ -274,7 +274,7 @@ Mevcut lab sunucusu (192.168.2.101) internal CA ile çalışıyor. Public sunucu
 2. **DNS A kaydı** oluşturma: `update.neosecra.com A <public-ip>`
 3. **Publish script'ine public hedef ekleme:**
    ```bash
-   UPDATE_SERVER_TARGETS="user@192.168.2.101:/srv/update user@<public-ip>:/srv/update"
+   UPDATE_SERVER_TARGETS="user@100.125.0.108:/srv/update user@<public-ip>:/srv/update"
    ```
 4. **İlk publish:** Her iki sunucuyu da aynı release ile besle
 5. **Müşteri appliance'larını geçirme:**

@@ -8,7 +8,7 @@ certificates survive container restarts without breaking client trust.
 | Component | Detail |
 |-----------|--------|
 | **Root CA** | `NeoSecra Root CA` — ECDSA P-384, 10 years (self-signed) |
-| **Leaf (update.neosecra.com)** | ECDSA P-256, 1 year, SAN: `update.neosecra.com`, `localhost`, `127.0.0.1`, `192.168.2.101` |
+| **Leaf (update.neosecra.com)** | ECDSA P-256, 1 year, SAN: `update.neosecra.com`, `localhost`, `127.0.0.1`, `100.125.0.108` |
 | **Leaf (license.neosecra.com)** | ECDSA P-256, 1 year, SAN: `license.neosecra.com` |
 
 ## File Layout

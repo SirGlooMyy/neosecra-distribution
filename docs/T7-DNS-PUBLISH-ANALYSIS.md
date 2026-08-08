@@ -25,7 +25,7 @@ KARAR KULLANICIDA — bu adım uygulanmamıştır, sadece analiz + öneri.
   3. Port 80 + 443'ü firewall'da aç
 
 ### Seçenek 2: Bootstrap /etc/hosts Eklesin
-- **Nasıl:** `bootstrap.sh` başında `192.168.2.101 update.neosecra.com` satırını
+- **Nasıl:** `bootstrap.sh` başında `100.125.0.108 update.neosecra.com` satırını
   `/etc/hosts`'a ekle (henüz yoksa).
 - **Artıları:**
   - DNS kaydı gerekmez, tamamen LAN'da çalışır
@@ -37,7 +37,7 @@ KARAR KULLANICIDA — bu adım uygulanmamıştır, sadece analiz + öneri.
   - DNS değişikliği durumunda her müşteriye hosts güncellemesi dağıtmak zor
 
 ### Seçenek 3: IP + SNI (TLS sertifikasında IP SAN)
-- **Nasıl:** TLS sertifikasında `subjectAltName = IP:192.168.2.101` kullan,
+- **Nasıl:** TLS sertifikasında `subjectAltName = IP:100.125.0.108` kullan,
   curl'e `--resolve` veya direkt IP ile çağır.
 - **Artıları:**
   - DNS/hosts gerekmez
