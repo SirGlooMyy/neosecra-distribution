@@ -13,8 +13,22 @@ write_installed_version() {
 
 # Read installed version
 read_installed_version() {
+  local stored=""
   if [[ -f "${STATE_DIR}/installed-version" ]]; then
-    cat "${STATE_DIR}/installed-version"
+    stored="$(tr -d '[:space:]' < "${STATE_DIR}/installed-version" 2>/dev/null || true)"
+  fi
+  if [[ -n "$stored" ]]; then
+    echo "$stored"
+  elif [[ -L "$(current_symlink)" ]]; then
+    # Self-heal: installs done before the state file existed, an unreadable
+    # (root-owned) state file, or a state wipe — derive from current symlink.
+    local healed; healed="$(basename "$(readlink -f "$(current_symlink)")")"
+    if [[ -n "$healed" ]]; then
+      mkdir -p "$STATE_DIR" 2>/dev/null && echo "$healed" > "${STATE_DIR}/installed-version" 2>/dev/null || true
+      echo "$healed"
+      return 0
+    fi
+    echo "none"
   else
     echo "none"
   fi
@@ -62,16 +76,27 @@ create_install_dirs() {
 
 # Write upgrade journal
 write_journal() {
-  local file="$1"
+  local file="$1" previous="${2:-}" status="${3:-completed}"
   mkdir -p "$JOURNAL_DIR"
   cat > "${JOURNAL_DIR}/${file}" << JOURNAL
 {
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "product": "${PRODUCT}",
-  "edition": "${EDITION}"
+  "edition": "${EDITION}",
+  "previous_version": "${previous}",
+  "status": "${status}"
 }
 JOURNAL
   ok "Journal: ${JOURNAL_DIR}/${file}"
+}
+
+# Read most recent journal entry's previous_version
+journal_previous_version() {
+  local latest
+  latest="$(ls -t "${JOURNAL_DIR}" 2>/dev/null | head -1)" || return 1
+  [[ -n "$latest" ]] || return 1
+  python3 -c "import json; d=json.load(open('${JOURNAL_DIR}/${latest}')); print(d.get('previous_version',''))" 2>/dev/null || \
+    grep -o '"previous_version"[[:space:]]*:[[:space:]]*"\([^"]*\)"' "${JOURNAL_DIR}/${latest}" 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' || return 1
 }
 
 write_install_state() {

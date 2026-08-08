@@ -51,13 +51,35 @@ die() { err "$1"; exit "${2:-1}"; }
 # --- Version ---
 read_version() {
   if [[ -f "$VERSION_FILE" ]]; then
-    tr -d '[:space:]' < "$VERSION_FILE"
+    local v; v="$(tr -d '[:space:]' < "$VERSION_FILE")"
+    # Tolerate key=value format (some older releases shipped "VERSION=x.y.z").
+    v="${v#VERSION=}"
+    echo "${v:-unknown}"
   else
     echo "unknown"
   fi
 }
 
 # --- Docker ---
+# Sudo fallback: the operator user (neosecra) is not in the docker group on
+# production installs — install/upgrade run as root, but the management CLI
+# (neosecra status/version/...) runs as the operator and must transparently
+# use sudo, otherwise every compose call silently fails (status → NOT RUNNING).
+_DOCKER_NEEDS_SUDO=""
+if ! command docker info >/dev/null 2>&1; then
+  _DOCKER_NEEDS_SUDO="1"
+fi
+docker() {
+  if [[ -n "$_DOCKER_NEEDS_SUDO" ]]; then
+    if [[ -n "${SUDO_ASKPASS:-}" ]]; then
+      command sudo -A docker "$@"
+    else
+      command sudo docker "$@"
+    fi
+  else
+    command docker "$@"
+  fi
+}
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "required command not found: $1" 2
 }

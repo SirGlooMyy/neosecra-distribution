@@ -13,8 +13,22 @@ write_installed_version() {
 
 # Read installed version
 read_installed_version() {
+  local stored=""
   if [[ -f "${STATE_DIR}/installed-version" ]]; then
-    cat "${STATE_DIR}/installed-version"
+    stored="$(tr -d '[:space:]' < "${STATE_DIR}/installed-version" 2>/dev/null || true)"
+  fi
+  if [[ -n "$stored" ]]; then
+    echo "$stored"
+  elif [[ -L "$(current_symlink)" ]]; then
+    # Self-heal: installs done before the state file existed, an unreadable
+    # (root-owned) state file, or a state wipe — derive from current symlink.
+    local healed; healed="$(basename "$(readlink -f "$(current_symlink)")")"
+    if [[ -n "$healed" ]]; then
+      mkdir -p "$STATE_DIR" 2>/dev/null && echo "$healed" > "${STATE_DIR}/installed-version" 2>/dev/null || true
+      echo "$healed"
+      return 0
+    fi
+    echo "none"
   else
     echo "none"
   fi

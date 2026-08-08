@@ -7,6 +7,9 @@ while [[ -L "$SCRIPT_SRC" ]]; do SCRIPT_SRC="$(readlink -f "$SCRIPT_SRC")"; done
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SRC")" && pwd)"
 V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${V1_ROOT}/lib/common.sh"
+# state.sh provides read_installed_version/write_installed_version — the CLI's
+# `status` command needs it (older installs never sourced it here → "none").
+[[ -f "${V1_ROOT}/lib/state.sh" ]] && source "${V1_ROOT}/lib/state.sh"
 
 COMMAND="${1:-help}"
 shift 2>/dev/null || true
