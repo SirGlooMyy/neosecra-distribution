@@ -309,11 +309,15 @@ if [[ ! -f .env.v1 ]]; then
   OPENVAS_GVM_PASSWORD_VALUE=$(random_hex 24)
   OPENVAS_GMP_PASSWORD_VALUE=$(random_hex 24)
   DB_URL="postgresql+asyncpg://neosecra:${PG_PASS}@postgres:5432/neosecra_assessment"
-  LICENSE_PUBLIC_KEY_VALUE="${NEOSECRA_LICENSE_PUBLIC_KEY_B64:-qe+qrDcT1FNuvTcVNUEf/bwru4dJakikHPaf0ELEdf8=}"
+  if [[ -n "${NEOSECRA_LICENSE_PUBLIC_KEY_B64:-}" ]]; then
+    LICENSE_PUBLIC_KEY_LINE="LICENSE_PUBLIC_KEY_B64=${NEOSECRA_LICENSE_PUBLIC_KEY_B64}"
+  else
+    LICENSE_PUBLIC_KEY_LINE="LICENSE_PUBLIC_KEY_B64=qe+qrDcT1FNuvTcVNUEf/bwru4dJakikHPaf0ELEdf8="
+  fi
 
   printf '%s\n' \
     "NEOSECRA_VERSION=${VERSION}" \
-    "LICENSE_PUBLIC_KEY_B64=${LICENSE_PUBLIC_KEY_VALUE}" \
+    "${LICENSE_PUBLIC_KEY_LINE}" \
     "POSTGRES_IMAGE=postgres:15.18-alpine3.24" \
     "REDIS_IMAGE=redis:7.4.9-alpine3.21" \
     "BACKEND_IMAGE=${NEOSECRA_REGISTRY}/security-health-backend:${VERSION}" \
