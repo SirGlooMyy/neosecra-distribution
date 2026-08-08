@@ -33,17 +33,18 @@ source "${V1_ROOT}/lib/state.sh"
 
 usage() { cat <<EOF
 neosecra upgrade — upgrade to a target version
-Usage: neosecra upgrade [version] [--bundle <path>] [--rollback-on-failure] [--dry-run] [--help]
+Usage: neosecra upgrade [version] [--bundle <path>] [--i-trust-this-bundle] [--rollback-on-failure] [--dry-run] [--help]
 
 Without a version, the assessment stable channel is used.
 EOF
 }
 
-TARGET=""; BUNDLE=""; ROLLBACK=0; DRY=0; TARGET_FROM_ARG=0
+TARGET=""; BUNDLE=""; ROLLBACK=0; DRY=0; TARGET_FROM_ARG=0; TRUST_BUNDLE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --help|-h)          usage; exit 0 ;;
     --bundle)           shift; BUNDLE="$1" ;;
+    --i-trust-this-bundle) TRUST_BUNDLE=1 ;;
     --rollback-on-failure) ROLLBACK=1 ;;
     --dry-run)          DRY=1 ;;
     -*)                 usage; die "unknown option: $1" 2 ;;
@@ -382,6 +383,29 @@ ok "Pre-upgrade backup: ${BACKUP_TARGET}"
 if [[ -n "$BUNDLE" ]]; then
   TMP_DIR=$(mktemp -d)
   tar xzf "$BUNDLE" -C "$TMP_DIR"
+
+  BUNDLE_IMAGES_VERIFIED=0
+  if declare -F manifest_image_checksums >/dev/null 2>&1; then
+    while IFS=$'\t' read -r img_name img_sha256; do
+      tar_file="${TMP_DIR}/images/${img_name}.tar"
+      if [[ -n "$img_sha256" && -f "$tar_file" ]]; then
+        actual=$(sha256sum "$tar_file" | cut -d' ' -f1)
+        if [[ "$actual" != "$img_sha256" ]]; then
+          die "SHA-256 mismatch for bundle image ${img_name}: expected ${img_sha256}, got ${actual}" 4
+        fi
+        ok "Bundle image ${img_name} sha256 verified"
+        BUNDLE_IMAGES_VERIFIED=1
+      fi
+    done < <(manifest_image_checksums 2>/dev/null || true)
+  fi
+
+  if [[ $BUNDLE_IMAGES_VERIFIED -eq 0 ]]; then
+    if [[ $TRUST_BUNDLE -ne 1 && "${NEOSECRA_TRUST_BUNDLE:-0}" != "1" ]]; then
+      die "Bundle image verification not possible: release-manifest.yaml lacks per-image sha256 checksums. Use --i-trust-this-bundle or NEOSECRA_TRUST_BUNDLE=1 to proceed." 4
+    fi
+    warn "Loading bundle images WITHOUT individual verification (--i-trust-this-bundle). The release manifest does not carry per-image sha256 checksums."
+  fi
+
   for img in "$TMP_DIR"/images/*.tar; do
     [[ -f "$img" ]] && docker load -i "$img"
   done
