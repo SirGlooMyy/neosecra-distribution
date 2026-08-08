@@ -20,7 +20,7 @@ source "${V1_ROOT}/lib/logging.sh"
 #   NEOSECRA_TLS_MODE=internal — Custom CA, uses --cacert
 # ---------------------------------------------------------------------------
 NEOSECRA_TLS_MODE="${NEOSECRA_TLS_MODE:-public}"
-CURL_OPTS=("-fsSL")
+CURL_OPTS=("-fsSL" "-H" "User-Agent: NeoSecra-Upgrader/1.0")
 if [[ "${NEOSECRA_TLS_MODE}" == "internal" ]]; then
   NEOSECRA_CA_CERT="${NEOSECRA_CA_CERT:-${SCRIPT_DIR}/../ca/update-neosecra-com-root.crt}"
   if [[ -f "$NEOSECRA_CA_CERT" ]]; then
