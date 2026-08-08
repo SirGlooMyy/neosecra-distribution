@@ -122,6 +122,8 @@ fi
 
 # --- Dependencies ---
 log "Ensuring PostgreSQL and Redis are running..."
+ensure_frontend_tls
+
 run_compose up -d postgres redis
 wait_service_healthy postgres 90
 wait_service_healthy redis 90

@@ -108,7 +108,7 @@ fi
 
 # --- Ports ---
 PORT_FAIL=0
-for spec in "POSTGRES_PORT:25433" "REDIS_PORT:23639" "BACKEND_PORT:23800" "FRONTEND_PORT:23300"; do
+for spec in "POSTGRES_PORT:25433" "REDIS_PORT:23639" "BACKEND_PORT:23800" "FRONTEND_PORT:23300" "FRONTEND_TLS_PORT:23443"; do
   key="${spec%%:*}"; default="${spec##*:}"
   port="$(env_value "$key" "$default")"
   if port_is_free "$port"; then

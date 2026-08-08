@@ -223,6 +223,22 @@ else
   echo "PRERELEASE_GATE|FAIL|openvas-readiness|HTTP ${readiness_code:-?}"
 fi
 
+# (h2) frontend HTTPS + HTTP→HTTPS redirect
+FE_TLS_PORT="$(env_val FRONTEND_TLS_PORT)"; FE_TLS_PORT="${FE_TLS_PORT:-23443}"
+FE_PORT="$(env_val FRONTEND_PORT)"; FE_PORT="${FE_PORT:-23300}"
+fe_tls_code="$(curl -sk --max-time 10 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${FE_TLS_PORT}/health" 2>/dev/null || true)"
+if [[ "$fe_tls_code" == "200" ]]; then
+  echo "PRERELEASE_GATE|PASS|frontend-https|HTTPS ${fe_tls_code} on ${FE_TLS_PORT}"
+else
+  echo "PRERELEASE_GATE|FAIL|frontend-https|HTTPS ${fe_tls_code:-?} on ${FE_TLS_PORT}"
+fi
+fe_redir="$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${FE_PORT}/" 2>/dev/null || true)"
+if [[ "$fe_redir" == "301" ]]; then
+  echo "PRERELEASE_GATE|PASS|frontend-redirect|HTTP ${FE_PORT} → 301 HTTPS"
+else
+  echo "PRERELEASE_GATE|FAIL|frontend-redirect|expected 301, got ${fe_redir:-?}"
+fi
+
 # (h) backend log'larında 'Channel fetch failed' yok
 fetch_failed="$("${COMPOSE[@]}" logs --tail=500 backend 2>/dev/null | grep -c 'Channel fetch failed' || true)"
 if [[ "${fetch_failed:-0}" -eq 0 ]]; then

@@ -259,6 +259,36 @@ ensure_env_secret() {
   fi
 }
 
+# --- Frontend TLS ---
+# Generate the per-install self-signed cert nginx serves on :443 (TLS is
+# mandatory — admin credentials must never cross the LAN in cleartext).
+# Idempotent: existing cert/key are kept (upgrades, re-runs).
+ensure_frontend_tls() {
+  local tls_dir="${V1_ROOT}/config/tls"
+  local crt="${tls_dir}/server.crt" key="${tls_dir}/server.key"
+  if [[ -s "$crt" && -s "$key" ]]; then
+    return 0
+  fi
+  if ! command -v openssl >/dev/null 2>&1; then
+    die "openssl bulunamadi — frontend TLS sertifikasi uretilemedi (openssl kurun)" 4
+  fi
+  mkdir -p "$tls_dir"
+  # SAN: every routable host IP + loopback, so both LAN and Tailscale access work.
+  local san="IP:127.0.0.1,DNS:localhost" ip
+  while read -r ip; do
+    [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ && "$ip" != "127.0.0.1" ]] && san="${san},IP:${ip}"
+  done < <(hostname -I 2>/dev/null | tr ' ' '\n' | sort -u)
+  openssl req -x509 -newkey rsa:2048 -nodes \
+    -keyout "$key" -out "$crt" -days 825 \
+    -subj "/CN=neosecra.local" \
+    -addext "subjectAltName=${san}" 2>/dev/null \
+    || die "TLS sertifikasi uretilemedi (openssl req basarisiz)" 4
+  chmod 0600 "$key"
+  chmod 0644 "$crt"
+  ok "Frontend TLS sertifikasi uretildi: ${crt} (SAN: ${san})"
+  warn "Self-signed sertifika — tarayici ilk giriste guven uyariasi gosterir (kabul edip devam edin)"
+}
+
 ensure_initial_admin_email() {
   local current
   current="$(env_value FIRST_ADMIN_EMAIL "")"
@@ -303,6 +333,7 @@ initialize_env_file() {
   ensure_env_value REDIS_PORT "23639"
   ensure_env_value BACKEND_PORT "23800"
   ensure_env_value FRONTEND_PORT "23300"
+  ensure_env_value FRONTEND_TLS_PORT "23443"
   ensure_env_value NEOSECRA_EDITION "security_health"
   ensure_env_value VITE_NEOSECRA_EDITION "security-health"
   ensure_env_value ENVIRONMENT "production"
@@ -310,7 +341,8 @@ initialize_env_file() {
   postgres_password="$(env_value POSTGRES_PASSWORD "")"
   ensure_env_value DATABASE_URL "postgresql+asyncpg://neosecra:${postgres_password}@postgres:5432/neosecra_assessment"
   frontend_port="$(env_value FRONTEND_PORT "23300")"
-  ensure_env_value BACKEND_CORS_ORIGINS "http://localhost:${frontend_port},http://127.0.0.1:${frontend_port}"
+  frontend_tls_port="$(env_value FRONTEND_TLS_PORT "23443")"
+  ensure_env_value BACKEND_CORS_ORIGINS "https://localhost:${frontend_tls_port},https://127.0.0.1:${frontend_tls_port},http://localhost:${frontend_port},http://127.0.0.1:${frontend_port}"
 
   ensure_env_value ALGORITHM "HS256"
   ensure_env_value ACCESS_TOKEN_EXPIRE_MINUTES "15"
@@ -579,13 +611,16 @@ PY
 }
 
 wait_frontend_http() {
-  local timeout="${1:-120}" frontend_port code
+  local timeout="${1:-120}" frontend_port tls_port code code_tls
   frontend_port="$(env_value FRONTEND_PORT 23300)"
-  log "Waiting for frontend HTTP on 127.0.0.1:${frontend_port} (timeout ${timeout}s)..."
+  tls_port="$(env_value FRONTEND_TLS_PORT 23443)"
+  log "Waiting for frontend HTTPS on 127.0.0.1:${tls_port} (timeout ${timeout}s)..."
   for _ in $(seq 1 "$timeout"); do
-    code="$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${frontend_port}" 2>/dev/null || true)"
-    if [[ "$code" =~ ^(200|301|302|304)$ ]]; then
-      ok "Frontend responds (HTTP ${code})"
+    code_tls="$(curl -sk --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${tls_port}" 2>/dev/null || true)"
+    if [[ "$code_tls" =~ ^(200|301|302|304)$ ]]; then
+      # HTTP port must redirect to HTTPS (or at least answer /health)
+      code="$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${frontend_port}/health" 2>/dev/null || true)"
+      ok "Frontend responds (HTTPS ${code_tls}, HTTP health ${code})"
       return 0
     fi
     sleep 1
@@ -594,13 +629,13 @@ wait_frontend_http() {
 }
 
 wait_frontend_api_proxy() {
-  local timeout="${1:-120}" frontend_port code
-  frontend_port="$(env_value FRONTEND_PORT 23300)"
-  log "Waiting for frontend API proxy on 127.0.0.1:${frontend_port} (timeout ${timeout}s)..."
+  local timeout="${1:-120}" tls_port code
+  tls_port="$(env_value FRONTEND_TLS_PORT 23443)"
+  log "Waiting for frontend API proxy on 127.0.0.1:${tls_port} (timeout ${timeout}s)..."
   for _ in $(seq 1 "$timeout"); do
-    code="$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${frontend_port}/api/v1/health" 2>/dev/null || true)"
+    code="$(curl -sk --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${tls_port}/api/v1/health" 2>/dev/null || true)"
     if [[ "$code" == "200" ]]; then
-      ok "Frontend API proxy responds (HTTP 200)"
+      ok "Frontend API proxy responds (HTTPS 200)"
       return 0
     fi
     sleep 1
@@ -612,6 +647,7 @@ verify_initial_admin_login_via_frontend() {
   log "Verifying initial admin login through frontend API proxy..."
   run_compose run --rm --no-deps -T backend python - <<'PY' >/dev/null
 import json
+import ssl
 import sys
 import urllib.error
 import urllib.request
@@ -623,15 +659,18 @@ payload = json.dumps({
     "password": settings.first_admin_password,
 }).encode()
 
+# Frontend terminates TLS with a per-install self-signed cert — skip
+# verification here (identity is not the point of this smoke check).
 request = urllib.request.Request(
-    "http://frontend/api/v1/auth/login",
+    "https://frontend/api/v1/auth/login",
     data=payload,
     headers={"Content-Type": "application/json"},
     method="POST",
 )
 
 try:
-    with urllib.request.urlopen(request, timeout=10) as response:
+    ctx = ssl._create_unverified_context()
+    with urllib.request.urlopen(request, timeout=10, context=ctx) as response:
         status = response.getcode()
         body = response.read(8192)
 except urllib.error.HTTPError as exc:

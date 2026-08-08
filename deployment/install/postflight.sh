@@ -73,32 +73,42 @@ run_compose ps --status running worker 2>/dev/null | grep -q worker && \
 
 # --- Frontend ---
 FRONTEND_PORT="$(env_value FRONTEND_PORT 23300)"
+FRONTEND_TLS_PORT="$(env_value FRONTEND_TLS_PORT 23443)"
 FRONTEND_OK=0
 f_code="000"
 for _ in $(seq 1 "$TIMEOUT"); do
-  f_code=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${FRONTEND_PORT}" 2>/dev/null || true)
+  f_code=$(curl -sk --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${FRONTEND_TLS_PORT}" 2>/dev/null || true)
   if [[ "$f_code" =~ ^(200|304|301|302)$ ]]; then
-    chk_pass "Frontend responds (HTTP ${f_code})"
+    chk_pass "Frontend responds (HTTPS ${f_code})"
     FRONTEND_OK=1
     break
   fi
   sleep 1
 done
-[[ "$FRONTEND_OK" -eq 1 ]] || chk_fail "Frontend HTTP ${f_code:-?}"
+[[ "$FRONTEND_OK" -eq 1 ]] || chk_fail "Frontend HTTPS ${f_code:-?}"
+
+# --- HTTP → HTTPS redirect ---
+REDIR_OK=0
+r_code=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${FRONTEND_PORT}/" 2>/dev/null || true)
+if [[ "$r_code" == "301" ]]; then
+  chk_pass "HTTP port redirects to HTTPS (301)"
+  REDIR_OK=1
+fi
+[[ "$REDIR_OK" -eq 1 ]] || chk_fail "HTTP port did not redirect (got ${r_code:-?})"
 
 # --- Frontend API proxy ---
 FRONTEND_API_OK=0
 fp_code="000"
 for _ in $(seq 1 "$TIMEOUT"); do
-  fp_code=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${FRONTEND_PORT}/api/v1/health" 2>/dev/null || true)
+  fp_code=$(curl -sk --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${FRONTEND_TLS_PORT}/api/v1/health" 2>/dev/null || true)
   if [[ "$fp_code" == "200" ]]; then
-    chk_pass "Frontend API proxy responds (HTTP 200)"
+    chk_pass "Frontend API proxy responds (HTTPS 200)"
     FRONTEND_API_OK=1
     break
   fi
   sleep 1
 done
-[[ "$FRONTEND_API_OK" -eq 1 ]] || chk_fail "Frontend API proxy HTTP ${fp_code:-?}"
+[[ "$FRONTEND_API_OK" -eq 1 ]] || chk_fail "Frontend API proxy HTTPS ${fp_code:-?}"
 
 # --- API endpoints ---
 if [[ $HEALTHY -eq 1 ]]; then

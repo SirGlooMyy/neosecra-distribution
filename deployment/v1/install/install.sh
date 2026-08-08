@@ -86,6 +86,8 @@ done
 # --- Start dependencies ---
 INSTALL_PHASE="dependencies"
 log "Starting PostgreSQL and Redis..."
+ensure_frontend_tls
+
 run_compose up -d postgres redis
 wait_service_healthy postgres 90
 wait_service_healthy redis 90
@@ -144,5 +146,5 @@ write_install_state "$INSTALL_VERSION" "complete" "ok"
 
 echo ""
 ok "NeoSecra Assessment v${INSTALL_VERSION} installed"
-log "Access: http://<host>:$(env_value FRONTEND_PORT 23300)"
+log "Access: https://<host>:$(env_value FRONTEND_TLS_PORT 23443) (self-signed; http://<host>:$(env_value FRONTEND_PORT 23300) yonlendirir)"
 log "Manage: neosecra <command>"

@@ -416,10 +416,11 @@ if [[ ! -f .env.v1 ]]; then
     "REDIS_PORT=23639" \
     "BACKEND_PORT=23800" \
     "FRONTEND_PORT=23300" \
+    "FRONTEND_TLS_PORT=23443" \
     "NEOSECRA_EDITION=security_health" \
     "VITE_NEOSECRA_EDITION=security-health" \
     "ENVIRONMENT=production" \
-    "BACKEND_CORS_ORIGINS=http://localhost:23300,http://127.0.0.1:23300" \
+    "BACKEND_CORS_ORIGINS=https://localhost:23443,https://127.0.0.1:23443,http://localhost:23300,http://127.0.0.1:23300" \
     "ALGORITHM=HS256" \
     "ACCESS_TOKEN_EXPIRE_MINUTES=15" \
     "REFRESH_TOKEN_EXPIRE_DAYS=7" \
@@ -503,6 +504,7 @@ if [[ -n "$INSTALLED_VERSION" ]]; then
     fi
 
     if stack_is_running; then
+      ensure_frontend_tls
       run_compose up -d postgres redis
       wait_service_healthy postgres 90
       wait_service_healthy redis 90
@@ -536,6 +538,7 @@ bash "${RELEASE_DIR}/install/install.sh" --confirm-backed-up
 
 info "============================================"
 info "NeoSecra Assessment v${VERSION} KURULDU"
-info "Web: http://<sunucu-ip>:23300"
+info "Web: https://<sunucu-ip>:23443 (self-signed — tarayıcı güven uyarısı normal, kabul edin)"
+info "     http://<sunucu-ip>:23300 otomatik HTTPS'e yönlendirir"
 info "Yönetim: neosecra <komut>"
 info "============================================"
