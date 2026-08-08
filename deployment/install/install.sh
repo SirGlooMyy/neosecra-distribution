@@ -46,6 +46,15 @@ if is_installed; then
   exit 0
 fi
 
+# --- Data-loss guard: current/.env.v1 varsa bu fresh install DEĞİLDİR ---
+# State dosyası kaybolsa bile (geçmiş olay) current/.env.v1 canlı kurulumun
+# işaretidir. Fresh install postgres'i taze bir veri dizinine açıp müşteri
+# veritabanını siler; bu yüzden reddedilir. Sadece NEOSECRA_REINSTALL=1 ile
+# (bootstrap --reinstall) geçilebilir.
+if [[ -f "${INSTALL_ROOT}/current/.env.v1" ]] && [[ "${NEOSECRA_REINSTALL:-0}" != "1" ]]; then
+  die "Mevcut kurulum algılandı (${INSTALL_ROOT}/current/.env.v1) — veri kaybını önlemek için fresh install iptal. Yükseltme için: upgrade/upgrade.sh" 1
+fi
+
 [[ $CONFIRM -eq 1 ]] || die "Install requires --confirm-backed-up" 1
 
 # --- Lock ---

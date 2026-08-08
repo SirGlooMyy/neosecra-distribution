@@ -215,6 +215,15 @@ random_hex() {
   fi
 }
 
+env_value_from() {
+  # Mevcut bir .env.v1'den değeri grep-and-keep ile al; yoksa boş döner.
+  # Secret'ları yeniden üretmek yerine KORUMAK için kullanılır.
+  local file="$1" key="$2"
+  if [[ -f "$file" ]]; then
+    grep -E "^${key}=" "$file" 2>/dev/null | tail -n1 | cut -d= -f2- || true
+  fi
+}
+
 random_admin_password() {
   local candidate lower
   for _ in $(seq 1 30); do
@@ -230,11 +239,66 @@ random_admin_password() {
 }
 
 # --- Script'leri kalıcı dizine kopyala ---
-BASE="/opt/neosecra/assessment"
+# NEOSECRA_INSTALL_ROOT yalnızca bootstrap'in kendi base dizinini ezmek içindir
+# (sandbox/staging testleri). Varsayılan canlı hedef /opt/neosecra/assessment.
+BASE="${NEOSECRA_INSTALL_ROOT:-/opt/neosecra/assessment}"
 RELEASE_DIR="${BASE}/releases/${VERSION}"
 CURRENT_RELEASE_DIR=""
 if [[ -L "${BASE}/current" ]]; then
   CURRENT_RELEASE_DIR="$(readlink -f "${BASE}/current" 2>/dev/null || true)"
+fi
+
+# ---------------------------------------------------------------------------
+# Kurulum guard'ı — mevcut kurulumu asla "fresh" sanma (veri kaybı koruması).
+# En kötü olay: canlı müşteri kurulumu olan makinede bootstrap.sh yeniden
+# çalıştırıldı, .env.v1 taze rastgele parolalarla yeniden üretildi, postgres
+# farklı/uyumsuz bir veri dizinine karşı yeniden oluşturuldu ve müşteri
+# veritabanı (users/customers/license) fiilen silindi. Bu blok bunu imkânsız
+# kılar:
+#   * current/.env.v1 VARSA  -> fresh install REDDEDİLİR (exit 1)
+#   * --reinstall / NEOSECRA_REINSTALL=1 -> açık onay istenir ve mevcut
+#     secret'lar KORUNUR (yeniden üretilmez, grep-and-keep).
+# ---------------------------------------------------------------------------
+CURRENT_ENV="${BASE}/current/.env.v1"
+
+REINSTALL=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --reinstall) REINSTALL=1 ;;
+    --help|-h)
+      cat <<'HELP'
+NeoSecra Assessment — tek komut kurulum
+
+Kullanım:
+  bootstrap.sh [--reinstall] [--help]
+
+  --reinstall   Mevcut kurulum üzerine fresh install'a izin verir (yıkıcı
+                olabilir; aksi halde reddedilir). NEOSECRA_REINSTALL=1 ile de
+                açılır. Onay gerekir: NEOSECRA_REINSTALL_CONFIRM=1 veya
+                interaktif terminalde 'REINSTALL' yazmak. Secret'lar asla
+                yeniden üretilmez; mevcut .env.v1 kullanılır.
+  --help        Bu yardımı göster
+HELP
+      exit 0 ;;
+    *) err "Beklenmeyen argüman: $1" ;;
+  esac
+  shift
+done
+[[ "${NEOSECRA_REINSTALL:-0}" == "1" ]] && REINSTALL=1
+
+if [[ -f "$CURRENT_ENV" ]]; then
+  if [[ $REINSTALL -ne 1 ]]; then
+    err "Mevcut kurulum algılandı (${CURRENT_ENV}) — veri kaybını önlemek için fresh install iptal. Yükseltme için: upgrade/upgrade.sh"
+  fi
+  info "Reinstall modu: mevcut kurulum tespit edildi — mevcut secret'lar korunacak, yeniden üretilmeyecek"
+  if [[ "${NEOSECRA_REINSTALL_CONFIRM:-0}" != "1" ]]; then
+    if [[ ! -t 0 ]]; then
+      err "Reinstall onayı gerekli: NEOSECRA_REINSTALL_CONFIRM=1 ile tekrar çalıştırın (veya interaktif terminalde devam etmek için REINSTALL yazın)"
+    fi
+    read -r -p "[neosecra] Devam etmek için 'REINSTALL' yazın: " _reinstall_answer
+    [[ "$_reinstall_answer" == "REINSTALL" ]] || err "Reinstall onayı verilmedi — iptal"
+  fi
+  export NEOSECRA_REINSTALL=1
 fi
 
 INSTALLED_VERSION=""
@@ -288,31 +352,45 @@ info "Temporary distribution archive left for audit: ${TMP_DIR}"
 
 cd "$RELEASE_DIR"
 
-if [[ -n "$INSTALLED_VERSION" && -n "$CURRENT_RELEASE_DIR" && "$CURRENT_RELEASE_DIR" != "$RELEASE_DIR" && -f "${CURRENT_RELEASE_DIR}/.env.v1" ]]; then
-  if [[ -f .env.v1 ]]; then
-    cp -a .env.v1 ".env.v1.stale-target-backup-$(date -u +%Y%m%dT%H%M%SZ)"
-  fi
-  cp -a "${CURRENT_RELEASE_DIR}/.env.v1" .env.v1
+# Mevcut kurulumun .env.v1'ini yeni release'e taşı — secret'ları yeniden üretme.
+if [[ -f "$CURRENT_ENV" && ! -f .env.v1 ]]; then
+  cp -a "$CURRENT_ENV" .env.v1
   chmod 0600 .env.v1 2>/dev/null || true
-  info "Existing current release environment copied into target release"
+  info "Mevcut kurulumun .env.v1'i korundu (secret'lar yeniden üretilmedi): ${CURRENT_ENV}"
+elif [[ -f .env.v1 && -f "$CURRENT_ENV" ]] && ! cmp -s .env.v1 "$CURRENT_ENV"; then
+  ENV_BACKUP="${RELEASE_DIR}/.env.v1.backup-$(date -u +%Y%m%dT%H%M%SZ)"
+  cp -a .env.v1 "$ENV_BACKUP"
+  chmod 0600 "$ENV_BACKUP" 2>/dev/null || true
+  info "Mevcut .env.v1 yedeklendi (VERİ KAYBINA KARŞI): ${ENV_BACKUP}"
+  cp -a "$CURRENT_ENV" .env.v1
+  chmod 0600 .env.v1 2>/dev/null || true
+  info "Mevcut kurulumun .env.v1'i uygulandı: ${CURRENT_ENV}"
 fi
 
 # --- .env oluştur ---
 if [[ ! -f .env.v1 ]]; then
   umask 077
-  PG_PASS=$(random_hex 24)
-  SECRET_KEY_VALUE=$(random_hex 48)
-  OTP_SECRET_VALUE=$(random_hex 48)
-  FIRST_ADMIN_PASSWORD_VALUE="${NEOSECRA_FIRST_ADMIN_PASSWORD:-Neosecra123!}"
-  ADMIN_RECOVERY_KEY_VALUE=$(random_hex 32)
-  OPENVAS_PASSWORD_VALUE=$(random_hex 24)
-  OPENVAS_GVM_PASSWORD_VALUE=$(random_hex 24)
-  OPENVAS_GMP_PASSWORD_VALUE=$(random_hex 24)
+  # Secret'ları asla körlemesine üretme: mevcut kurulumun .env.v1'i varsa
+  # (grep-and-keep) DEĞERLERİNİ YENİDEN KULLAN, sadece eksik olanları üret.
+  # Aksi halde POSTGRES_PASSWORD değişirse mevcut pgdata'ya yazılamaz ve
+  # postgres baştan "taze" bir veri dizinine açılır = veri kaybı.
+  PG_PASS="$(env_value_from "$CURRENT_ENV" POSTGRES_PASSWORD)"; [[ -n "$PG_PASS" ]] || PG_PASS=$(random_hex 24)
+  SECRET_KEY_VALUE="$(env_value_from "$CURRENT_ENV" SECRET_KEY)"; [[ -n "$SECRET_KEY_VALUE" ]] || SECRET_KEY_VALUE=$(random_hex 48)
+  OTP_SECRET_VALUE="$(env_value_from "$CURRENT_ENV" OTP_SECRET)"; [[ -n "$OTP_SECRET_VALUE" ]] || OTP_SECRET_VALUE=$(random_hex 48)
+  FIRST_ADMIN_PASSWORD_VALUE="$(env_value_from "$CURRENT_ENV" FIRST_ADMIN_PASSWORD)"
+  [[ -n "$FIRST_ADMIN_PASSWORD_VALUE" ]] || FIRST_ADMIN_PASSWORD_VALUE="${NEOSECRA_FIRST_ADMIN_PASSWORD:-Neosecra123!}"
+  FIRST_ADMIN_EMAIL_VALUE="$(env_value_from "$CURRENT_ENV" FIRST_ADMIN_EMAIL)"
+  [[ -n "$FIRST_ADMIN_EMAIL_VALUE" ]] || FIRST_ADMIN_EMAIL_VALUE="${NEOSECRA_FIRST_ADMIN_EMAIL:-admin@neosecra.com}"
+  ADMIN_RECOVERY_KEY_VALUE="$(env_value_from "$CURRENT_ENV" ADMIN_RECOVERY_KEY)"; [[ -n "$ADMIN_RECOVERY_KEY_VALUE" ]] || ADMIN_RECOVERY_KEY_VALUE=$(random_hex 32)
+  OPENVAS_PASSWORD_VALUE="$(env_value_from "$CURRENT_ENV" OV_PASSWORD)"; [[ -n "$OPENVAS_PASSWORD_VALUE" ]] || OPENVAS_PASSWORD_VALUE=$(random_hex 24)
+  OPENVAS_GVM_PASSWORD_VALUE="$(env_value_from "$CURRENT_ENV" OPENVAS_PASS)"; [[ -n "$OPENVAS_GVM_PASSWORD_VALUE" ]] || OPENVAS_GVM_PASSWORD_VALUE=$(random_hex 24)
+  OPENVAS_GMP_PASSWORD_VALUE="$(env_value_from "$CURRENT_ENV" OPENVAS_GMP_PASS)"; [[ -n "$OPENVAS_GMP_PASSWORD_VALUE" ]] || OPENVAS_GMP_PASSWORD_VALUE=$(random_hex 24)
   DB_URL="postgresql+asyncpg://neosecra:${PG_PASS}@postgres:5432/neosecra_assessment"
   if [[ -n "${NEOSECRA_LICENSE_PUBLIC_KEY_B64:-}" ]]; then
     LICENSE_PUBLIC_KEY_LINE="LICENSE_PUBLIC_KEY_B64=${NEOSECRA_LICENSE_PUBLIC_KEY_B64}"
   else
-    LICENSE_PUBLIC_KEY_LINE="LICENSE_PUBLIC_KEY_B64=qe+qrDcT1FNuvTcVNUEf/bwru4dJakikHPaf0ELEdf8="
+    LICENSE_PUBLIC_KEY_LINE="LICENSE_PUBLIC_KEY_B64=$(env_value_from "$CURRENT_ENV" LICENSE_PUBLIC_KEY_B64)"
+    [[ "$LICENSE_PUBLIC_KEY_LINE" != "LICENSE_PUBLIC_KEY_B64=" ]] || LICENSE_PUBLIC_KEY_LINE="LICENSE_PUBLIC_KEY_B64=qe+qrDcT1FNuvTcVNUEf/bwru4dJakikHPaf0ELEdf8="
   fi
 
   printf '%s\n' \
@@ -331,7 +409,7 @@ if [[ ! -f .env.v1 ]]; then
     "REDIS_URL=redis://redis:6379/0" \
     "SECRET_KEY=${SECRET_KEY_VALUE}" \
     "OTP_SECRET=${OTP_SECRET_VALUE}" \
-    "FIRST_ADMIN_EMAIL=${NEOSECRA_FIRST_ADMIN_EMAIL:-admin@neosecra.com}" \
+    "FIRST_ADMIN_EMAIL=${FIRST_ADMIN_EMAIL_VALUE}" \
     "FIRST_ADMIN_PASSWORD=${FIRST_ADMIN_PASSWORD_VALUE}" \
     "ADMIN_RECOVERY_KEY=${ADMIN_RECOVERY_KEY_VALUE}" \
     "POSTGRES_PORT=25433" \

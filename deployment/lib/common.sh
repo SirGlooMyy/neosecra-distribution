@@ -255,6 +255,7 @@ initialize_env_file() {
     cp -a "$ENV_FILE" "$backup_path"
     chmod 0600 "$backup_path" 2>/dev/null || true
     log ".env.v1 backup created: ${backup_path}"
+    warn "Mevcut .env.v1 yedeklendi (VERİ KAYBINA KARŞI saklanır): ${backup_path}"
   else
     mkdir -p "$(dirname "$ENV_FILE")"
     : > "$ENV_FILE"
