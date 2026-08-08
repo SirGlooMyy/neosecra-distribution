@@ -17,11 +17,12 @@ Orchestrate a full NeoSecra Security Health release across assessment and
 distribution repositories.
 
 Steps:
-  [1/5] Bump VERSION + release-manifest.yaml in assessment repo, commit, tag, push
-  [2/5] Wait for GitHub Actions CI (security-health-release.yml) to complete
-  [3/5] Build distribution archive via build-release.sh
-  [4/5] Sign & publish archive via publish.sh
-  [5/5] Rsync published artifacts to update server(s)
+  [1/6] Bump VERSION + release-manifest.yaml in assessment repo, commit, tag, push
+  [2/6] Wait for GitHub Actions CI (security-health-release.yml) to complete
+  [3/6] Build distribution archive via build-release.sh
+  [4/6] Push container images from GHCR to registry.neosecra.com
+  [5/6] Sign & publish archive via publish.sh
+  [6/6] Rsync published artifacts to update server(s)
 
 Arguments:
   <version>          Semantic version (X.Y.Z) to release
@@ -30,6 +31,7 @@ Options:
   --assessment-repo <path>   Path to neosecra-assessment repo
                              (default: ../neosecra-assessment relative to repo root)
   --skip-ci-wait             Skip waiting for GitHub CI completion
+  --skip-registry-push       Skip pushing container images to registry.neosecra.com
   --rsync <target>           rsync target for publish.sh (user@host:/path)
   --dry-run                  Print actions without executing anything destructive
   --help                     Show this help and exit
@@ -51,16 +53,18 @@ EOF
 VERSION=""
 ASSESSMENT_REPO=""
 SKIP_CI_WAIT=0
+SKIP_REGISTRY_PUSH=0
 RSYNC_TARGET=""
 DRY_RUN=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --assessment-repo) ASSESSMENT_REPO="$2";  shift 2 ;;
-        --skip-ci-wait)    SKIP_CI_WAIT=1;        shift   ;;
-        --rsync)           RSYNC_TARGET="$2";     shift 2 ;;
-        --dry-run)         DRY_RUN=1;             shift   ;;
-        --help)            usage                         ;;
+        --assessment-repo)   ASSESSMENT_REPO="$2";  shift 2 ;;
+        --skip-ci-wait)      SKIP_CI_WAIT=1;        shift   ;;
+        --skip-registry-push) SKIP_REGISTRY_PUSH=1;  shift   ;;
+        --rsync)             RSYNC_TARGET="$2";     shift 2 ;;
+        --dry-run)           DRY_RUN=1;             shift   ;;
+        --help)              usage                         ;;
         -*)
             echo "[ERROR] Unknown option: $1"
             usage
@@ -114,6 +118,8 @@ ARCHIVE_DIR="${SCRIPT_DIR}/www/releases/${VERSION}"
 TAG="security-health-v${VERSION}"
 PRODUCT="assessment"
 CHANNEL="stable"
+
+REGISTRY_PUSH_TARGET="${UPDATE_REGISTRY_PUSH_TARGET:-ssh neosecra@100.125.0.108}"
 
 PUBLISH_TMPDIR=""
 cleanup() {
@@ -304,9 +310,9 @@ else
 fi
 
 # ============================================================================
-# [3/5] Build distribution archive
+# [3/6] Build distribution archive
 # ============================================================================
-log_step 3 5 "Building distribution archive via build-release.sh"
+log_step 3 6 "Building distribution archive via build-release.sh"
 
 if [[ $DRY_RUN -eq 1 ]]; then
     log " [DRY-RUN]   bash ${SCRIPT_DIR}/build-release.sh ${VERSION}"
@@ -316,9 +322,41 @@ else
 fi
 
 # ============================================================================
-# [4/5] Sign and publish archive
+# [4/6] Push container images to private registry
 # ============================================================================
-log_step 4 5 "Signing and publishing archive via publish.sh"
+log_step 4 6 "Pushing container images to registry.neosecra.com"
+
+GHCR_BACKEND="ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${VERSION}"
+GHCR_FRONTEND="ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:${VERSION}"
+REGISTRY_BACKEND="registry.neosecra.com/security-health-backend:${VERSION}"
+REGISTRY_FRONTEND="registry.neosecra.com/security-health-frontend:${VERSION}"
+
+REGISTRY_PUSH_CMD="
+docker pull '${GHCR_BACKEND}' || { echo '[ERROR] Failed to pull ${GHCR_BACKEND}'; exit 1; }
+docker pull '${GHCR_FRONTEND}' || { echo '[ERROR] Failed to pull ${GHCR_FRONTEND}'; exit 1; }
+docker tag '${GHCR_BACKEND}' '${REGISTRY_BACKEND}'
+docker tag '${GHCR_FRONTEND}' '${REGISTRY_FRONTEND}'
+docker push '${REGISTRY_BACKEND}' || { echo '[ERROR] Failed to push ${REGISTRY_BACKEND}'; exit 1; }
+docker push '${REGISTRY_FRONTEND}' || { echo '[ERROR] Failed to push ${REGISTRY_FRONTEND}'; exit 1; }
+"
+
+if [[ $SKIP_REGISTRY_PUSH -eq 1 ]]; then
+    log " [SKIP] --skip-registry-push flag set — skipping registry push."
+elif [[ $DRY_RUN -eq 1 ]]; then
+    log " [DRY-RUN]   ${REGISTRY_PUSH_TARGET} '${REGISTRY_PUSH_CMD}'"
+else
+    log " Registry push target: ${REGISTRY_PUSH_TARGET}"
+    if ! ${REGISTRY_PUSH_TARGET} "${REGISTRY_PUSH_CMD}"; then
+        echo "[ERROR] Registry push FAILED. Images may be missing from registry.neosecra.com."
+        exit 1
+    fi
+    log " Registry push complete — images available at registry.neosecra.com"
+fi
+
+# ============================================================================
+# [5/6] Sign and publish archive
+# ============================================================================
+log_step 5 6 "Signing and publishing archive via publish.sh"
 
 if [[ $DRY_RUN -eq 1 ]]; then
     log " [DRY-RUN]   mktemp -d"
@@ -357,9 +395,9 @@ else
 fi
 
 # ============================================================================
-# [5/5] Rsync to update server(s)
+# [6/6] Rsync to update server(s)
 # ============================================================================
-log_step 5 5 "Rsyncing published artifacts to update server(s)"
+log_step 6 6 "Rsyncing published artifacts to update server(s)"
 
 if [[ $DRY_RUN -eq 1 ]]; then
     if [[ -n "$RSYNC_TARGET" ]]; then
