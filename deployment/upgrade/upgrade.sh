@@ -279,7 +279,7 @@ if [[ $TARGET_FROM_ARG -eq 0 && "$TARGET" != "$(read_version)" && "${NEOSECRA_UP
 
   RESOLVED_ARCHIVE_URL="$(parse_channel_archive_url "${CHANNEL_JSON:-}" "$TARGET")"
   [[ -z "$RESOLVED_ARCHIVE_URL" ]] && \
-    RESOLVED_ARCHIVE_URL="https://update.neosecra.com/releases/${TARGET}/distribution.tar.gz"
+    RESOLVED_ARCHIVE_URL="https://update.neosecra.com/releases/${TARGET}/distribution-${TARGET}.tar.gz"
   RESOLVED_ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-$RESOLVED_ARCHIVE_URL}"
 
   DL_DIR="$(mktemp -d)"
