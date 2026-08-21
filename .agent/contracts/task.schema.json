@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neosecra.local/agent/contracts/task.schema.json",
+  "title": "Task Contract",
+  "description": "Orkestratörden bağımsız, taşınabilir görev sözleşmesi. task-intake Skill'i bunu üretir.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "task_id",
+    "objective",
+    "risk_tier",
+    "state",
+    "acceptance_criteria",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+      "description": "Örn: ASSESS-42, PISH-7, HOTSPOT-120"
+    },
+    "objective": { "type": "string", "minLength": 1 },
+    "scope": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Kapsamdaki davranış/modül listesi"
+    },
+    "non_goals": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Açıkça kapsam dışı bırakılanlar"
+    },
+    "allowed_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Yazma izni olan glob yolları. Boşsa T0 (salt okunur) demektir."
+    },
+    "risk_tier": { "type": "string", "enum": ["T0", "T1", "T2", "T3"] },
+    "state": {
+      "type": "string",
+      "enum": [
+        "NEW",
+        "SCOPED",
+        "PLANNED",
+        "IMPLEMENTING",
+        "REVIEWING",
+        "VERIFYING",
+        "DONE",
+        "PARTIAL",
+        "BLOCKED",
+        "NEEDS_HUMAN",
+        "CANCELLED"
+      ]
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "required_tests": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Çalıştırılması gereken test komutları veya dosyaları"
+    },
+    "worker_preference": {
+      "type": "string",
+      "enum": ["kimi-direct", "cline", "opencode", "none"],
+      "default": "none"
+    },
+    "commit_permission": { "type": "boolean", "default": false },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "max_implementation_rounds": { "type": "integer", "default": 3, "maximum": 3 },
+        "max_subagent_calls": { "type": "integer", "default": 6 },
+        "notes": { "type": "string" }
+      }
+    },
+    "worktree": {
+      "type": ["string", "null"],
+      "description": "Varsa izole çalışma alanı yolu"
+    },
+    "created_by": { "type": "string", "default": "orchestrator" },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

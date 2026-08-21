@@ -1,0 +1,46 @@
+# risk-policy.yaml — neosecra-distribution proje override'ı
+# Global varsayılanlar: ~/.agent/policies/risk-policy.yaml
+# Burada yalnızca projeye özel T3 tetikleyici path'ler ve ek kurallar var.
+
+version: "1.0"
+extends: ~/.agent/policies/risk-policy.yaml
+
+# PATH tabanlı tetikleyiciler: değişen dosya bunlarla kesişirse görev T3.
+# (Kelime eşleşmesi YETERLİ DEĞİL — yol kesişimi şart.)
+# Global'deki **/deployment/**, **/*secret*/, **/.env* zaten geçerli;
+# aşağısı bu repo'ya özel kritik yüzeylerdir.
+t3_trigger_globs:
+  - "bootstrap.sh"                              # müşteri kurulum giriş noktası
+  - "update-server/Caddyfile"                   # internal TLS / custom CA
+  - "update-server/Caddyfile.public"            # Let's Encrypt TLS
+  - "update-server/publish.sh"                  # release publish + minisign imza
+  - "update-server/build-release.sh"
+  - "update-server/docker-compose.yml"
+  - "update-server/certs/**"                    # private key'ler burada yaşar
+  - "update-server/ca/**"
+  - "**/*.key"
+  - "**/*.minisig"                              # imza dosyaları — yayın bütünlüğü
+  - "channels/*.json"                           # schema'yı bozma (nested/flat)
+  - "channels/*.json.minisig"
+  - "schemas/**"                                # release/channel manifest schema
+  - "public-keys/**"
+  - "scripts/make-customer-package.sh"          # müşteri paketi üretici
+  - "deployment/upgrade/**"                     # canlı upgrade akışı
+  - "deployment/install/**"
+  - "deployment/lib/**"
+
+# Dağıtım özel: upgrade/bootstrap akış değişikliği T3 değil ama acceptance
+# gate'i sıkıdır — gerçek akış bozulmadan (bash -n + regression) DONE yazılmaz.
+special_gates:
+  live_installer_change:
+    paths:
+      - "bootstrap.sh"
+      - "deployment/upgrade/**"
+      - "deployment/install/**"
+    requires: [bash_n_pass, regression_suite_pass, real_flow_not_broken]
+    status_if_unverifiable: PARTIAL
+
+security_notes: >
+  TLS doğrulaması HER ZAMAN açıktır; curl -k / --insecure YASAK (custom CA ile
+  --cacert kullanılır). Private key / token / parola COMMIT'lenmez;
+  /opt/neosecra/secrets/ altında (600 root:root) yaşar.

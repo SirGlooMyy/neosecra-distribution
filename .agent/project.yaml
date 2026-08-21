@@ -1,0 +1,87 @@
+# project.yaml — neosecra-distribution (canonical proje tanımı)
+# Orkestratör ve subagent'lar önce buraya bakar. Değişirse bu dosya güncellenir.
+
+version: "1.0"
+project_id: DIST
+name: NeoSecra Distribution Channel — update server, bootstrap ve müşteri kurulum paketleri
+repo_path: /home/sirgloomy/projects/neosecra-distribution
+task_prefix: DIST
+
+stack:
+  language: Bash (POSIX-aware) + Python3 (JSON parslama util'leri)
+  server: Caddy (TLS) + Docker Compose (update-server/)
+  signing: minisign (channel/release imzalama)
+  crypto: OpenSSL (custom CA, sertifika doğrulama)
+  manifests: JSON channel schema (channels/*.json) + JSON Schema (schemas/)
+  note: >
+    Bu repo KAYNAK KOD içermez; release metadata, channel manifest,
+    schema, public key ve dağıtım/upgrade shell scriptlerini barındırır.
+
+test_commands:
+  fast: >
+    set -Eeuo pipefail; for f in bootstrap.sh deployment/install/install.sh
+    deployment/install/preflight.sh deployment/install/postflight.sh
+    deployment/upgrade/upgrade.sh deployment/lib/common.sh
+    deployment/lib/docker.sh deployment/lib/state.sh deployment/lib/manifest.sh
+    deployment/lib/logging.sh update-server/publish.sh update-server/build-release.sh
+    scripts/backup.sh scripts/restore.sh scripts/make-customer-package.sh; do
+    bash -n "$f"; done && bash update-server/src/regression-test.sh
+  full: "bash update-server/src/e2e-test.sh   # canlı update server'a istek atar (network/ortam gerekir)"
+  shell_syntax: "bash -n <script>   # herhangi bir shell script değişikliği sonrası"
+  notes: >
+    shellcheck bu makinede kurulu değil; varsa kullanılmalı, yoksa bash -n + manual
+    review. e2e-test.sh canlı update.neosecra.com'a bağlanır (read-only, TLS'li)
+    ve curl kullanır — yalnızca ortam/network uygunsa full olarak çalıştırılır.
+    regression-test.sh tamamen lokal (yalnızca /tmp yazar) — fast path'tir.
+
+tenant_rule: >
+  Tek-müşteri dağıtım modeli. NeoSecra Assessment/SOC/PISH ürünlerinin ortak
+  dağıtım kanalıdır; çoklu-tenant scope, RBAC veya müşteri bazlı veri yoktur.
+  "Tenant" kavramı kanal düzeyinde ürün başına channel/edition ayrımıdır
+  (assessment-stable/beta, soc-stable/beta).
+
+canonical_docs:
+  - AGENTS.md                    # çalışma kuralları (ana giriş)
+  - README.md                    # yapı + erişim modeli
+  - bootstrap.sh                 # müşteri kurulum giriş noktası
+  - docs/CUSTOMER-INSTALL.md
+  - docs/CUSTOMER-UPDATER-AUTH.md
+  - docs/CUSTOM-CA.md
+  - docs/BACKUP-RESTORE.md
+  - docs/LICENSE-ISSUANCE.md
+  - docs/PUBLIC-UPDATE-SERVER.md
+  - docs/TOKEN-ROTATION.md
+  - docs/ASSESSMENT_AGENT_HANDOFF.md
+  - docs/architecture/
+  - schemas/release-manifest.schema.json   # channel/release schema (bozma!)
+  - update-server/README.md
+  - deployment/README.md
+
+baseline:
+  date: 2026-08-08
+  command: bash -n (15 script) + update-server/src/regression-test.sh
+  result: "18 passed, 1 failed (BILINEN BAŞARISIZLIK)"
+  known_failures:
+    - id: regression-T4.5
+      description: >
+        bootstrap.sh içine gömülü CA (NEOSECRA_CA_B64) parmak izi, güncel
+        update-server/ca/update-neosecra-com-root.crt ile eşleşmiyor.
+        Canlı kurulumda eski/gömülü CA kullanılıyor olabilir — CA rotasyonu
+        bootstrap ile senkronize değil. Onboard görevi kapsamı dışında;
+        değiştirilmedi, yalnızca kaydedildi.
+  notes: >
+    bash -n 15/15 temiz; regression 18/18 geçti, T4.5 gömülü CA eşleşmesi
+    önceden mevcut başarısız. e2e-test.sh canlı sunucu ister — baseline dışı.
+
+active_focus:
+  - Canlı upgrade akışı (deployment/upgrade/upgrade.sh)
+  - Müşteri kurulumu (bootstrap.sh, docker otomatik kurulum)
+  - Channel release publish + minisign imzalama (update-server/publish.sh)
+  - TLS / custom CA bütünlüğü (Caddyfile, certs, CA trust)
+  - Schema geriye dönük uyumluluğu (nested/flat archive)
+
+boundary: >
+  Bu repo dağıtım/update kanalıdır; ürün kaynak kodları başka repolardadır
+  (neosecra-assessment, neosecra-soc, neosecra-pish). Kanal dışı ürün
+  geliştirmesi buraya yapılmaz. Caddy TLS, minisign imza ve secret yönetimi
+  değişiklikleri T3 kurallarına tabidir.

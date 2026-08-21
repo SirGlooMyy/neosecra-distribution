@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neosecra.local/agent/contracts/event.schema.json",
+  "title": "Event",
+  "description": "Run yaşam döngüsü olayı. Faz 1'den itibaren her run'da runs/<RUN-ID>/events.jsonl dosyasına append edilir. Faz 6 metriklerinin kaynağıdır.",
+  "type": "object",
+  "required": ["schema_version", "run_id", "task_id", "event", "actor", "timestamp"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "run_id": { "type": "string" },
+    "task_id": { "type": "string" },
+    "event": {
+      "type": "string",
+      "enum": [
+        "task.created",
+        "task.scoped",
+        "task.planned",
+        "worker.started",
+        "worker.completed",
+        "worker.failed",
+        "review.completed",
+        "verification.completed",
+        "retry.scheduled",
+        "circuit_breaker.tripped",
+        "task.closed"
+      ]
+    },
+    "actor": {
+      "type": "string",
+      "description": "kimi | planner | builder | reviewer | verifier | security-auditor | cline | opencode | hook | user"
+    },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "payload": { "type": "object" }
+  },
+  "additionalProperties": false
+}

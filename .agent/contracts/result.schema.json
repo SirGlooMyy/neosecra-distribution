@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neosecra.local/agent/contracts/result.schema.json",
+  "title": "Result Contract",
+  "description": "Her subagent ve worker bu küçük sözleşmeyle döner. Serbest, sayfalarca rapor varsayılan değildir.",
+  "type": "object",
+  "required": ["schema_version", "status", "summary", "next_action"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "status": {
+      "type": "string",
+      "enum": ["DONE", "PARTIAL", "BLOCKED", "NEEDS_HUMAN"],
+      "description": "DONE tek geçerli final değildir. PARTIAL/BLOCKED/NEEDS_HUMAN meşru terminal durumlardır."
+    },
+    "summary": { "type": "string", "minLength": 1, "description": "Kısa açıklama (birkaç cümle)" },
+    "evidence": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Kanıtlar: komut + exit code, dosya yolu, diff özeti"
+    },
+    "changed_files": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["command", "exit_code"],
+        "properties": {
+          "command": { "type": "string" },
+          "exit_code": { "type": "integer" },
+          "passed": { "type": "integer" },
+          "failed": { "type": "integer" },
+          "skipped": { "type": "integer" }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "summary"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+          "file": { "type": "string" },
+          "summary": { "type": "string" },
+          "blocking": { "type": "boolean", "description": "Yalnızca critical/high ve doğruluğu bozan medium true olabilir" }
+        }
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "next_action": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Önerilen TEK sonraki işlem"
+    },
+    "error_signature": {
+      "type": ["string", "null"],
+      "description": "Başarısızlık varsa: normalize edilmiş hata parmak izi (debug-failure Skill'i üretir)"
+    }
+  },
+  "additionalProperties": false
+}

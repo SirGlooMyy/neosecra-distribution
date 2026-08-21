@@ -1,0 +1,26 @@
+# routing-policy.yaml — neosecra-distribution proje override'ı
+# Global varsayılanlar: ~/.agent/policies/routing-policy.yaml
+
+version: "1.0"
+extends: ~/.agent/policies/routing-policy.yaml
+
+project_overrides:
+  live_installer_fix:          # bootstrap.sh / upgrade akışı düzeltmeleri
+    primary: cline
+    secondary: opencode
+  release_publish_republish:   # publish.sh + channel + minisig (kısıtlı değişiklik)
+    primary: cline
+    secondary: kimi-direct
+  bulk_mechanical_script_edit: # aynı pattern'in N script'te düzeltilmesi
+    primary: opencode
+    secondary: cline
+  update_server_ops:           # Caddy, compose, cert, CA düzenleri
+    primary: cline
+    secondary: opencode
+
+notes: >
+  Test çalıştırmaları (bash -n, regression, e2e) DAİMA opencode'a gider.
+  e2e-test.sh canlı sunucu ister; runner ortam ağı uygun değilse verifier
+  PARTIAL döner, DONE zorlanmaz. Aynı dağıtım görevini iki worker'a paralel
+  verme (no_parallel_workers_same_task). worker "tamamlandı" dese bile
+  verifier kanıtı (bash -n + regression çıktısı) final kaynaktır.
