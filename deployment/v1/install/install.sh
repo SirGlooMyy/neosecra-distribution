@@ -72,6 +72,24 @@ create_install_dirs
 # --- Product identity ---
 check_product_identity
 
+# --- Update agent (one-click upgrade bridge) ---
+# Host-side systemd path/timer units; default ON for new installs.
+# install-agent.sh is idempotent: re-running refreshes unit files and bridge
+# dirs without touching existing state. Runs before compose up so the bridge
+# bind-mount source dirs exist with the right ownership (docker would
+# otherwise auto-create them root-owned and the backend could not write
+# trigger files).
+INSTALL_PHASE="update-agent"
+if [[ "${NEOSECRA_INSTALL_UPDATE_AGENT:-1}" == "1" ]]; then
+  if bash "${V1_ROOT}/agent/install-agent.sh"; then
+    ok "Update agent installed (one-click upgrade bridge)"
+  else
+    warn "Update agent install failed — one-click upgrade unavailable (can_auto_upgrade=false). Fix with: sudo ${V1_ROOT}/agent/install-agent.sh"
+  fi
+else
+  log "Update agent install skipped (NEOSECRA_INSTALL_UPDATE_AGENT=${NEOSECRA_INSTALL_UPDATE_AGENT})"
+fi
+
 # --- Compose validation ---
 INSTALL_PHASE="compose-validate"
 compose_validate || die "Compose config invalid" 2

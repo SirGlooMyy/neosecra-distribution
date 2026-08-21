@@ -1,0 +1,13 @@
+[Unit]
+Description=NeoSecra Update Agent — path watcher for upgrade/rollback triggers
+Documentation=https://github.com/SirGlooMyy/neosecra-assessment
+BindsTo=neosecra-update-agent.service
+DefaultDependencies=false
+
+[Path]
+PathChanged=/opt/neosecra/assessment/state/upgrade-bridge/trigger/upgrade-request.json
+PathChanged=/opt/neosecra/assessment/state/upgrade-bridge/trigger/rollback-request.json
+Unit=neosecra-update-agent.service
+
+[Install]
+WantedBy=multi-user.target
