@@ -372,6 +372,9 @@ if bundle_url != "none":
         "size_bytes": bundle_size,
         "signature_url": bundle_sig_url,
     }
+    # Backward compat: already-deployed backends read the top-level
+    # bundle_url field instead of docker_bundle.url — emit both (same value).
+    new_rel["bundle_url"] = bundle_url
 
 # Find and update existing entry, or append
 found = False
