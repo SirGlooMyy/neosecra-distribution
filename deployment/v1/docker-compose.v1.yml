@@ -43,11 +43,22 @@ services:
       HOME: /tmp
       XDG_CACHE_HOME: /tmp/.cache
       MPLCONFIGDIR: /tmp/.cache/matplotlib
+      # Upgrade bridge (update-agent) configuration
+      UPGRADE_EXECUTION_PROVIDER: AGENT
+      UPGRADE_EXECUTION_ENABLED: "true"
+      UPGRADE_TRIGGER_DIR: /upgrade-bridge/trigger
+      UPGRADE_JOURNAL_DIR: /upgrade-bridge/journal
+      UPGRADE_AGENT_HEARTBEAT: /upgrade-bridge/agent-alive
     volumes:
       - uploads:/app/uploads
       - reports:/app/reports
       - backups:/app/backups
       - ./ca:/app/ca:ro
+      - ./ca:/etc/neosecra/ca:ro
+      # Update-agent bridge mounts (host-side systemd path unit)
+      - ${STATE_BRIDGE_HOST_DIR:-/opt/neosecra/assessment/state/upgrade-bridge}/trigger:/upgrade-bridge/trigger:rw
+      - ${STATE_BRIDGE_HOST_DIR:-/opt/neosecra/assessment/state/upgrade-bridge}/journal:/upgrade-bridge/journal:ro
+      - ${STATE_BRIDGE_HOST_DIR:-/opt/neosecra/assessment/state/upgrade-bridge}:/upgrade-bridge:ro
     ports:
       - "${BACKEND_PORT:-23800}:8000"
     depends_on:
