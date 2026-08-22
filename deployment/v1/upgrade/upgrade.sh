@@ -86,6 +86,10 @@ if [[ "$TARGET" == "$CURRENT" ]]; then
 fi
 
 acquire_lock
+# Always release the state lock, on success AND failure — otherwise every run
+# leaves state/.install.lock behind and the next agent-driven upgrade dies
+# with LOCK_FAILED.
+trap 'release_lock' EXIT
 
 # --- Environment initialization ---
 initialize_env_file

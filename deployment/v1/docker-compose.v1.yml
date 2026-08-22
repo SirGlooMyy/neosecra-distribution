@@ -99,6 +99,34 @@ services:
       disable: true
     restart: unless-stopped
 
+  # Celery beat — without it scheduled tasks (stale-scan recovery, SLA
+  # evaluation, reminders) never fire. Mirrors the worker env/volumes.
+  beat:
+    image: ${WORKER_IMAGE:?WORKER_IMAGE must be set}
+    env_file:
+      - .env.v1
+    environment:
+      NEOSECRA_EDITION: ${NEOSECRA_EDITION:-security_health}
+      NEOSECRA_VERSION: ${NEOSECRA_VERSION:-1.3.26}
+      PRODUCT_VERSION: ${NEOSECRA_VERSION:-1.3.26}
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp/.cache
+      MPLCONFIGDIR: /tmp/.cache/matplotlib
+    volumes:
+      - uploads:/app/uploads
+      - reports:/app/reports
+      - backups:/app/backups
+      - beat-schedule:/app/.celery
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A worker.celery_app beat --loglevel=info --schedule=/app/.celery/celerybeat-schedule
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
   frontend:
     image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE must be set}
     user: "0:0"
@@ -143,3 +171,4 @@ volumes:
   reports:
   backups:
   openvas-data:
+  beat-schedule:

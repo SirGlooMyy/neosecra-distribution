@@ -14,6 +14,11 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# Capture the agent dir BEFORE sourcing libs: lib/common.sh reassigns
+# SCRIPT_DIR to its own location (v1/lib), which made the unit installs below
+# silently read from v1/lib and still print OK (no set -e here).
+AGENT_DIR="${SCRIPT_DIR}"
+
 # shellcheck source=../lib/common.sh
 source "${V1_ROOT}/lib/common.sh"
 
@@ -22,7 +27,6 @@ source "${V1_ROOT}/lib/common.sh"
 set -uo pipefail
 
 # --- Target paths ---
-AGENT_DIR="${SCRIPT_DIR}"
 INSTALL_UNITS_DIR="/etc/systemd/system"
 STATE_BRIDGE="${STATE_DIR}/upgrade-bridge"
 TRIGGER_DIR="${STATE_BRIDGE}/trigger"
@@ -64,14 +68,30 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+# install(1) accepts NUMERIC ids only portably — a uid like 1001 typically has
+# no passwd entry on the host and name lookup fails with "invalid user".
+[[ "$BACKEND_UID" =~ ^[0-9]+:[0-9]+$ ]] || { warn "--backend-uid must be numeric UID:GID (got: ${BACKEND_UID})"; exit 2; }
+
 # --- Root check ---
 [[ $EUID -eq 0 ]] || { warn "Must be run as root (sudo)"; exit 1; }
 
+# --- Fail loudly if the shipped unit files are missing ---
+MISSING_UNITS=0
+for unit in neosecra-update-agent.path neosecra-update-agent.service \
+            neosecra-update-agent-heartbeat.timer neosecra-update-agent-heartbeat.service; do
+  [[ -f "${AGENT_DIR}/${unit}" ]] || { warn "Missing unit file: ${AGENT_DIR}/${unit}"; MISSING_UNITS=1; }
+done
+[[ $MISSING_UNITS -eq 0 ]] || { warn "Unit files not found in ${AGENT_DIR} — aborting (run from deployment/v1/agent/)"; exit 1; }
+
 # --- Create state dirs ---
+# Bridge root + journal are world-readable (0755) because the backend
+# container runs as uid 1001 and must READ the journal and the agent-alive
+# heartbeat via :ro bind mounts — 0750 root:root locked it out. Only the
+# trigger dir is backend-writable (0770 ${BACKEND_UID}).
 log "Creating state directories under ${STATE_BRIDGE}..."
-install -d -m 0750 -o root -g root "${STATE_BRIDGE}"
+install -d -m 0755 -o root -g root "${STATE_BRIDGE}"
 install -d -m 0770 -o "${BACKEND_UID%%:*}" -g "${BACKEND_UID##*:}" "${TRIGGER_DIR}"
-install -d -m 0750 -o root -g root "${JOURNAL_DIR}"
+install -d -m 0755 -o root -g root "${JOURNAL_DIR}"
 touch "${HEARTBEAT_FILE}"
 chmod 0644 "${HEARTBEAT_FILE}"
 ok "State directories ready"
