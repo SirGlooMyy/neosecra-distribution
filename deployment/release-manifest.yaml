@@ -34,7 +34,7 @@ required_runtime:
 
 images:
   - name: postgres
-    ref: postgres:15.18-alpine3.24
+    ref: postgres:15
   - name: redis
     ref: redis:7.4.9-alpine3.21
   - name: backend

@@ -314,7 +314,9 @@ initialize_env_file() {
     chmod 0600 "$ENV_FILE"
   fi
 
-  ensure_env_value POSTGRES_IMAGE "postgres:15.18-alpine3.24"
+  # Debian-based default (alpine uid/glibc mismatch is unsafe when reusing a
+  # debian-initialized pgdata cluster).
+  ensure_env_value POSTGRES_IMAGE "postgres:15"
   ensure_env_value REDIS_IMAGE "redis:7.4.9-alpine3.21"
   apply_release_image_refs
   ensure_env_value OPENVAS_IMAGE "immauss/openvas:26.07.12.01"
