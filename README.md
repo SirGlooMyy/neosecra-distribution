@@ -55,6 +55,17 @@ bridge journal dir (`state/upgrade-bridge/journal/`), which the backend
 reads via its `/upgrade-bridge/journal` mount. `agent-status.json` is
 written directly into the bridge journal dir by the agent.
 
+**Target release payload (bug #21):** `prepare_target_release` (in both
+`deployment/upgrade/upgrade.sh` and `deployment/v1/upgrade/upgrade.sh`)
+builds `releases/<target>` from the signed channel payload — it downloads
+the distribution archive from the release entry's `archive.url`
+(TLS-verified), verifies the channel-provided sha256 AND the `.minisig`
+against the channel pubkey, extracts to a staging dir, validates the
+expected layout, carries the install's local config (`.env.v1`,
+`config/tls`), and atomically moves it into place. It never copies the
+current tree; any download/verify/layout failure aborts before the
+`current` symlink or containers are touched.
+
 ## Access
 
 - **Source repositories**: No customer access

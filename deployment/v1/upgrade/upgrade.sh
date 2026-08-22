@@ -9,6 +9,24 @@ source "${V1_ROOT}/lib/manifest.sh"
 source "${V1_ROOT}/lib/docker.sh"
 source "${V1_ROOT}/lib/state.sh"
 
+# ---------------------------------------------------------------------------
+# TLS for channel/payload fetches (mirrors deployment/upgrade/upgrade.sh):
+#   NEOSECRA_TLS_MODE=public   (default) — Let's Encrypt, system trust store
+#   NEOSECRA_TLS_MODE=internal — custom CA via NEOSECRA_CA_CERT
+# An explicit CURL_CA_BUNDLE from the environment is honored either way.
+# ---------------------------------------------------------------------------
+NEOSECRA_TLS_MODE="${NEOSECRA_TLS_MODE:-public}"
+CURL_OPTS=("-fsSL" "-H" "User-Agent: NeoSecra-Upgrader/1.0")
+if [[ "${NEOSECRA_TLS_MODE}" == "internal" ]]; then
+  NEOSECRA_CA_CERT="${NEOSECRA_CA_CERT:-${V1_ROOT}/ca/update-neosecra-com-root.crt}"
+  if [[ -f "$NEOSECRA_CA_CERT" ]]; then
+    CURL_OPTS+=("--cacert" "$NEOSECRA_CA_CERT")
+  fi
+fi
+if [[ -n "${CURL_CA_BUNDLE:-}" && -f "${CURL_CA_BUNDLE}" ]]; then
+  CURL_OPTS+=("--cacert" "$CURL_CA_BUNDLE")
+fi
+
 usage() { cat <<EOF
 neosecra upgrade — upgrade to a target version
 Usage: neosecra upgrade [version] [--bundle <path>] [--rollback-on-failure] [--dry-run] [--help]
@@ -30,12 +48,122 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-CHANNEL_URL="${NEOSECRA_CHANNEL_URL:-https://raw.githubusercontent.com/SirGlooMyy/neosecra-distribution/fix/assessment-live-installer/channels/assessment-stable.json}"
+CHANNEL_URL="${NEOSECRA_CHANNEL_URL:-${UPGRADE_CHANNEL_URL:-https://update.neosecra.com/channels/assessment-stable.json}}"
 BOOTSTRAP_URL="${NEOSECRA_BOOTSTRAP_URL:-https://raw.githubusercontent.com/SirGlooMyy/neosecra-distribution/fix/assessment-live-installer/bootstrap.sh}"
 ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-https://github.com/SirGlooMyy/neosecra-distribution/archive/refs/heads/fix/assessment-live-installer.tar.gz}"
+SIGNATURE_PUBKEY="${NEOSECRA_SIGNATURE_PUBKEY:-${V1_ROOT}/ca/update-neosecra-com.pub}"
+NEOSECRA_REQUIRE_SIGNATURE="${NEOSECRA_REQUIRE_SIGNATURE:-1}"
+
+# ---------------------------------------------------------------------------
+# Channel fetch + release entry parsers (python3 > jq > grep/sed fallbacks)
+# ---------------------------------------------------------------------------
+fetch_channel_json() {
+  local url="${1:-$CHANNEL_URL}"
+  curl "${CURL_OPTS[@]}" "$url" 2>/dev/null || return 1
+}
+
+parse_channel_archive_url() {
+  local json="$1" version="$2"
+  if command -v python3 &>/dev/null; then
+    python3 -c "
+import json,sys
+d=json.loads(sys.stdin.read())
+for r in d.get('releases',[]):
+    if r.get('version')==sys.argv[1]:
+        a = r.get('archive',{})
+        if isinstance(a, dict):
+            print(a.get('url','') or '')
+        else:
+            print(a or r.get('url','') or '')
+        break
+" "$version" <<< "$json" 2>/dev/null
+  elif command -v jq &>/dev/null; then
+    jq -r --arg v "$version" '.releases[] | select(.version==$v) | ((.archive | if type=="object" then .url else . end) // .url // empty)' <<< "$json" 2>/dev/null
+  else
+    local url
+    local version_block
+    version_block=$(printf '%s\n' "$json" | grep -A10 "\"version\":[[:space:]]*\"$version\"" 2>/dev/null)
+    if [[ -n "$version_block" ]]; then
+      url=$(printf '%s\n' "$version_block" | grep -A6 '"archive":[[:space:]]*{' | grep '"url"' | sed -nE 's/.*"url"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)
+    fi
+    if [[ -z "$url" ]]; then
+      url=$(printf '%s\n' "$json" | grep -A5 "\"version\":[[:space:]]*\"$version\"" | sed -nE 's/.*"(archive|url)"[[:space:]]*:[[:space:]]*"([^"]+)".*/\2/p' | head -n1)
+    fi
+    printf '%s' "$url"
+  fi
+}
+
+parse_channel_release_sha256() {
+  local json="$1" version="$2"
+  if command -v python3 &>/dev/null; then
+    python3 -c "
+import json,sys
+d=json.loads(sys.stdin.read())
+for r in d.get('releases',[]):
+    if r.get('version')==sys.argv[1]:
+        a = r.get('archive',{})
+        if isinstance(a, dict):
+            print(a.get('sha256','') or '')
+        else:
+            print(r.get('sha256','') or '')
+        break
+" "$version" <<< "$json" 2>/dev/null
+  elif command -v jq &>/dev/null; then
+    jq -r --arg v "$version" '.releases[] | select(.version==$v) | ((.archive | if type=="object" then .sha256 else empty end) // .sha256 // empty)' <<< "$json" 2>/dev/null
+  else
+    local sha
+    local version_block
+    version_block=$(printf '%s\n' "$json" | grep -A10 "\"version\":[[:space:]]*\"$version\"" 2>/dev/null)
+    if [[ -n "$version_block" ]]; then
+      sha=$(printf '%s\n' "$version_block" | grep -A6 '"archive":[[:space:]]*{' | grep '"sha256"' | sed -nE 's/.*"sha256"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)
+    fi
+    if [[ -z "$sha" ]]; then
+      sha=$(printf '%s\n' "$json" | grep -A8 "\"version\":[[:space:]]*\"$version\"" | sed -nE 's/.*"sha256"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)
+    fi
+    printf '%s' "$sha"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Download verification (fail closed)
+# ---------------------------------------------------------------------------
+verify_sha256() {
+  local file="$1" expected_hash="$2" label="${3:-artifact}"
+  [[ -n "$expected_hash" ]] || die "SHA-256 hash not provided for verification" 4
+  local actual
+  actual=$(sha256sum "$file" | cut -d' ' -f1)
+  if [[ "$actual" != "$expected_hash" ]]; then
+    die "SHA-256 mismatch for ${label}: expected ${expected_hash}, got ${actual}" 4
+  fi
+  ok "SHA-256 verified for ${label}"
+}
+
+verify_minisign() {
+  local file="$1" sig_file="$2" pubkey="$3" label="${4:-artifact}"
+  if ! command -v minisign &>/dev/null; then
+    if [[ "${NEOSECRA_REQUIRE_SIGNATURE:-1}" == "1" ]]; then
+      die "Minisign binary required (NEOSECRA_REQUIRE_SIGNATURE=1) but not found" 4
+    fi
+    warn "minisign not found — signature verification SKIPPED for ${label} (checksum+TLS still enforced)"
+    return 0
+  fi
+  [[ -f "$pubkey" ]] || die "Minisign public key not found: ${pubkey}" 4
+  [[ -f "$sig_file" ]] || die "Minisign signature file not found: ${sig_file}" 4
+  # Prefer the key FILE form (-p): shipped .pub files carry an "untrusted
+  # comment" first line, which the -P string form cannot parse.
+  if ! minisign -Vm "$file" -p "$pubkey" -x "$sig_file" 2>/dev/null; then
+    local key_line
+    key_line="$(grep -m1 '^RW' "$pubkey" 2>/dev/null || true)"
+    if [[ -z "$key_line" ]] || ! minisign -Vm "$file" -P "$key_line" -x "$sig_file" 2>/dev/null; then
+      die "Minisign signature verification FAILED for ${label}" 4
+    fi
+  fi
+  ok "Minisign signature verified for ${label}"
+}
+
 resolve_channel_target() {
   local json target
-  json="$(curl -fsSL "$CHANNEL_URL" 2>/dev/null || true)"
+  json="$(fetch_channel_json "$CHANNEL_URL" || true)"
   target="$(printf '%s\n' "$json" | sed -nE 's/.*"current_version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)"
   printf '%s' "$target"
 }
@@ -45,34 +173,170 @@ if [[ -z "$TARGET" ]]; then
   [[ -n "$TARGET" ]] || TARGET="$(read_version)"
 fi
 
+# Scratch dirs created by prepare_target_release (download dir + staging dir);
+# cleaned on any exit so a failed preparation never leaves half-extracted
+# release content behind.
+_PTR_CLEANUP=()
+_prepare_release_cleanup() {
+  ((${#_PTR_CLEANUP[@]})) || return 0
+  rm -rf "${_PTR_CLEANUP[@]}" 2>/dev/null || true
+  _PTR_CLEANUP=()
+}
+
+# ---------------------------------------------------------------------------
+# Bug #21: build releases/<target> from the SIGNED CHANNEL PAYLOAD, not from
+# the current tree. The old implementation copied "$V1_ROOT/." into the
+# target release, so script fixes shipped with a new release never reached
+# the host and every one-click upgrade ran with stale tooling.
+#
+# Flow: resolve the distribution archive URL + sha256 from the channel JSON
+# (the update-agent verifies the channel minisig before invoking us) ->
+# download over verified TLS -> verify sha256 AND minisig against the channel
+# pubkey -> extract to a staging dir inside RELEASES_DIR -> validate the
+# expected layout -> carry local config (.env.v1 / config/tls) -> atomic mv
+# into releases/<target>. Any download/verify/layout failure aborts BEFORE
+# the current symlink or containers are touched (fail closed).
+# ---------------------------------------------------------------------------
 prepare_target_release() {
-  local target="$1" dest backup_path tmp_manifest
+  local target="$1" dest backup_path
   dest="$(release_dir "$target")"
 
-  if [[ "$(readlink -f "$dest" 2>/dev/null || true)" != "$(readlink -f "$V1_ROOT" 2>/dev/null || true)" ]]; then
-    if [[ -e "$dest" ]]; then
-      backup_path="${BACKUP_ROOT}/preupgrade-release-${target}-$(date -u +%Y%m%dT%H%M%SZ)"
-      mkdir -p "$backup_path"
-      cp -a "$dest" "${backup_path}/release-${target}"
-      warn "Existing target release backed up: ${backup_path}/release-${target}"
-    fi
-    mkdir -p "$dest"
-    cp -a "$V1_ROOT/." "$dest/"
+  # Target dir IS the running tree (same resolved path): nothing to stage.
+  if [[ "$(readlink -f "$dest" 2>/dev/null || true)" == "$(readlink -f "$V1_ROOT" 2>/dev/null || true)" ]]; then
+    return 0
   fi
+
+  # Drop staging leftovers from a previous failed attempt (idempotent re-run).
+  rm -rf "${RELEASES_DIR}"/.staging-"${target}".* 2>/dev/null || true
+
+  local channel_json archive_url expected_sha256
+  channel_json="${CHANNEL_JSON:-}"
+  if [[ -z "$channel_json" ]]; then
+    channel_json="$(fetch_channel_json "$CHANNEL_URL")" || \
+      die "Channel unreachable (${CHANNEL_URL}) — cannot resolve the release payload for ${target}; refusing to copy the current tree" 4
+  fi
+  archive_url="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-$(parse_channel_archive_url "$channel_json" "$target")}"
+  [[ -n "$archive_url" ]] || \
+    die "Channel has no archive URL for release ${target} — refusing to fall back to copying the current tree" 4
+  expected_sha256="$(parse_channel_release_sha256 "$channel_json" "$target")"
+
+  local dl_dir staging
+  dl_dir="$(mktemp -d)"
+  staging="${RELEASES_DIR}/.staging-${target}.$$"
+  mkdir -p "$staging"
+  _PTR_CLEANUP+=("$dl_dir" "$staging")
+
+  log "Downloading release payload for ${target}: ${archive_url}"
+  curl "${CURL_OPTS[@]}" -o "${dl_dir}/distribution.tar.gz" "$archive_url" || \
+    die "Download failed: ${archive_url}" 4
+
+  if [[ -n "$expected_sha256" ]]; then
+    verify_sha256 "${dl_dir}/distribution.tar.gz" "$expected_sha256" "distribution archive ${target} (channel JSON)"
+  else
+    curl "${CURL_OPTS[@]}" -o "${dl_dir}/distribution.tar.gz.sha256" "${archive_url}.sha256" 2>/dev/null || true
+    if [[ -f "${dl_dir}/distribution.tar.gz.sha256" ]]; then
+      (cd "$dl_dir" && sha256sum -c distribution.tar.gz.sha256 >/dev/null) || \
+        die "SHA-256 verification failed for distribution archive ${target} (.sha256 sidecar)" 4
+      ok "SHA-256 verified for distribution archive ${target} (.sha256 sidecar)"
+    else
+      die "No SHA-256 available for release ${target} (channel entry nor .sha256 sidecar) — refusing unverified payload" 4
+    fi
+  fi
+
+  if curl "${CURL_OPTS[@]}" -o "${dl_dir}/distribution.tar.gz.minisig" "${archive_url}.minisig" 2>/dev/null; then
+    verify_minisign "${dl_dir}/distribution.tar.gz" "${dl_dir}/distribution.tar.gz.minisig" \
+      "$SIGNATURE_PUBKEY" "distribution archive ${target}"
+  elif [[ "${NEOSECRA_REQUIRE_SIGNATURE:-1}" == "1" ]]; then
+    die "Minisign signature not downloadable (${archive_url}.minisig) — NEOSECRA_REQUIRE_SIGNATURE=1" 4
+  else
+    warn "No minisign signature at ${archive_url}.minisig — signature verification SKIPPED (checksum+TLS still enforced)"
+  fi
+
+  # Extract and validate the expected payload layout:
+  #   neosecra-distribution-<ver>/deployment/{VERSION,lib/common.sh,
+  #   upgrade/upgrade.sh,docker-compose.v1.yml,...}
+  mkdir -p "${dl_dir}/extract"
+  tar -xzf "${dl_dir}/distribution.tar.gz" -C "${dl_dir}/extract" || \
+    die "Failed to extract release payload for ${target}" 4
+  local top payload marker
+  top="$(find "${dl_dir}/extract" -mindepth 1 -maxdepth 1 -type d -name 'neosecra-distribution-*' | head -n1)"
+  payload="${top}/deployment"
+  for marker in VERSION lib/common.sh upgrade/upgrade.sh docker-compose.v1.yml; do
+    [[ -e "${payload}/${marker}" ]] || \
+      die "Release payload for ${target} lacks the expected layout (missing deployment/${marker}) — aborting" 4
+  done
+  cp -a "${payload}/." "${staging}/"
+
+  # Carry local config from the running tree (the payload ships templates
+  # only). The env file (.env.v1) holds the install secrets; config/tls holds
+  # the per-install frontend certificate. When the agent runs us from the v1
+  # subtree, the files may live one level up at the release root.
+  local env_name env_src tls_src="${V1_ROOT}/config/tls"
+  env_name="$(basename "$ENV_FILE")"
+  env_src="${V1_ROOT}/${env_name}"
+  if [[ ! -f "$env_src" && "$(basename "$V1_ROOT")" == "v1" && -f "${V1_ROOT}/../${env_name}" ]]; then
+    env_src="${V1_ROOT}/../${env_name}"
+  fi
+  if [[ ! -d "$tls_src" && "$(basename "$V1_ROOT")" == "v1" && -d "${V1_ROOT}/../config/tls" ]]; then
+    tls_src="${V1_ROOT}/../config/tls"
+  fi
+  if [[ -f "$env_src" ]]; then
+    cp -a "$env_src" "${staging}/${env_name}"
+    chmod 0600 "${staging}/${env_name}" 2>/dev/null || true
+  fi
+  if [[ -d "$tls_src" ]]; then
+    mkdir -p "${staging}/config"
+    cp -a "$tls_src" "${staging}/config/tls"
+  fi
+  # Payloads shipping a real v1/ subtree (not the v1 -> . bridge symlink)
+  # need the same local config mirrored under v1/ for current/v1/... consumers.
+  if [[ -d "${staging}/v1" && ! -L "${staging}/v1" ]]; then
+    if [[ -f "${staging}/${env_name}" ]]; then
+      cp -a "${staging}/${env_name}" "${staging}/v1/${env_name}"
+      chmod 0600 "${staging}/v1/${env_name}" 2>/dev/null || true
+    fi
+    if [[ -d "${staging}/config/tls" ]]; then
+      mkdir -p "${staging}/v1/config"
+      rm -rf "${staging}/v1/config/tls"
+      cp -a "${staging}/config/tls" "${staging}/v1/config/tls"
+    fi
+  fi
+
+  # Stamp VERSION + manifest (build-release already stamps them; re-stamp so
+  # a NEOSECRA_DISTRIBUTION_ARCHIVE_URL override cannot smuggle a version lie).
+  printf '%s\n' "$target" > "${staging}/VERSION"
+  if [[ -d "${staging}/v1" && ! -L "${staging}/v1" ]]; then
+    printf '%s\n' "$target" > "${staging}/v1/VERSION"
+  fi
+  local manifest_path
+  for manifest_path in "${staging}/release-manifest.yaml" "${staging}/v1/release-manifest.yaml"; do
+    [[ -f "$manifest_path" ]] || continue
+    awk -v target="$target" '
+      /^version:/ { print "version: " target; next }
+      { print }
+    ' "$manifest_path" > "${manifest_path}.tmp"
+    mv "${manifest_path}.tmp" "$manifest_path"
+  done
+
+  # Atomically swap into place (staging lives in RELEASES_DIR, so mv is a
+  # same-filesystem rename). An existing target dir — e.g. one left by the
+  # old copy-based implementation — is backed up first.
+  if [[ -e "$dest" ]]; then
+    backup_path="${BACKUP_ROOT}/preupgrade-release-${target}-$(date -u +%Y%m%dT%H%M%SZ)"
+    mkdir -p "$backup_path"
+    cp -a "$dest" "${backup_path}/release-${target}"
+    warn "Existing target release backed up: ${backup_path}/release-${target}"
+    rm -rf "$dest"
+  fi
+  mv "$staging" "$dest"
+  rm -rf "$dl_dir"
+  _PTR_CLEANUP=()
 
   # The systemd units address the tree through the stable `current/v1/...`
   # path; make sure the freshly prepared release satisfies that layout.
   ensure_release_v1_link "$dest"
 
-  printf '%s\n' "$target" > "${dest}/VERSION"
-  if [[ -f "${dest}/release-manifest.yaml" ]]; then
-    tmp_manifest="$(mktemp)"
-    awk -v target="$target" '
-      /^version:/ { print "version: " target; next }
-      { print }
-    ' "${dest}/release-manifest.yaml" > "$tmp_manifest"
-    mv "$tmp_manifest" "${dest}/release-manifest.yaml"
-  fi
+  ok "Target release ${target} prepared from signed channel payload: ${dest}"
 }
 
 CURRENT=$(read_installed_version 2>/dev/null || true)
@@ -94,8 +358,8 @@ fi
 [[ "${NEOSECRA_AGENT_LOCK_HELD:-0}" == "1" ]] || acquire_lock
 # Always release the state lock, on success AND failure — otherwise every run
 # leaves state/.install.lock behind and the next agent-driven upgrade dies
-# with LOCK_FAILED.
-trap 'release_lock' EXIT
+# with LOCK_FAILED. Also drop any prepare_target_release scratch dirs.
+trap 'release_lock; _prepare_release_cleanup' EXIT
 
 # --- Environment initialization ---
 initialize_env_file
@@ -107,6 +371,11 @@ bash "${V1_ROOT}/install/preflight.sh" || die "Preflight failed" 10
 ok "Preflight passed"
 
 [[ $DRY -eq 1 ]] && { ok "Dry-run complete"; exit 0; }
+
+# --- Prepare target release from the signed channel payload (bug #21) ---
+# Must happen BEFORE backup/container changes: any download/verify/layout
+# failure aborts here with the current symlink and containers untouched.
+prepare_target_release "$TARGET"
 
 # --- Backup ---
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
@@ -177,7 +446,6 @@ else
 fi
 
 # --- State ---
-prepare_target_release "$TARGET"
 write_installed_version "$TARGET"
 switch_current "$TARGET"
 write_journal "upgrade-${CURRENT}-to-${TARGET}-$(date -u +%Y%m%dT%H%M%SZ).json"

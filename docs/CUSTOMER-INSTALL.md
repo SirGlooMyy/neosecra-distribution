@@ -238,6 +238,16 @@ sudo neosecra upgrade --rollback-on-failure
 > TLS tabanlı erişim). Kamusal image'lar (postgres/redis/openvas) Docker Hub'dan
 > çekilir; upgrade bundle yalnızca değişen NeoSecra image'larını (backend/frontend) içerir.
 
+> **Hedef release içeriği (bug #21):** `releases/<hedef>` dizini artık çalışan
+> ağacın kopyası DEĞİL, kanaldaki imzalı dağıtım arşividir: upgrade.sh,
+> channel JSON'daki release entry'sinin `archive.url`'sinden
+> `distribution-<sürüm>.tar.gz`'yi TLS doğrulamalı indirir, kanaldaki sha256 ve
+> `.minisig` imzasını doğrular, staging dizinine açıp beklenen layout'u
+> kontrol eder ve atomik olarak yerine taşır. Kuruluma özel yerel yapılandırma
+> (`.env.v1`, `config/tls`) eski ağaçtan açıkça taşınır. İndirme/doğrulama
+> hatasında işlem, `current` symlink'ine veya container'lara dokunulmadan
+> iptal edilir.
+
 ### 5.3 Upgrade Sonrası Doğrulama
 
 ```bash
