@@ -51,6 +51,9 @@ agent_acquire_lock() {
     return 1
   fi
   trap 'rm -rf "${STATE_DIR}/.install.lock"' EXIT
+  # The agent holds the lock for the whole run; child upgrade.sh/rollback.sh
+  # must not try to take the same lock (they share the lock path).
+  export NEOSECRA_AGENT_LOCK_HELD=1
   return 0
 }
 agent_release_lock() { rm -rf "${STATE_DIR}/.install.lock" 2>/dev/null || true; }
@@ -220,6 +223,10 @@ with open('${trigger_file}') as f:
   }
 
   local bundle_path="" dl_dir=""
+  # Channel/publish may emit a literal "none" (or a */none URL) for releases
+  # without an offline bundle — treat those as "no bundle" and fall through
+  # to the registry pull path instead of trying to download "none".
+  case "${bundle_url}" in ""|none|None|null|*/none) bundle_url="" ;; esac
   if [[ -n "${bundle_url}" ]]; then
     dl_dir=$(mktemp -d "/tmp/neosecra-upgrade-XXXXXXXXXX")
     bundle_path=$(download_bundle "${bundle_url}" "${dl_dir}") || {
@@ -230,6 +237,11 @@ with open('${trigger_file}') as f:
   fi
 
   local rc=0
+  # The unit's EnvironmentFile loaded the OLD .env.v1 pins into this process;
+  # compose interpolation prefers process env over --env-file, which would
+  # silently recreate containers with the OLD images. Drop the pins so the
+  # env file updated by upgrade.sh wins.
+  unset NEOSECRA_VERSION BACKEND_IMAGE WORKER_IMAGE FRONTEND_IMAGE POSTGRES_IMAGE REDIS_IMAGE OPENVAS_IMAGE
   agent_info "Running upgrade.sh ${target_version}"
   if bash "${V1_ROOT}/upgrade/upgrade.sh" "${target_version}" ${bundle_path:+--bundle "${bundle_path}"} --rollback-on-failure; then
     agent_ok "Upgrade to ${target_version} complete"
@@ -279,6 +291,8 @@ with open('${trigger_file}') as f:
     rm -f "${trigger_file}"; return 1
   }
 
+  # Same stale-pin inheritance hazard as the upgrade path (see above).
+  unset NEOSECRA_VERSION BACKEND_IMAGE WORKER_IMAGE FRONTEND_IMAGE POSTGRES_IMAGE REDIS_IMAGE OPENVAS_IMAGE
   local rollback_cmd=("${V1_ROOT}/upgrade/rollback.sh" "--to" "${target_version}")
   [[ -n "${backup_source}" ]] && rollback_cmd+=("--from-backup" "${backup_source}")
 

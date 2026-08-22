@@ -74,6 +74,19 @@ create_install_dirs() {
   chmod 0700 "$CREDENTIAL_DIR" 2>/dev/null || true
 }
 
+# Ensure a release dir satisfies the `current/v1/...` path contract.
+# The release layout is flat (the v1 tree content lives at the release root —
+# bootstrap rsyncs it into releases/<ver>/), while the systemd units reach the
+# tree through the stable path `current/v1/...`. A `v1 -> .` symlink inside the
+# release dir bridges the two without duplicating content. Idempotent: an
+# existing real `v1/` directory (legacy bootstrap layout) is left untouched.
+ensure_release_v1_link() {
+  local dest="$1"
+  if [[ -L "${dest}/v1" || ! -e "${dest}/v1" ]]; then
+    ln -sfn . "${dest}/v1"
+  fi
+}
+
 # Write upgrade journal
 write_journal() {
   local file="$1" previous="${2:-}" status="${3:-completed}"

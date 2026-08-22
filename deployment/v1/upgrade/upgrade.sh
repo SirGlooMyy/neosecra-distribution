@@ -60,6 +60,10 @@ prepare_target_release() {
     cp -a "$V1_ROOT/." "$dest/"
   fi
 
+  # The systemd units address the tree through the stable `current/v1/...`
+  # path; make sure the freshly prepared release satisfies that layout.
+  ensure_release_v1_link "$dest"
+
   printf '%s\n' "$target" > "${dest}/VERSION"
   if [[ -f "${dest}/release-manifest.yaml" ]]; then
     tmp_manifest="$(mktemp)"
@@ -85,7 +89,9 @@ if [[ "$TARGET" == "$CURRENT" ]]; then
   exit 0
 fi
 
-acquire_lock
+# Lock already held by the calling update-agent (NEOSECRA_AGENT_LOCK_HELD=1);
+# taking the same lock path again would die with exit 5 (lock conflict).
+[[ "${NEOSECRA_AGENT_LOCK_HELD:-0}" == "1" ]] || acquire_lock
 # Always release the state lock, on success AND failure — otherwise every run
 # leaves state/.install.lock behind and the next agent-driven upgrade dies
 # with LOCK_FAILED.

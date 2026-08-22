@@ -19,7 +19,9 @@ PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
 NoNewPrivileges=true
-CapabilityBoundingSet=
+# An empty bounding set breaks the agent's trigger-dir read/delete and the
+# `cp -a` chown during release copies; keep exactly the caps the flow needs.
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 RestrictNamespaces=true
 
