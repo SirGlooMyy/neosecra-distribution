@@ -59,6 +59,15 @@ fi
 echo "[build-release] Stamping version ${VERSION}..."
 echo "${VERSION}" > "${ARCHIVE_ROOT}/deployment/VERSION"
 
+# Stamp the shipped v1 subtree as well: v1/VERSION and
+# v1/release-manifest.yaml are what the installed preflight compares
+# (lib/common.sh VERSION_FILE/MANIFEST_FILE resolve under v1/). 1.3.45
+# shipped v1/VERSION=1.3.44 + manifest version 1.3.2 -> preflight
+# "Version mismatch" on every fresh install.
+if [[ -d "${ARCHIVE_ROOT}/deployment/v1" ]]; then
+    echo "${VERSION}" > "${ARCHIVE_ROOT}/deployment/v1/VERSION"
+fi
+
 # U7: Compute script checksums for the manifest
 SCRIPT_CHECKSUMS=""
 checksum_script() {
@@ -83,43 +92,52 @@ checksum_script "bootstrap.sh"
 SCRIPT_CHECKSUMS="${SCRIPT_CHECKSUMS%,}"
 
 # Update release-manifest.yaml version, image refs, script checksums, release date
-MANIFEST="${ARCHIVE_ROOT}/deployment/release-manifest.yaml"
+# Stamps BOTH the top-level manifest and the shipped v1 subtree manifest (the
+# v1 manifest is the one preflight/install actually reads on customer hosts).
+MANIFESTS=("${ARCHIVE_ROOT}/deployment/release-manifest.yaml" "${ARCHIVE_ROOT}/deployment/v1/release-manifest.yaml")
+RELEASE_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+DB_REVISION=""
+
+# Try to get revision from alembic if available
+ASSESSMENT_REPO="${REPO_ROOT}/../neosecra-assessment"
+if [[ -d "${ASSESSMENT_REPO}/backend" ]]; then
+    DB_REVISION=$(cd "${ASSESSMENT_REPO}/backend" && \
+        DATABASE_URL=sqlite+aiosqlite:///:memory: alembic heads 2>/dev/null | awk '/\(head\)/{print $1}' || true)
+fi
+
+for MANIFEST in "${MANIFESTS[@]}"; do
 if [[ -f "$MANIFEST" ]]; then
-    RELEASE_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    DB_REVISION=""
-
-    # Try to get revision from alembic if available
-    ASSESSMENT_REPO="${REPO_ROOT}/../neosecra-assessment"
-    if [[ -d "${ASSESSMENT_REPO}/backend" ]]; then
-        DB_REVISION=$(cd "${ASSESSMENT_REPO}/backend" && \
-            DATABASE_URL=sqlite+aiosqlite:///:memory: alembic heads 2>/dev/null | awk '/\(head\)/{print $1}' || true)
-    fi
-
     sed -i "s/^version:.*/version: ${VERSION}/" "$MANIFEST"
     sed -i "s|security-health-backend:[0-9.]*\$|security-health-backend:${VERSION}|g" "$MANIFEST"
     sed -i "s|security-health-frontend:[0-9.]*\$|security-health-frontend:${VERSION}|g" "$MANIFEST"
 
-    # U7: Add or update script_checksums, release_date, database_revision fields
+    # U7: script_checksums only on the top-level manifest (the v1 manifest
+    # schema predates that field; keep the shipped v1 manifest minimal).
     # NOTE: | delimiter — SCRIPT_CHECKSUMS contains / (paths like deployment/upgrade/upgrade.sh=...)
-    if grep -q '^script_checksums:' "$MANIFEST"; then
-        sed -i "s|^script_checksums:.*|script_checksums: \"${SCRIPT_CHECKSUMS}\"|" "$MANIFEST"
-    else
-        sed -i "/^database_revision:/a script_checksums: \"${SCRIPT_CHECKSUMS}\"" "$MANIFEST"
+    if [[ "$MANIFEST" == "${ARCHIVE_ROOT}/deployment/release-manifest.yaml" ]]; then
+        if grep -q '^script_checksums:' "$MANIFEST"; then
+            sed -i "s|^script_checksums:.*|script_checksums: \"${SCRIPT_CHECKSUMS}\"|" "$MANIFEST"
+        else
+            sed -i "/^database_revision:/a script_checksums: \"${SCRIPT_CHECKSUMS}\"" "$MANIFEST"
+        fi
     fi
 
     if grep -q '^release_date:' "$MANIFEST"; then
         sed -i "s|^release_date:.*|release_date: \"${RELEASE_DATE}\"|" "$MANIFEST"
-    else
+    elif grep -q '^script_checksums:' "$MANIFEST"; then
         sed -i "/^script_checksums:/a release_date: \"${RELEASE_DATE}\"" "$MANIFEST"
+    else
+        sed -i "/^database_revision:/a release_date: \"${RELEASE_DATE}\"" "$MANIFEST"
     fi
 
     if [[ -n "$DB_REVISION" ]]; then
         sed -i "s|^database_revision:.*|database_revision: \"${DB_REVISION}\"|" "$MANIFEST"
     fi
 
-    echo "[build-release] Manifest stamped:"
+    echo "[build-release] Manifest stamped (${MANIFEST#"${ARCHIVE_ROOT}"/}):"
     grep -E '^(version:|database_revision:|script_checksums:|release_date:)' "$MANIFEST" | sed 's/^/  /'
 fi
+done
 
 # U9: Pin every image reference to registry.neosecra.com and assert the archive
 # carries NO ghcr.io reference in any artifact. The 1.3.13 regression was caused
