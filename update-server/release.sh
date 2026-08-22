@@ -239,7 +239,14 @@ else
         RELEASE_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
         sed -i "s/^version:.*/version: ${VERSION}/" deployment/v1/release-manifest.yaml
-        sed -i "s/^minimum_upgrade_version:.*/minimum_upgrade_version: \"${CURRENT_VERSION}\"/" deployment/v1/release-manifest.yaml
+        # minimum_upgrade_version = the version being replaced. Only stamp it
+        # when the version actually advanced; on idempotent re-runs
+        # (tag deleted, VERSION already at target) CURRENT_VERSION == VERSION
+        # and re-stamping would wrongly require upgrading from the release
+        # itself, blocking all real upgrades.
+        if [[ $NEEDS_BUMP -eq 1 ]]; then
+            sed -i "s/^minimum_upgrade_version:.*/minimum_upgrade_version: \"${CURRENT_VERSION}\"/" deployment/v1/release-manifest.yaml
+        fi
         sed -i "s/^build_commit:.*/build_commit: ${BUILD_COMMIT}/" deployment/v1/release-manifest.yaml
         sed -i "s/^database_revision:.*/database_revision: \"${DATABASE_REVISION}\"/" deployment/v1/release-manifest.yaml
         if grep -q '^release_date:' deployment/v1/release-manifest.yaml; then
