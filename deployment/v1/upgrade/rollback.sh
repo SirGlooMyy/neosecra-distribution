@@ -94,12 +94,30 @@ if [[ -n "$DB_DUMP" && -f "$DB_DUMP" ]]; then
   PGUSER=$(env_value POSTGRES_USER neosecra)
   PGDB=$(env_value POSTGRES_DB neosecra_assessment)
   # The dump is plain SQL taken WITHOUT pg_dump --clean; replaying it over the
-  # live schema collides on existing objects. Drop/recreate the public schema
-  # first (the plain-SQL equivalent of --clean), then restore strictly —
-  # a failed restore aborts the rollback instead of being silently skipped.
-  run_compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$PGUSER" -d "$PGDB" \
-    -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;' \
+  # live schema collides on existing objects. Drop ALL non-system schemas
+  # (public + app + any user schemas) — the plain-SQL equivalent of --clean —
+  # then restore strictly. Dropping only "public" leaves e.g. schema "app"
+  # behind; the dump's "CREATE SCHEMA app" then fails with "schema already
+  # exists" under ON_ERROR_STOP and leaves the database EMPTY mid-rollback
+  # (live-proven). The dump recreates its own schemas; "public" is recreated
+  # here as the default landing schema. A failed reset or restore aborts the
+  # rollback instead of being silently skipped.
+  run_compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$PGUSER" -d "$PGDB" <<'SQL' \
     || die "Database schema reset failed; aborting rollback before restore" 1
+DO $reset$
+DECLARE
+  s text;
+BEGIN
+  FOR s IN
+    SELECT nspname FROM pg_namespace
+    WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
+  LOOP
+    EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', s);
+  END LOOP;
+END
+$reset$;
+CREATE SCHEMA IF NOT EXISTS public;
+SQL
   run_compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$PGUSER" -d "$PGDB" \
     < "$DB_DUMP" || die "Database restore failed from ${DB_DUMP}" 1
   ok "Database restored: ${DB_DUMP}"
