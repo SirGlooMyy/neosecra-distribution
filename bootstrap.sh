@@ -64,11 +64,18 @@ fi
 # Channel / version resolution
 # ---------------------------------------------------------------------------
 CHANNEL_URL="${NEOSECRA_CHANNEL_URL:-https://update.neosecra.com/channels/assessment-stable.json}"
-CHANNEL_JSON="$(curl "${CURL_OPTS[@]}" "$CHANNEL_URL" 2>/dev/null || echo "")"
+if [[ -n "${LOCAL_MANIFEST:-}" && -f "${LOCAL_MANIFEST}" ]]; then
+  CHANNEL_JSON="$(cat "$LOCAL_MANIFEST")"
+else
+  CHANNEL_JSON="$(curl "${CURL_OPTS[@]}" "$CHANNEL_URL" 2>/dev/null || echo "")"
+fi
 
 resolve_version_from_channel() {
   local json="$1"
-  if [[ -z "$json" ]]; then return 1; fi
+  if [[ -z "$json" ]]; then
+    printf '%s\n' "${NEOSECRA_VERSION:-1.3.26}"
+    return 0
+  fi
   if command -v python3 &>/dev/null; then
     python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('current_version',''))" <<< "$json" 2>/dev/null
   elif command -v jq &>/dev/null; then
