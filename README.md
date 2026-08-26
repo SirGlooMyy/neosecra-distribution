@@ -5,6 +5,11 @@ Private distribution repository for NeoSecra product releases.
 **This repository contains NO source code.** Only release metadata,
 channel manifests, schemas, and public verification keys.
 
+Ürün License/Update ekranı, backend veya kanal değişikliği yapan herkes için
+kanonik referans: [docs/LICENSE-UPDATE-USAGE-GUIDE.md](docs/LICENSE-UPDATE-USAGE-GUIDE.md).
+Bu belge dört ürünün ortak lisans, delivery, release, update-agent, preflight
+ve rollback sözleşmesini tanımlar.
+
 ## Products
 
 | Product | Edition | Channel |
