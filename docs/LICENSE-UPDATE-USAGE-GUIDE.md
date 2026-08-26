@@ -206,7 +206,7 @@ bash -n update-server/publish.sh
 ./bin/validate-channels.sh
 sha256sum -c www/releases/<version>/<archive>.sha256
 minisign -Vm www/channels/<product>-stable.json \
-  -P public-keys/update-neosecra-com.pub
+  -p public-keys/update-neosecra-com.pub
 ~~~
 
 Temiz VM release gate'i geçmeden müşteri veya canlı sunucuya rsync/deploy
