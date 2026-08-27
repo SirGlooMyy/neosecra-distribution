@@ -69,10 +69,21 @@ unavailable/NO_RELEASE olarak görünür.
 
 ### 3.2 Kurulum kaydı ve teslimat
 
-Kurulum ilk açılışta bir defa cihaz Ed25519 public key'i üretir:
+Kurulum ilk açılışta lisans yöneticisinden kısa ömürlü, tek kullanımlık bir
+enrollment token alır. Token yalnızca hash olarak lisans sunucusunda saklanır;
+cihaz kimliği tahmin edilse bile token olmadan public key bağlanamaz.
+
+~~~text
+POST /api/v1/installations/{installation_id}/registration-token?ttl_hours=24
+  Authorization: Bearer <license-admin-token>
+  -> token (bir kez gösterilir; loglamayın)
+~~~
+
+Cihaz daha sonra bir defa Ed25519 public key'i üretir:
 
 ~~~text
 POST /api/v1/installations/register
+  X-Installation-Enrollment-Token: <one-time-token>
   product_code, installation_id, public_key, version, agent_version
   -> one-time credential
 ~~~
@@ -244,7 +255,11 @@ Agent ve backend şu sırayı uygular:
 
 Update backend'de entitlement, imzalı kanal, hedef semver, taze heartbeat,
 backup, migration preflight ve health/rollback kapıları PASS olmadan başlamaz.
-Idempotency-Key aynı update isteğinin ikinci kez job üretmesini engeller.
+`POST /system/updates/start` için `Idempotency-Key` header'ı zorunludur; eksik
+header `400 IDEMPOTENCY_KEY_REQUIRED` döner. Aynı ürün/installation/target
+için aynı anahtar aynı journal/session sonucunu replay eder ve ikinci bir job
+üretmez. Anahtar farklı müşteri, ürün veya hedef sürüm arasında yeniden
+kullanılamaz; replay kaydı backend tarafından tutulur.
 
 ## 8. Ürün Update ekranı sözleşmesi
 
