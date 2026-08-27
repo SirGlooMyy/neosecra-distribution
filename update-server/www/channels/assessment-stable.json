@@ -1,7 +1,8 @@
 {
   "channel": "assessment-stable",
-  "product": "neosecra-security-health",
-  "edition": "security-health",
+  "product": "assessment",
+  "product_code": "assessment",
+  "edition": "standard",
   "current_version": "1.3.29",
   "releases": [
     {
@@ -461,117 +462,6 @@
         "sha256": "0",
         "size_bytes": 0,
         "signature_url": "https://update.neosecra.com/releases/1.2.0/none"
-      }
-    },
-    {
-      "version": "1.1.7",
-      "backend_image": "registry.neosecra.com/security-health-backend:1.1.7",
-      "worker_image": "registry.neosecra.com/security-health-backend:1.1.7",
-      "frontend_image": "registry.neosecra.com/security-health-frontend:1.1.7",
-      "archive": {
-        "url": "https://update.neosecra.com/releases/1.1.7/distribution.tar.gz",
-        "sha256": "TBD-PUBLISH",
-        "size_bytes": 0,
-        "signature_url": "https://update.neosecra.com/releases/1.1.7/distribution.tar.gz.minisig"
-      },
-      "bootstrap": {
-        "url": "https://update.neosecra.com/releases/1.1.7/bootstrap.sh",
-        "sha256": "TBD-PUBLISH",
-        "size_bytes": 0,
-        "signature_url": "https://update.neosecra.com/releases/1.1.7/bootstrap.sh.minisig"
-      }
-    },
-    {
-      "version": "1.1.6",
-      "backend_image": "registry.neosecra.com/security-health-backend:1.1.6",
-      "worker_image": "registry.neosecra.com/security-health-backend:1.1.6",
-      "frontend_image": "registry.neosecra.com/security-health-frontend:1.1.6",
-      "archive": {
-        "url": "https://update.neosecra.com/releases/1.1.6/distribution.tar.gz",
-        "sha256": "TBD-PUBLISH",
-        "size_bytes": 0,
-        "signature_url": "https://update.neosecra.com/releases/1.1.6/distribution.tar.gz.minisig"
-      },
-      "bootstrap": {
-        "url": "https://update.neosecra.com/releases/1.1.6/bootstrap.sh",
-        "sha256": "TBD-PUBLISH",
-        "size_bytes": 0,
-        "signature_url": "https://update.neosecra.com/releases/1.1.6/bootstrap.sh.minisig"
-      }
-    },
-    {
-      "version": "1.1.5",
-      "backend_image": "registry.neosecra.com/security-health-backend:1.1.5",
-      "worker_image": "registry.neosecra.com/security-health-backend:1.1.5",
-      "frontend_image": "registry.neosecra.com/security-health-frontend:1.1.5",
-      "archive": {
-        "url": "https://update.neosecra.com/releases/1.1.5/distribution.tar.gz",
-        "sha256": "TBD-PUBLISH",
-        "size_bytes": 0,
-        "signature_url": "https://update.neosecra.com/releases/1.1.5/distribution.tar.gz.minisig"
-      },
-      "bootstrap": {
-        "url": "https://update.neosecra.com/releases/1.1.5/bootstrap.sh",
-        "sha256": "TBD-PUBLISH",
-        "size_bytes": 0,
-        "signature_url": "https://update.neosecra.com/releases/1.1.5/bootstrap.sh.minisig"
-      }
-    },
-    {
-      "version": "1.1.4",
-      "released_at": "TBD-PUBLISH",
-      "backend_image": "registry.neosecra.com/security-health-backend:1.1.4",
-      "worker_image": "registry.neosecra.com/security-health-backend:1.1.4",
-      "frontend_image": "registry.neosecra.com/security-health-frontend:1.1.4",
-      "archive": {
-        "url": "https://update.neosecra.com/releases/1.1.4/distribution.tar.gz",
-        "sha256": "TBD-PUBLISH",
-        "size_bytes": 0,
-        "signature_url": "https://update.neosecra.com/releases/1.1.4/distribution.tar.gz.minisig"
-      },
-      "bootstrap": {
-        "url": "https://update.neosecra.com/releases/1.1.4/bootstrap.sh",
-        "sha256": "TBD-PUBLISH",
-        "size_bytes": 0,
-        "signature_url": "https://update.neosecra.com/releases/1.1.4/bootstrap.sh.minisig"
-      }
-    },
-    {
-      "version": "1.1.3",
-      "released_at": "TBD-PUBLISH",
-      "backend_image": "registry.neosecra.com/security-health-backend:1.1.3",
-      "worker_image": "registry.neosecra.com/security-health-backend:1.1.3",
-      "frontend_image": "registry.neosecra.com/security-health-frontend:1.1.3",
-      "archive": {
-        "url": "https://update.neosecra.com/releases/1.1.3/distribution.tar.gz",
-        "sha256": "TBD-PUBLISH",
-        "size_bytes": 0,
-        "signature_url": "https://update.neosecra.com/releases/1.1.3/distribution.tar.gz.minisig"
-      },
-      "bootstrap": {
-        "url": "https://update.neosecra.com/releases/1.1.3/bootstrap.sh",
-        "sha256": "TBD-PUBLISH",
-        "size_bytes": 0,
-        "signature_url": "https://update.neosecra.com/releases/1.1.3/bootstrap.sh.minisig"
-      }
-    },
-    {
-      "version": "1.1.2",
-      "released_at": "TBD-PUBLISH",
-      "backend_image": "registry.neosecra.com/security-health-backend:1.1.2",
-      "worker_image": "registry.neosecra.com/security-health-backend:1.1.2",
-      "frontend_image": "registry.neosecra.com/security-health-frontend:1.1.2",
-      "archive": {
-        "url": "https://update.neosecra.com/releases/1.1.2/distribution.tar.gz",
-        "sha256": "TBD-PUBLISH",
-        "size_bytes": 0,
-        "signature_url": "https://update.neosecra.com/releases/1.1.2/distribution.tar.gz.minisig"
-      },
-      "bootstrap": {
-        "url": "https://update.neosecra.com/releases/1.1.2/bootstrap.sh",
-        "sha256": "TBD-PUBLISH",
-        "size_bytes": 0,
-        "signature_url": "https://update.neosecra.com/releases/1.1.2/bootstrap.sh.minisig"
       }
     },
     {

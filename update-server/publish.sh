@@ -173,6 +173,17 @@ WWW_CHANNEL_SIG="${WWW_CHANNELS}/${CHANNEL_SIG}"
 
 REPO_CHANNEL_FILE="${CHANNELS_REPO_DIR}/${CHANNEL_JSON}"
 
+# channels/ is the repository source of truth.  A pre-existing WWW copy must
+# match it before publishing; silently merging divergent copies can advertise
+# a release that was never signed from the canonical manifest.
+if [[ -f "${REPO_CHANNEL_FILE}" && -f "${WWW_CHANNEL_FILE}" ]]; then
+    if ! cmp -s "${REPO_CHANNEL_FILE}" "${WWW_CHANNEL_FILE}"; then
+        echo "[ERROR] Channel source drift: ${REPO_CHANNEL_FILE} differs from ${WWW_CHANNEL_FILE}" >&2
+        echo "        Synchronize the WWW copy from channels/ before publishing." >&2
+        exit 1
+    fi
+fi
+
 ARCHIVE_BASENAME="$(basename "$ARCHIVE")"
 ARCHIVE_SHA_FILE="${ARCHIVE_BASENAME}.sha256"
 ARCHIVE_SIG_FILE="${ARCHIVE_BASENAME}.minisig"

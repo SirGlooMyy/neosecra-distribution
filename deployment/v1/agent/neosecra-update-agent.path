@@ -1,14 +1,14 @@
 [Unit]
 Description=NeoSecra Update Agent — path watcher for upgrade/rollback triggers
-Documentation=https://github.com/SirGlooMyy/neosecra-assessment
+Documentation=https://github.com/SirGlooMyy/neosecra-distribution
 # NOTE: do NOT bind this unit's lifetime to neosecra-update-agent.service —
 # the service is a oneshot, so a bind made systemd stop this watcher 1s after
 # each completed run.
 DefaultDependencies=false
 
 [Path]
-PathChanged=/opt/neosecra/assessment/state/upgrade-bridge/trigger/upgrade-request.json
-PathChanged=/opt/neosecra/assessment/state/upgrade-bridge/trigger/rollback-request.json
+PathChanged=@INSTALL_ROOT@/state/upgrade-bridge/trigger/upgrade-request.json
+PathChanged=@INSTALL_ROOT@/state/upgrade-bridge/trigger/rollback-request.json
 Unit=neosecra-update-agent.service
 
 [Install]

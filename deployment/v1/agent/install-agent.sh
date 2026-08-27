@@ -21,6 +21,19 @@ AGENT_DIR="${SCRIPT_DIR}"
 
 # shellcheck source=../lib/common.sh
 source "${V1_ROOT}/lib/common.sh"
+# The verifier is loaded by update-agent.sh at runtime.  Keep the source-side
+# check explicit so a partial distribution payload cannot install a daemon
+# that will fail only when the first upgrade trigger arrives.
+[[ -f "${AGENT_DIR}/artifact-verifier.sh" ]] || {
+  warn "Missing artifact verifier: ${AGENT_DIR}/artifact-verifier.sh"
+  exit 1
+}
+if [[ "${PRODUCT}" == "neosecra-hotspot" ]]; then
+  AGENT_SCRIPT="${INSTALL_ROOT}/update-agent/update-agent.sh"
+else
+  AGENT_SCRIPT="${INSTALL_ROOT}/current/v1/agent/update-agent.sh"
+fi
+AGENT_RUNTIME_DIR="$(dirname "${AGENT_SCRIPT}")"
 
 # This repo's lib/common.sh enables `set -Ee` when sourced; restore the
 # installer's own mode (explicit exit-code handling).
@@ -96,12 +109,39 @@ touch "${HEARTBEAT_FILE}"
 chmod 0644 "${HEARTBEAT_FILE}"
 ok "State directories ready"
 
+# Existing Assessment installs may predate artifact-verifier.sh.  Refresh the
+# adjacent helper when the stable current tree already exists; on a fresh
+# install the signed release payload supplies it before current is switched.
+if [[ "${PRODUCT}" != "neosecra-hotspot" && -d "${AGENT_RUNTIME_DIR}" ]]; then
+  install -m 0644 "${AGENT_DIR}/artifact-verifier.sh" "${AGENT_RUNTIME_DIR}/artifact-verifier.sh"
+  ok "Artifact verifier installed: ${AGENT_RUNTIME_DIR}/artifact-verifier.sh"
+fi
+
+# Render the checked-in unit templates with the selected product paths. The
+# assessment installer keeps its historical defaults; other products can use
+# the same script without inheriting `/opt/neosecra/assessment`.
+render_unit() {
+  local src="$1" dest="$2" line tmp
+  tmp="$(mktemp)"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line//@INSTALL_ROOT@/${INSTALL_ROOT}}"
+    line="${line//@ENV_FILE@/${ENV_FILE}}"
+    line="${line//@PROJECT@/${PROJECT_NAME}}"
+    line="${line//@PRODUCT@/${PRODUCT}}"
+    line="${line//@EDITION@/${EDITION}}"
+    line="${line//@AGENT_SCRIPT@/${AGENT_SCRIPT}}"
+    printf '%s\n' "$line"
+  done < "$src" > "$tmp"
+  install -m 0644 "$tmp" "$dest"
+  rm -f "$tmp"
+}
+
 # --- Install systemd units ---
 log "Installing systemd units..."
-install -m 0644 "${AGENT_DIR}/neosecra-update-agent.path"       "${INSTALL_UNITS_DIR}/"
-install -m 0644 "${AGENT_DIR}/neosecra-update-agent.service"    "${INSTALL_UNITS_DIR}/"
-install -m 0644 "${AGENT_DIR}/neosecra-update-agent-heartbeat.timer"   "${INSTALL_UNITS_DIR}/"
-install -m 0644 "${AGENT_DIR}/neosecra-update-agent-heartbeat.service" "${INSTALL_UNITS_DIR}/"
+render_unit "${AGENT_DIR}/neosecra-update-agent.path" "${INSTALL_UNITS_DIR}/neosecra-update-agent.path"
+render_unit "${AGENT_DIR}/neosecra-update-agent.service" "${INSTALL_UNITS_DIR}/neosecra-update-agent.service"
+render_unit "${AGENT_DIR}/neosecra-update-agent-heartbeat.timer" "${INSTALL_UNITS_DIR}/neosecra-update-agent-heartbeat.timer"
+render_unit "${AGENT_DIR}/neosecra-update-agent-heartbeat.service" "${INSTALL_UNITS_DIR}/neosecra-update-agent-heartbeat.service"
 ok "Unit files installed"
 
 # --- Daemon-reload, enable, start ---

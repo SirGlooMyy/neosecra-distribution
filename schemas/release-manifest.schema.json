@@ -8,10 +8,11 @@
     "git_commit", "build_date", "images", "distribution"
   ],
   "properties": {
-    "product": { "type": "string", "enum": ["neosecra-security-health", "neosecra-soc"] },
-    "edition": { "type": "string", "enum": ["security-health", "soc"] },
+    "product": { "type": "string", "enum": ["assessment", "soc", "pish", "hotspot", "neosecra-security-health", "neosecra-soc", "neosecra-pish", "neosecra-hotspot"] },
+    "product_code": { "type": "string", "enum": ["assessment", "soc", "pish", "hotspot"] },
+    "edition": { "type": "string", "enum": ["standard", "enterprise", "security-health", "soc", "pish", "hotspot"] },
     "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
-    "release_channel": { "type": "string", "enum": ["stable", "beta", "rc"] },
+    "release_channel": { "type": "string", "enum": ["stable", "beta", "rc", "assessment-stable", "soc-stable", "pish-stable", "hotspot-stable"] },
     "git_commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
     "build_date": { "type": "string", "format": "date-time" },
     "minimum_upgrade_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared helpers for the NeoSecra Assessment deployment scripts.
+# Shared helpers for NeoSecra product deployment scripts.
 # Sourced by install/upgrade/backup/smoke-tests scripts.
 set -Euo pipefail
 
@@ -7,13 +7,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # --- Product identity ---
-PRODUCT="neosecra-security-health"
-EDITION="security-health"
-PROJECT="neosecra-assessment"
+PRODUCT="${NEOSECRA_PRODUCT:-neosecra-security-health}"
+
+# `NEOSECRA_EDITION` is an application setting in existing products
+# (for example `security_health`), so the distribution identity uses its own
+# unambiguous variable.
+EDITION="${NEOSECRA_EDITION_ID:-security-health}"
+PROJECT="${NEOSECRA_PROJECT:-neosecra-assessment}"
 PROJECT_NAME="${PROJECT}"
 
 # --- Install target ---
-INSTALL_ROOT="/opt/neosecra/assessment"
+INSTALL_ROOT="${NEOSECRA_INSTALL_ROOT:-/opt/neosecra/assessment}"
 RELEASES_DIR="${INSTALL_ROOT}/releases"
 SHARED_DIR="${INSTALL_ROOT}/shared"
 STATE_DIR="${INSTALL_ROOT}/state"
@@ -21,11 +25,11 @@ BACKUP_ROOT="${INSTALL_ROOT}/backups"
 JOURNAL_DIR="${INSTALL_ROOT}/upgrade-journal"
 CREDENTIAL_DIR="${INSTALL_ROOT}/credentials"
 LOG_DIR="${INSTALL_ROOT}/logs"
-COMPOSE_PROJECT="${PROJECT_NAME}"
+COMPOSE_PROJECT="${NEOSECRA_COMPOSE_PROJECT:-${PROJECT_NAME}}"
 
 # --- Resolve key paths from V1_ROOT ---
-COMPOSE_FILE="${V1_ROOT}/docker-compose.v1.yml"
-ENV_FILE="${V1_ROOT}/.env.v1"
+COMPOSE_FILE="${NEOSECRA_COMPOSE_FILE:-${V1_ROOT}/docker-compose.v1.yml}"
+ENV_FILE="${NEOSECRA_ENV_FILE:-${V1_ROOT}/.env.v1}"
 ENV_EXAMPLE="${V1_ROOT}/.env.v1.example"
 VERSION_FILE="${V1_ROOT}/VERSION"
 MANIFEST_FILE="${V1_ROOT}/release-manifest.yaml"
@@ -236,13 +240,13 @@ apply_release_image_refs() {
   local version backend_image worker_image frontend_image
   version="${1:-$(read_version)}"
   if [[ "$version" == "$(read_version)" ]]; then
-    backend_image="$(release_image_ref backend "registry.neosecra.com/security-health-backend:${version}")"
+    backend_image="$(release_image_ref backend "${NEOSECRA_BACKEND_IMAGE_REPOSITORY:-registry.neosecra.com/security-health-backend}:${version}")"
     worker_image="$(release_image_ref worker "$backend_image")"
-    frontend_image="$(release_image_ref frontend "registry.neosecra.com/security-health-frontend:${version}")"
+    frontend_image="$(release_image_ref frontend "${NEOSECRA_FRONTEND_IMAGE_REPOSITORY:-registry.neosecra.com/security-health-frontend}:${version}")"
   else
-    backend_image="registry.neosecra.com/security-health-backend:${version}"
+    backend_image="${NEOSECRA_BACKEND_IMAGE_REPOSITORY:-registry.neosecra.com/security-health-backend}:${version}"
     worker_image="$backend_image"
-    frontend_image="registry.neosecra.com/security-health-frontend:${version}"
+    frontend_image="${NEOSECRA_FRONTEND_IMAGE_REPOSITORY:-registry.neosecra.com/security-health-frontend}:${version}"
   fi
 
   upsert_env_value NEOSECRA_VERSION "$version"

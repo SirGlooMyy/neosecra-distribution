@@ -26,7 +26,7 @@ fi
 # Used only in internal mode (custom CA). In public mode the system trust
 # store already validates Let's Encrypt certificates, so no CA install needed.
 # ---------------------------------------------------------------------------
-NEOSECRA_CA_B64='LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUIvakNDQVlTZ0F3SUJBZ0lVS3R3SSt1NitkZTN1T1Y3MGpka3dtRWN2N2RNd0NnWUlLb1pJemowRUF3TXcKTGpFWk1CY0dBMVVFQXd3UVRtVnZVMlZqY21FZ1VtOXZkQ0JEUVRFUk1BOEdBMVVFQ2d3SVRtVnZVMlZqY21FdwpIaGNOTWpZd056STNNRGt5TkRFMFdoY05Nell3TnpJME1Ea3lOREUwV2pBdU1Sa3dGd1lEVlFRRERCQk9aVzlUClpXTnlZU0JTYjI5MElFTkJNUkV3RHdZRFZRUUtEQWhPWlc5VFpXTnlZVEIyTUJBR0J5cUdTTTQ5QWdFR0JTdUIKQkFBaUEySUFCT0NUekl2UzY0aW9XaVdmUGVEdXcvRkRqR2VHLzFVWUhaSkM2WGd4WkdVVVgwOFA0M3pheGk4YgpkSlcrNTV0OFp5cVBXSndGUHZUZHFxa3AxQmV1dyt3QW5HSFNzcmljV052OEkzeFh3NHVWeDRydmJzL3JENTFhCjhyNGczZFRRTUtOak1HRXdIUVlEVlIwT0JCWUVGRlkza25JZ0dyZ015eFU3eHk2aUJQM0dVRlpGTUI4R0ExVWQKSXdRWU1CYUFGRlkza25JZ0dyZ015eFU3eHk2aUJQM0dVRlpGTUE4R0ExVWRFd0VCL3dRRk1BTUJBZjh3RGdZRApWUjBQQVFIL0JBUURBZ0VHTUFvR0NDcUdTTTQ5QkFNREEyZ0FNR1VDTUZvbzZKSzg4b3VaM1ZVNWo1RDhwMndCCjlyL08wN25QNGdQd01YdHU1b3cybWpwVmtObWU0SURqOHphMWROSXJxZ0l4QUp5UzgzZDNoV2ZCd3FRa2NHZVoKMTU1NW9pYkg4WHl2S3I4YmtacWIveHV6TzlXY01xOUVIcTEwb2RnM3RrR3JDUT09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K'
+NEOSECRA_CA_B64='LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUIvakNDQVlTZ0F3SUJBZ0lVS3R3SSt1NitkZTN1T1Y3MGpka3dtRWN2N2RNd0NnWUlLb1pJemowRUF3TXcKTGpFWk1CY0dBMVVFQXd3UVRtVnZVMlZqY21FZ1VtOXZkQ0JEUVRFUk1BOEdBMVVFQ2d3SVRtVnZVMlZqY21FdwpIaGNOTWpZd056STNNRGt5TkRFMFdoY05Nell3TnpJME1Ea3lOREUwV2pBdU1Sa3dGd1lEVlFRRERCQk9aVzlUClpXTnlZU0JTYjI5MElFTkJNUkV3RHdZRFZRUUtEQWhPWlc5VFpXTnlZVEIyTUJBR0J5cUdTTTQ5QWdFR0JTdUIKQkFBaUEySUFCT0NUekl2UzY0aW9XaVdmUGVEdXcvRkRqR2VHLzFVWUhaSkM2WGd4WkdVVVgwOFA0M3pheGk4YgpkSlcrNTV0OFp5cVBXSndGUHZUZHFxa3AxQmV1dyt3QW5HSFNzcmljV052OEkzeFh3NHVWeDRydmJzL3JENTFhCjhyNGczZFRRTUtOak1HRXdIUVlEVlIwT0JCWUVGRlkza25JZ0dyZ015eFU3eHk2aUJQM0dVRlpGTUI4R0ExVWQKSXdRWU1CYUFGRlkza25JZ0dyZ015eFU3eHk2aUJQM0dVRlpGTUE4R0ExVWRFd0VCL3dRRk1BTUJBZjh3RGdZRApWUjBQQVFIL0JBUURBZ0VHTUFvR0NDcUdTTTQ5QkFNREEyZ0FNR1VDTUZvbzZKSzg4b3VaM1ZVNWo1RDhwMndCCjlyL08wN25QNGdQd01YdHU1b3cybWpwVmtObWU0SURqOHphMWROSXJxZ0l4QUp5UzgzZDhoV2ZCd3FRa2NHZVoKMTU1NW9pYkg4WHl2S3I4YmtacWIveHV6TzlXY01xOUVIcTEwb2RnM3RrR3JDUT09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K'
 
 install_update_server_ca() {
   local ca_path="/usr/local/share/ca-certificates/update-neosecra-com.crt"
@@ -164,11 +164,16 @@ fi
 
 EXPECTED_SHA256="$(resolve_archive_sha256_from_channel "$CHANNEL_JSON" "$VERSION" || true)"
 SIGNATURE_PUBKEY="${NEOSECRA_SIGNATURE_PUBKEY:-}"
-NEOSECRA_REQUIRE_SIGNATURE="${NEOSECRA_REQUIRE_SIGNATURE:-1}"
 RED='\033[31m'; GRN='\033[32m'; RST='\033[0m'
 info() { echo -e "${GRN}[neosecra]${RST} $*"; }
 err()  { echo -e "${RED}[neosecra]${RST} $*"; exit 1; }
 [[ $EUID -eq 0 ]] || err "Root required"
+
+# Release signatures are mandatory; an environment override must not permit
+# an untrusted payload to reach the installation path.
+[[ "${NEOSECRA_REQUIRE_SIGNATURE:-1}" == "1" ]] || \
+  err "NEOSECRA_REQUIRE_SIGNATURE=0 is unsupported; signed releases are mandatory"
+NEOSECRA_REQUIRE_SIGNATURE=1
 
 # ---------------------------------------------------------------------------
 # Image registry — NeoSecra images live at registry.neosecra.com (our own
@@ -380,28 +385,19 @@ else
 fi
 
 if curl "${CURL_OPTS[@]}" -o dist.tar.gz.minisig "${DISTRIBUTION_ARCHIVE_URL}.minisig" 2>/dev/null; then
-  if ! command -v minisign &>/dev/null; then
-    if [[ "${NEOSECRA_REQUIRE_SIGNATURE}" == "1" ]]; then
-      err "Minisign gerekli (NEOSECRA_REQUIRE_SIGNATURE=1) ama bulunamadı"
-    fi
-    info "[warn] minisign bulunamadı — imza doğrulaması ATLANDI (TLS + checksum uygulandı)"
-  else
-    PUBKEY_PATH="${SIGNATURE_PUBKEY}"
-    if [[ -z "$PUBKEY_PATH" ]]; then
-      PUBKEY_PATH="$(dirname "${BASH_SOURCE[0]}")/deployment/ca/update-neosecra-com.pub"
-    fi
-    if [[ ! -f "$PUBKEY_PATH" ]]; then
-      err "Minisign public key bulunamadı: ${PUBKEY_PATH}"
-    fi
-    minisign -Vm dist.tar.gz -P "$(cat "$PUBKEY_PATH")" -x dist.tar.gz.minisig 2>/dev/null || \
-      err "Minisign imza doğrulaması BAŞARISIZ"
-    info "Minisign imza doğrulandı"
+  command -v minisign &>/dev/null || err "Minisign gerekli ama bulunamadı"
+  PUBKEY_PATH="${SIGNATURE_PUBKEY}"
+  if [[ -z "$PUBKEY_PATH" ]]; then
+    PUBKEY_PATH="$(dirname "${BASH_SOURCE[0]}")/deployment/ca/update-neosecra-com.pub"
   fi
+  if [[ ! -f "$PUBKEY_PATH" ]]; then
+    err "Minisign public key bulunamadı: ${PUBKEY_PATH}"
+  fi
+  minisign -Vm dist.tar.gz -p "$PUBKEY_PATH" -x dist.tar.gz.minisig 2>/dev/null || \
+    err "Minisign imza doğrulaması BAŞARISIZ"
+  info "Minisign imza doğrulandı"
 else
-  if [[ "${NEOSECRA_REQUIRE_SIGNATURE}" == "1" ]]; then
-    err "Minisign imza dosyası bulunamadı (${DISTRIBUTION_ARCHIVE_URL}.minisig) — NEOSECRA_REQUIRE_SIGNATURE=1 ile reddedildi"
-  fi
-  info "[warn] Minisign imza dosyası bulunamadı — imza doğrulaması ATLANDI"
+  err "Minisign imza dosyası bulunamadı (${DISTRIBUTION_ARCHIVE_URL}.minisig) — unsigned release reddedildi"
 fi
 
 tar xzf dist.tar.gz

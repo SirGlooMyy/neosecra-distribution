@@ -52,7 +52,12 @@ CHANNEL_URL="${NEOSECRA_CHANNEL_URL:-${UPGRADE_CHANNEL_URL:-https://update.neose
 BOOTSTRAP_URL="${NEOSECRA_BOOTSTRAP_URL:-https://raw.githubusercontent.com/SirGlooMyy/neosecra-distribution/fix/assessment-live-installer/bootstrap.sh}"
 ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-https://github.com/SirGlooMyy/neosecra-distribution/archive/refs/heads/fix/assessment-live-installer.tar.gz}"
 SIGNATURE_PUBKEY="${NEOSECRA_SIGNATURE_PUBKEY:-${V1_ROOT}/ca/update-neosecra-com.pub}"
-NEOSECRA_REQUIRE_SIGNATURE="${NEOSECRA_REQUIRE_SIGNATURE:-1}"
+# Release signatures are mandatory; an environment override must not permit
+# an untrusted payload to reach the installation path.
+if [[ "${NEOSECRA_REQUIRE_SIGNATURE:-1}" != "1" ]]; then
+  die "NEOSECRA_REQUIRE_SIGNATURE=0 is unsupported; signed releases are mandatory" 4
+fi
+NEOSECRA_REQUIRE_SIGNATURE=1
 
 # ---------------------------------------------------------------------------
 # Channel fetch + release entry parsers (python3 > jq > grep/sed fallbacks)
@@ -140,13 +145,7 @@ verify_sha256() {
 
 verify_minisign() {
   local file="$1" sig_file="$2" pubkey="$3" label="${4:-artifact}"
-  if ! command -v minisign &>/dev/null; then
-    if [[ "${NEOSECRA_REQUIRE_SIGNATURE:-1}" == "1" ]]; then
-      die "Minisign binary required (NEOSECRA_REQUIRE_SIGNATURE=1) but not found" 4
-    fi
-    warn "minisign not found — signature verification SKIPPED for ${label} (checksum+TLS still enforced)"
-    return 0
-  fi
+  command -v minisign &>/dev/null || die "Minisign binary required for ${label} but not found" 4
   [[ -f "$pubkey" ]] || die "Minisign public key not found: ${pubkey}" 4
   [[ -f "$sig_file" ]] || die "Minisign signature file not found: ${sig_file}" 4
   # Prefer the key FILE form (-p): shipped .pub files carry an "untrusted
@@ -161,9 +160,26 @@ verify_minisign() {
   ok "Minisign signature verified for ${label}"
 }
 
+verify_channel_manifest() {
+  local url="$1" json="$2" tmpdir
+  [[ -n "$json" ]] || die "Empty channel manifest — refusing unsigned update metadata" 4
+  tmpdir="$(mktemp -d)"
+  # curl/command substitution strips the transport newline; channel files are
+  # signed as canonical JSON bytes with a trailing LF.
+  printf '%s\n' "$json" > "${tmpdir}/channel.json"
+  if ! curl "${CURL_OPTS[@]}" -o "${tmpdir}/channel.json.minisig" "${url}.minisig" 2>/dev/null; then
+    rm -rf "$tmpdir"
+    die "Channel signature not downloadable (${url}.minisig) — refusing update" 4
+  fi
+  verify_minisign "${tmpdir}/channel.json" "${tmpdir}/channel.json.minisig" \
+    "$SIGNATURE_PUBKEY" "channel manifest"
+  rm -rf "$tmpdir"
+}
+
 resolve_channel_target() {
   local json target
   json="$(fetch_channel_json "$CHANNEL_URL" || true)"
+  [[ -n "$json" ]] && verify_channel_manifest "$CHANNEL_URL" "$json"
   target="$(printf '%s\n' "$json" | sed -nE 's/.*"current_version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)"
   printf '%s' "$target"
 }
@@ -215,6 +231,7 @@ prepare_target_release() {
     channel_json="$(fetch_channel_json "$CHANNEL_URL")" || \
       die "Channel unreachable (${CHANNEL_URL}) — cannot resolve the release payload for ${target}; refusing to copy the current tree" 4
   fi
+  verify_channel_manifest "$CHANNEL_URL" "$channel_json"
   archive_url="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-$(parse_channel_archive_url "$channel_json" "$target")}"
   [[ -n "$archive_url" ]] || \
     die "Channel has no archive URL for release ${target} — refusing to fall back to copying the current tree" 4
@@ -246,10 +263,8 @@ prepare_target_release() {
   if curl "${CURL_OPTS[@]}" -o "${dl_dir}/distribution.tar.gz.minisig" "${archive_url}.minisig" 2>/dev/null; then
     verify_minisign "${dl_dir}/distribution.tar.gz" "${dl_dir}/distribution.tar.gz.minisig" \
       "$SIGNATURE_PUBKEY" "distribution archive ${target}"
-  elif [[ "${NEOSECRA_REQUIRE_SIGNATURE:-1}" == "1" ]]; then
-    die "Minisign signature not downloadable (${archive_url}.minisig) — NEOSECRA_REQUIRE_SIGNATURE=1" 4
   else
-    warn "No minisign signature at ${archive_url}.minisig — signature verification SKIPPED (checksum+TLS still enforced)"
+    die "Minisign signature not downloadable (${archive_url}.minisig) — refusing unsigned release" 4
   fi
 
   # Extract and validate the expected payload layout:
@@ -342,8 +357,28 @@ prepare_target_release() {
 CURRENT=$(read_installed_version 2>/dev/null || true)
 [[ -n "$CURRENT" && "$CURRENT" != "none" ]] || CURRENT=$(read_version)
 if [[ $TARGET_FROM_ARG -eq 0 && "$TARGET" != "$(read_version)" && "${NEOSECRA_UPGRADE_BOOTSTRAP:-1}" == "1" ]]; then
-  log "Channel target ${TARGET} requires newer installer metadata; refreshing from GitHub..."
-  curl -fsSL "$BOOTSTRAP_URL" | NEOSECRA_DISTRIBUTION_ARCHIVE_URL="$ARCHIVE_URL" bash
+  log "Channel target ${TARGET} requires newer installer metadata; refreshing from the signed update channel..."
+  CHANNEL_JSON="$(fetch_channel_json "$CHANNEL_URL")" || \
+    die "Channel unreachable (${CHANNEL_URL}) — refusing bootstrap of unverified installer metadata" 4
+  verify_channel_manifest "$CHANNEL_URL" "$CHANNEL_JSON"
+  RESOLVED_ARCHIVE_URL="$(parse_channel_archive_url "$CHANNEL_JSON" "$TARGET")"
+  [[ -n "$RESOLVED_ARCHIVE_URL" ]] || \
+    die "Channel has no archive URL for release ${TARGET} — refusing bootstrap" 4
+  RESOLVED_ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-$RESOLVED_ARCHIVE_URL}"
+  BOOTSTRAP_URL="${NEOSECRA_BOOTSTRAP_URL:-https://update.neosecra.com/releases/${TARGET}/bootstrap.sh}"
+  BOOTSTRAP_TMP="$(mktemp -d)"
+  trap 'rm -rf "${BOOTSTRAP_TMP}"' EXIT
+  curl "${CURL_OPTS[@]}" -o "${BOOTSTRAP_TMP}/bootstrap.sh" "$BOOTSTRAP_URL" || \
+    die "Bootstrap download failed: ${BOOTSTRAP_URL}" 4
+  curl "${CURL_OPTS[@]}" -o "${BOOTSTRAP_TMP}/bootstrap.sh.sha256" "${BOOTSTRAP_URL}.sha256" 2>/dev/null || \
+    die "Bootstrap SHA-256 sidecar unavailable: ${BOOTSTRAP_URL}.sha256" 4
+  (cd "$BOOTSTRAP_TMP" && sha256sum -c bootstrap.sh.sha256 >/dev/null) || \
+    die "Bootstrap SHA-256 verification failed" 4
+  curl "${CURL_OPTS[@]}" -o "${BOOTSTRAP_TMP}/bootstrap.sh.minisig" "${BOOTSTRAP_URL}.minisig" 2>/dev/null || \
+    die "Bootstrap minisig unavailable: ${BOOTSTRAP_URL}.minisig" 4
+  verify_minisign "${BOOTSTRAP_TMP}/bootstrap.sh" "${BOOTSTRAP_TMP}/bootstrap.sh.minisig" "$SIGNATURE_PUBKEY" "bootstrap.sh"
+  chmod +x "${BOOTSTRAP_TMP}/bootstrap.sh"
+  NEOSECRA_DISTRIBUTION_ARCHIVE_URL="$RESOLVED_ARCHIVE_URL" bash "${BOOTSTRAP_TMP}/bootstrap.sh"
   exit $?
 fi
 

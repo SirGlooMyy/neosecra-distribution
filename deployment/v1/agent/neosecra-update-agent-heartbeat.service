@@ -1,10 +1,10 @@
 [Unit]
 Description=NeoSecra Update Agent Heartbeat — touches agent-alive file
-Documentation=https://github.com/SirGlooMyy/neosecra-assessment
+Documentation=https://github.com/SirGlooMyy/neosecra-distribution
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/touch /opt/neosecra/assessment/state/upgrade-bridge/agent-alive
+ExecStart=/usr/bin/touch @INSTALL_ROOT@/state/upgrade-bridge/agent-alive
 StandardOutput=journal
 StandardError=journal
 

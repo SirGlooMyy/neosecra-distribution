@@ -162,7 +162,7 @@ The bootstrap and upgrade scripts in this repository are now wired to use
 | Bootstrap URL | ✅ Wired | Derived from target version: `https://update.neosecra.com/releases/<version>/bootstrap.sh` |
 | Archive URL | ✅ Wired | Resolved from the channel JSON release entry (`archive`/`url` field), with fallback to `https://update.neosecra.com/releases/<version>/distribution.tar.gz`. Overridable via `NEOSECRA_DISTRIBUTION_ARCHIVE_URL`. |
 | SHA-256 verification | ✅ Wired | `upgrade.sh` verifies every downloaded distribution archive. Prefers the `sha256` field in channel JSON; falls back to the `.sha256` sidecar file. Hard-fails on mismatch. |
-| Minisign verification | ✅ Wired | `upgrade.sh` verifies `.minisig` against the pinned public key (`deployment/upgrade/update-neosecra-com.pub`). Graceful skip if minisign binary is absent (with loud warning). `NEOSECRA_REQUIRE_SIGNATURE=1` forces hard-fail when minisign is missing. |
+| Minisign verification | ✅ Wired | `upgrade.sh`, bootstrap and the host update-agent verify both the channel manifest and release `.minisig` files against the pinned public key (`deployment/upgrade/update-neosecra-com.pub`). Signature verification is unconditionally fail-closed; unsigned or hash-unverified payloads are rejected in every environment. |
 | Bootstrap version resolution | ✅ Wired | `bootstrap.sh` resolves the target version from channel JSON `current_version` at runtime, using `python3` / `jq` / `grep+sed` in preference order. No more hardcoded `1.0.9`. |
 | Downgrade protection | ✅ Wired | `upgrade.sh` refuses to install a version older than the installed one; `NEOSECRA_ALLOW_DOWNGRADE=1` overrides. |
 | Channel JSON parsing | ✅ Wired | Uses `python3` first, then `jq`, falls back to `grep`+`sed` if neither is available. |
@@ -175,17 +175,33 @@ The bootstrap and upgrade scripts in this repository are now wired to use
 | `NEOSECRA_DISTRIBUTION_ARCHIVE_URL` | auto-resolved from channel JSON | Distribution archive URL |
 | `NEOSECRA_VERSION` | auto-resolved from channel JSON | Pin a specific version (in bootstrap.sh) |
 | `NEOSECRA_SIGNATURE_PUBKEY` | `deployment/upgrade/update-neosecra-com.pub` | Path to minisign public key |
-| `NEOSECRA_REQUIRE_SIGNATURE` | `0` | Set to `1` to hard-fail when minisign is missing |
+| `NEOSECRA_REQUIRE_SIGNATURE` | `1` (固定) | İmza doğrulaması atlanamaz; `0` açıkça reddedilir |
 | `NEOSECRA_ALLOW_DOWNGRADE` | `0` | Set to `1` to allow downgrading |
 | `NEOSECRA_UPGRADE_BOOTSTRAP` | `1` | Set to `0` to skip the bootstrap pipeline |
 
-### Not yet wired
+### Remaining work
 
-- **Minisign verification of channel JSON** itself (the channel JSON is served with
-  a `.minisig` sidecar, but verification is not yet implemented in the client).
 - **Docker bundle artifact** (`docker-bundle-*.tar.zst`) — the publish script
   generates it, but the client does not yet consume it (future: air-gapped
   installs).
+
+### Offline E2E harness
+
+The upgrade E2E test is parameterized and does not require the live update host.
+Point it at an isolated HTTP(S) fixture or test server and provide the trusted
+public key explicitly:
+
+```bash
+UPDATE_SERVER_BASE_URL=http://127.0.0.1:18993 \
+UPDATE_SERVER_CHANNEL=assessment-stable \
+UPDATE_SERVER_EXPECTED_VERSION=1.3.29 \
+UPDATE_SERVER_PUBLIC_KEY=public-keys/update-neosecra-com.pub \
+bash update-server/src/e2e-test.sh
+```
+
+For an internal CA, set `UPDATE_SERVER_CA_CERT=/path/to/ca.crt`. The harness
+fails closed when the channel signature, archive hash, or archive minisign is
+missing or invalid.
 - **Fallback to GitHub** if the update server is unreachable — the scripts will
   currently fail with an error; resilience fallback can be added in a future
   iteration.

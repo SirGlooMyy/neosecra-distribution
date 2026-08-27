@@ -17,12 +17,12 @@
   "properties": {
     "product": {
       "type": "string",
-      "enum": ["neosecra-security-health"],
+      "enum": ["assessment", "soc", "pish", "hotspot", "neosecra-security-health", "neosecra-soc", "neosecra-pish", "neosecra-hotspot"],
       "description": "Product identifier"
     },
     "edition": {
       "type": "string",
-      "enum": ["security-health"],
+      "enum": ["standard", "enterprise", "security-health", "soc", "pish", "hotspot"],
       "description": "Product edition"
     },
     "version": {
@@ -32,7 +32,7 @@
     },
     "release_channel": {
       "type": "string",
-      "enum": ["stable", "rc", "beta", "dev"],
+      "enum": ["stable", "rc", "beta", "dev", "assessment-stable", "soc-stable", "pish-stable", "hotspot-stable"],
       "description": "Release channel"
     },
     "git_commit": {

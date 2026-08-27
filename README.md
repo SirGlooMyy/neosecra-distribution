@@ -46,6 +46,8 @@ runs `deployment/v1/agent/install-agent.sh`, which:
 - creates `/opt/neosecra/assessment/state/upgrade-bridge/{trigger,journal}`
 - installs and enables `neosecra-update-agent.{path,service}` and
   `neosecra-update-agent-heartbeat.{timer,service}` under systemd
+- verifies the shipped `artifact-verifier.sh` helper and refreshes it beside
+  an existing `current/v1/agent/update-agent.sh`
 - is idempotent — re-running refreshes units/dirs without breaking state
 
 The backend container talks to the agent through the upgrade-bridge bind

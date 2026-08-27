@@ -1,6 +1,6 @@
 [Unit]
 Description=NeoSecra Update Agent — executes triggered upgrade/rollback
-Documentation=https://github.com/SirGlooMyy/neosecra-assessment
+Documentation=https://github.com/SirGlooMyy/neosecra-distribution
 BindsTo=neosecra-update-agent.path
 After=neosecra-update-agent.path network-online.target
 Requires=network-online.target
@@ -9,9 +9,13 @@ Requires=network-online.target
 Type=oneshot
 # current -> releases/<ver> symlink (bootstrap/upgrade switch it); units keep
 # working across upgrades because they follow the symlink.
-EnvironmentFile=/opt/neosecra/assessment/current/v1/.env.v1
+EnvironmentFile=-@ENV_FILE@
 Environment=HOME=/root
-ExecStart=/opt/neosecra/assessment/current/v1/agent/update-agent.sh
+Environment=NEOSECRA_INSTALL_ROOT=@INSTALL_ROOT@
+Environment=NEOSECRA_PROJECT=@PROJECT@
+Environment=NEOSECRA_PRODUCT=@PRODUCT@
+Environment=NEOSECRA_EDITION_ID=@EDITION@
+ExecStart=@AGENT_SCRIPT@
 StandardOutput=journal+console
 StandardError=journal+console
 # Never execute content from the trigger file beyond validated version string
