@@ -108,6 +108,15 @@ Değişmemiş lisans için 304 Not Modified normaldir. 200 teslimat sonrası ür
 yerel Ed25519 doğrulaması yapar ve yalnız başarılı uygulamayı ack eder. Public
 license_id ile veritabanı UUID (id) hiçbir sorguda karıştırılmaz.
 
+Ürün istemcileri lisans sunucusunun JSON kolonundan gelen `envelope` nesnesini
+ve eski kurulumların string biçimini eşdeğer kabul eder. Envelope, canonical
+payload SHA-256 fingerprint'i uzak yanıtla eşleşmeden yerel ayara yazılmaz.
+Başarılı uygulamada `ACKNOWLEDGED`; aynı fingerprint için `NOT_MODIFIED`;
+ulaşılamayan, hatalı imzalı veya ACK'i reddedilen teslimatta ilgili hata kodu
+(`LICENSE_SERVER_UNAVAILABLE`, `LICENSE_SIGNATURE_INVALID`,
+`LICENSE_FINGERPRINT_MISMATCH`, `LICENSE_ACK_FAILED`) kalıcı delivery kaydında
+görünür. Credential hiçbir status/ack/UI yanıtında dönmez.
+
 ACK doğrulaması fail-closed'dur: ürünün gönderdiği fingerprint, imzalı
 payload'ın canonical JSON SHA-256 değeridir; `verifier_status` da ürünün
 hesapladığı ortak yaşam döngüsü durumuyla aynı olmalıdır. Lisans sunucusu
@@ -144,6 +153,7 @@ Her ürünün License ekranı aynı bilgileri kendi API'sinden göstermelidir:
 - doğrulanmış status, valid_from/expires_at ve update entitlement tarihi;
 - modüller, limitler/kullanım, fingerprint ve key ID;
 - son heartbeat, teslimat ve ack zamanı/durumu;
+- online yapılandırma, son delivery durumu, uygulama/ACK zamanı ve hata kodu;
 - online pull/ack sonucu ve offline .lic import seçeneği.
 
 UI lisans sunucusuna doğrudan secret ile bağlanmaz; backend credential ve
