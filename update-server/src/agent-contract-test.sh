@@ -71,6 +71,11 @@ if rg -q 'artifact-verifier\.sh' "${INSTALLER}" && rg -q 'artifact-verifier\.sh'
 else
   fail "both installers provision the artifact verifier helper"
 fi
+if [[ -x "${INSTALLER}" && -x "${HOTSPOT_INSTALLER}" ]]; then
+  pass "both installers are executable"
+else
+  fail "both installers are executable"
+fi
 if rg -q 'UPGRADE_CHANNEL_URL not set; refusing unsigned channel metadata' "${AGENT}"; then
   pass "missing channel URL fails closed"
 else
