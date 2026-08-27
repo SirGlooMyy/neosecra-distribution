@@ -108,6 +108,14 @@ Değişmemiş lisans için 304 Not Modified normaldir. 200 teslimat sonrası ür
 yerel Ed25519 doğrulaması yapar ve yalnız başarılı uygulamayı ack eder. Public
 license_id ile veritabanı UUID (id) hiçbir sorguda karıştırılmaz.
 
+ACK doğrulaması fail-closed'dur: ürünün gönderdiği fingerprint, imzalı
+payload'ın canonical JSON SHA-256 değeridir; `verifier_status` da ürünün
+hesapladığı ortak yaşam döngüsü durumuyla aynı olmalıdır. Lisans sunucusu
+kayıtlı envelope'dan fingerprint ve durum değerini yeniden hesaplar, uyumsuz
+istekleri `LICENSE_FINGERPRINT_MISMATCH` veya `LICENSE_STATUS_MISMATCH` ile
+reddeder ve başarılı yanıtta yalnız canonical fingerprint'i kabul eder. Eski
+ajanlar için envelope-hash geriye uyumluluğu bounded tutulur.
+
 ### 3.3 Envelope ve ortak durumlar
 
 Envelope, payload string'i üzerinde Ed25519 imzasıdır:
