@@ -44,6 +44,29 @@ Bozuk veya negatif grace değeri `INVALID_SIGNATURE` olur.
 olmadan otomatik yürütme ilan etmez. `NEOSECRA_REQUIRE_SIGNATURE=0` kabul
 edilmez; updater ve bootstrap bu değeri açıkça reddeder.
 
+## Sürüm ve kanal drift kapısı
+
+Ürün çalışma sürümü ile kanalın `current_version` değeri aynı release kaynağını
+temsil etmelidir. Runtime daha yeni görünüyorsa, o sürümün gerçek arşivi,
+SHA-256 sidecar'ı ve minisign imzası üretilmeden kanal `available` yapılmaz.
+Eski bir imzalı artifact'i yeni sürüm adıyla yeniden etiketlemek de geçerli
+değildir; archive içindeki ürün sürümü, Compose `PRODUCT_VERSION` varsayılanı
+ve release manifest birlikte doğrulanmalıdır.
+
+Yayın öncesi zorunlu yerel kontroller:
+
+```bash
+bash -n update-server/publish.sh
+./bin/validate-channels.sh . update-server/www
+minisign -Vm update-server/www/channels/<product>-stable.json \
+  -p public-keys/update-neosecra-com.pub
+```
+
+Bu kontrollerden biri başarısızsa durum `NOT_RUN/BLOCKED` kalır; update ekranı
+tek tık aksiyonunu etkinleştirmez. Drift düzeltmesi yeni artifact üretimi,
+imza doğrulaması ve kanal source-of-truth kopyalarının atomik güncellenmesiyle
+yapılır; mevcut release dosyası üzerine yazılmaz.
+
 ## Sık kullanılan endpoint sözleşmesi
 
 | Amaç | Ortak yol | Legacy yol |
