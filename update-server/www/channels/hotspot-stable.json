@@ -5,22 +5,35 @@
   "edition": "standard",
   "current_version": "0.3.1",
   "status": "available",
-  "updated": "2026-08-24T07:56:51Z",
+  "updated": "2026-08-27T04:06:21Z",
   "releases": [
     {
-      "version": "0.3.1",
       "minimum_current_version": "0.3.0",
-      "released_at": "2026-08-24T07:56:51Z",
       "release_notes": "Hotspot update agent bridge",
-      "archive": {
-        "url": "https://update.neosecra.com/releases/0.3.1/hotspot-0.3.1.tar.gz",
-        "sha256": "0e25f654557e2b3b5091351ca3b37508142e069c7ca1d033c7a5ee7d290f6ea5",
-        "size_bytes": 5068833,
-        "signature_url": "https://update.neosecra.com/releases/0.3.1/hotspot-0.3.1.tar.gz.minisig"
-      },
       "migrations": true,
       "backup_required": true,
-      "rollback_supported": true
+      "rollback_supported": true,
+      "version": "0.3.1",
+      "released_at": "2026-08-27T04:06:21Z",
+      "archive": {
+        "url": "https://update.neosecra.com/releases/0.3.1/hotspot-0.3.1.tar.gz",
+        "sha256": "0472ce492e042210fced35761257008b99f680742ab37616afc4189ca387a6bc",
+        "size_bytes": 5198985,
+        "signature_url": "https://update.neosecra.com/releases/0.3.1/hotspot-0.3.1.tar.gz.minisig"
+      },
+      "bootstrap": {
+        "url": "https://update.neosecra.com/releases/0.3.1/bootstrap.sh",
+        "sha256": "3efcba0f741dd3ed884119601232d3050f412c316cb1c8162bcd1433758832bc",
+        "size_bytes": 28900,
+        "signature_url": "https://update.neosecra.com/releases/0.3.1/bootstrap.sh.minisig"
+      },
+      "docker_bundle": {
+        "url": "https://update.neosecra.com/releases/0.3.1/none",
+        "sha256": "0",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/0.3.1/none"
+      },
+      "bundle_url": "https://update.neosecra.com/releases/0.3.1/none"
     }
   ]
 }
