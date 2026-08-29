@@ -47,7 +47,7 @@ registry.neosecra.com:9447, registry.neosecra.com {
     reverse_proxy registry:5000
 }
 
-:7443 {
+:443, :7443 {
     tls /etc/caddy/certs/neosecra.com.crt /etc/caddy/certs/neosecra.com.key
     root * /srv/web
     encode zstd gzip
@@ -62,4 +62,8 @@ registry.neosecra.com:9447, registry.neosecra.com {
 
     file_server
     try_files {path} {path}/ /index.html
+}
+
+:80 {
+    redir https://{host}{uri} permanent
 }

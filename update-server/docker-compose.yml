@@ -14,8 +14,8 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     ports:
-      # Router port-forward ic portlari — hostname -> LAN:944X & 7443 (Web).
-      # Tum arayuzlere bagli (0.0.0.0): LAN'daki router bu portlara forward eder.
+      - "80:80"
+      - "443:443"
       - "7443:7443"
       - "9445:9445"
       - "9446:9446"
