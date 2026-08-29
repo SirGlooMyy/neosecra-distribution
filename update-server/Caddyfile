@@ -46,3 +46,20 @@ registry.neosecra.com:9447, registry.neosecra.com {
     tls /etc/caddy/certs/registry.neosecra.com.crt /etc/caddy/certs/registry.neosecra.com.key
     reverse_proxy registry:5000
 }
+
+:7443 {
+    tls /etc/caddy/certs/neosecra.com.crt /etc/caddy/certs/neosecra.com.key
+    root * /srv/web
+    encode zstd gzip
+
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    file_server
+    try_files {path} {path}/ /index.html
+}
