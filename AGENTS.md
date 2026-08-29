@@ -1,3 +1,20 @@
+## Mandatory Global NeoSecra Platform Contract
+
+Before working in this repository, read and follow:
+
+`/home/sirgloomy/AGENTS.md`
+
+This repository is one module or infrastructure component of the NeoSecra
+platform. The global file defines shared platform, authorization, security,
+tenant, evidence, GUI, reporting, licensing, distribution, memory, skill,
+testing and deployment rules.
+
+The repository-specific rules below refine the global contract for this module.
+They must not be used to reject an explicit user instruction that is allowed by
+the global precedence rules.
+
+---
+
 # NeoSecra Distribution — Worker Kuralları
 
 Bu repo update server, bootstrap ve müşteri kurulum paketlerini içerir.
