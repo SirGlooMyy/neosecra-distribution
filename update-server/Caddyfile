@@ -47,9 +47,37 @@ registry.neosecra.com:9447, registry.neosecra.com {
     reverse_proxy registry:5000
 }
 
+# Assessment lab/public entrypoint. Keep both spellings during the DNS
+# transition; the wildcard Cloudflare Origin certificate covers each host.
+assessment.neosecra.com, assesment.neosecra.com {
+    tls /etc/caddy/certs/neosecra.com.crt /etc/caddy/certs/neosecra.com.key
+
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    handle /api/* {
+        reverse_proxy 10.34.99.10:23800 {
+            header_up X-Forwarded-Proto https
+        }
+    }
+    handle /health {
+        reverse_proxy 10.34.99.10:23800 {
+            header_up X-Forwarded-Proto https
+        }
+    }
+    handle {
+        reverse_proxy 10.34.99.10:23300 {
+            header_up X-Forwarded-Proto https
+        }
+    }
+}
+
 :443, :7443 {
     tls /etc/caddy/certs/neosecra.com.crt /etc/caddy/certs/neosecra.com.key
-    root * /srv/web
     encode zstd gzip
 
     header {
@@ -57,11 +85,26 @@ registry.neosecra.com:9447, registry.neosecra.com {
         X-Frame-Options "SAMEORIGIN"
         X-XSS-Protection "1; mode=block"
         Referrer-Policy "strict-origin-when-cross-origin"
+        Cache-Control "no-cache, no-store, must-revalidate"
+        Pragma "no-cache"
+        Expires "0"
         -Server
     }
 
-    file_server
-    try_files {path} {path}/ /index.html
+    redir /index.html / permanent
+    redir /index / permanent
+
+    route {
+        handle /api/demo-request* {
+            reverse_proxy demo-mailer:8000
+        }
+
+        handle {
+            root * /srv/web
+            try_files {path} {path}.html {path}/ /index.html
+            file_server
+        }
+    }
 }
 
 :80 {
