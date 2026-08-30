@@ -75,6 +75,7 @@ isolation:
     redis: 23639
     backend: 23800
     frontend: 23300
+    frontend_tls: 9443
     openvas_ssh: 23922
     openvas_gsad: 23992
 

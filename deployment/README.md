@@ -39,7 +39,7 @@ deployment/v1/
 | Network | `neosecra-v1_default` | `neosecra-v2_default` |
 | Volumes | `neosecra-v1_*` | `neosecra-v2_*` |
 | Env file | `.env.v1` | `.env.v2` |
-| Ports | 23543 / 23639 / 23800 / 23300 | offset (e.g. 33xxx) |
+| Ports | 23543 / 23639 / 23800 / 23300 / 9443 (TLS) | offset (e.g. 33xxx) |
 
 V1 and V2 can run **side-by-side** without collision. See `release-manifest.yaml`
 for the authoritative list.

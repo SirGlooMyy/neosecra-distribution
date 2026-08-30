@@ -155,5 +155,5 @@ write_install_state "$INSTALL_VERSION" "complete" "ok"
 
 echo ""
 ok "NeoSecra Assessment v${INSTALL_VERSION} installed"
-log "Access: https://<host>:$(env_value FRONTEND_TLS_PORT 23443) (self-signed; http://<host>:$(env_value FRONTEND_PORT 23300) yonlendirir)"
+log "Access: https://<host>:$(env_value FRONTEND_TLS_PORT 9443) (self-signed; http://<host>:$(env_value FRONTEND_PORT 23300) yonlendirir)"
 log "Manage: neosecra <command>"

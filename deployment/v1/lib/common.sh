@@ -339,7 +339,7 @@ initialize_env_file() {
   ensure_env_value REDIS_PORT "23639"
   ensure_env_value BACKEND_PORT "23800"
   ensure_env_value FRONTEND_PORT "23300"
-  ensure_env_value FRONTEND_TLS_PORT "23443"
+  ensure_env_value FRONTEND_TLS_PORT "9443"
   ensure_env_value NEOSECRA_EDITION "security_health"
   ensure_env_value VITE_NEOSECRA_EDITION "security-health"
   ensure_env_value ENVIRONMENT "production"
@@ -347,7 +347,7 @@ initialize_env_file() {
   postgres_password="$(env_value POSTGRES_PASSWORD "")"
   ensure_env_value DATABASE_URL "postgresql+asyncpg://neosecra:${postgres_password}@postgres:5432/neosecra_assessment"
   frontend_port="$(env_value FRONTEND_PORT "23300")"
-  frontend_tls_port="$(env_value FRONTEND_TLS_PORT "23443")"
+  frontend_tls_port="$(env_value FRONTEND_TLS_PORT "9443")"
   ensure_env_value BACKEND_CORS_ORIGINS "https://localhost:${frontend_tls_port},https://127.0.0.1:${frontend_tls_port},http://localhost:${frontend_port},http://127.0.0.1:${frontend_port}"
 
   ensure_env_value ALGORITHM "HS256"
@@ -619,7 +619,7 @@ PY
 wait_frontend_http() {
   local timeout="${1:-120}" frontend_port tls_port code code_tls
   frontend_port="$(env_value FRONTEND_PORT 23300)"
-  tls_port="$(env_value FRONTEND_TLS_PORT 23443)"
+  tls_port="$(env_value FRONTEND_TLS_PORT 9443)"
   log "Waiting for frontend HTTPS on 127.0.0.1:${tls_port} (timeout ${timeout}s)..."
   for _ in $(seq 1 "$timeout"); do
     code_tls="$(curl -sk --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${tls_port}" 2>/dev/null || true)"
@@ -636,7 +636,7 @@ wait_frontend_http() {
 
 wait_frontend_api_proxy() {
   local timeout="${1:-120}" tls_port code
-  tls_port="$(env_value FRONTEND_TLS_PORT 23443)"
+  tls_port="$(env_value FRONTEND_TLS_PORT 9443)"
   log "Waiting for frontend API proxy on 127.0.0.1:${tls_port} (timeout ${timeout}s)..."
   for _ in $(seq 1 "$timeout"); do
     code="$(curl -sk --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${tls_port}/api/v1/health" 2>/dev/null || true)"

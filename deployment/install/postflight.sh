@@ -73,7 +73,7 @@ run_compose ps --status running worker 2>/dev/null | grep -q worker && \
 
 # --- Frontend ---
 FRONTEND_PORT="$(env_value FRONTEND_PORT 23300)"
-FRONTEND_TLS_PORT="$(env_value FRONTEND_TLS_PORT 23443)"
+FRONTEND_TLS_PORT="$(env_value FRONTEND_TLS_PORT 9443)"
 FRONTEND_OK=0
 f_code="000"
 for _ in $(seq 1 "$TIMEOUT"); do
