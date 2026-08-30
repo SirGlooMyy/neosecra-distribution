@@ -1,0 +1,219 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PlatformReleaseManifest",
+  "description": "Canonical schema for NeoSecra Platform multi-product unified release manifests",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "platform_version",
+    "release_id",
+    "released_at",
+    "channel",
+    "components",
+    "signatures",
+    "attestations",
+    "sbom",
+    "rollback_plan"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "platform_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[a-z0-9.]+)?$"
+    },
+    "release_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "released_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "channel": {
+      "type": "string",
+      "enum": [
+        "stable",
+        "beta",
+        "candidate",
+        "nightly"
+      ]
+    },
+    "min_supported_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assessment",
+        "soc",
+        "hotspot",
+        "pish",
+        "license",
+        "distribution"
+      ],
+      "properties": {
+        "assessment": {
+          "$ref": "#/definitions/ComponentRelease"
+        },
+        "soc": {
+          "$ref": "#/definitions/ComponentRelease"
+        },
+        "hotspot": {
+          "$ref": "#/definitions/ComponentRelease"
+        },
+        "pish": {
+          "$ref": "#/definitions/ComponentRelease"
+        },
+        "license": {
+          "$ref": "#/definitions/ComponentRelease"
+        },
+        "distribution": {
+          "$ref": "#/definitions/ComponentRelease"
+        }
+      }
+    },
+    "signatures": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256_checksum",
+        "minisign_signature"
+      ],
+      "properties": {
+        "sha256_checksum": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "minisign_signature": {
+          "type": "string",
+          "minLength": 32
+        },
+        "ed25519_signature": {
+          "type": "string",
+          "minLength": 32
+        }
+      }
+    },
+    "attestations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cosign_attestation_type",
+        "verifier_chain"
+      ],
+      "properties": {
+        "cosign_attestation_type": {
+          "type": "string",
+          "enum": [
+            "https://cosign.sigstore.dev/attestation/v1",
+            "custom-ed25519"
+          ]
+        },
+        "verifier_chain": {
+          "type": "string",
+          "minLength": 3
+        },
+        "provenance_predicate": {
+          "type": "string"
+        }
+      }
+    },
+    "sbom": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "uri",
+        "sha256"
+      ],
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": [
+            "SPDX-2.3-JSON",
+            "CycloneDX-1.5-JSON"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "rollback_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "supported_rollback_version",
+        "database_strategy",
+        "automatic_on_health_failure"
+      ],
+      "properties": {
+        "supported_rollback_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "database_strategy": {
+          "type": "string",
+          "enum": [
+            "backup_restore",
+            "down_migration"
+          ]
+        },
+        "automatic_on_health_failure": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "ComponentRelease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "commit_hash",
+        "image_digest",
+        "migration_head",
+        "health_gate_endpoint"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "commit_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{7,40}$"
+        },
+        "image_digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "migration_head": {
+          "type": "string",
+          "minLength": 1
+        },
+        "health_gate_endpoint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "optional": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

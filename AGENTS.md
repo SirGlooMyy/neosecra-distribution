@@ -1,5 +1,26 @@
 ## Mandatory Global NeoSecra Platform Contract
 
+## Mandatory Stateless Cold Start
+
+Every task starts with zero conversation history. Never rely on a previous session, resume capability, prior chat context or model memory.
+
+Before processing the user request:
+
+1. Read `/home/sirgloomy/AGENTS.md`.
+2. Read `/home/sirgloomy/.codex/memory/neosecra-platform/00-PLATFORM-INDEX.md`.
+3. Read this repository's `AGENTS.md`.
+4. Read `.ai-ops/current-checkpoint.md`.
+5. Determine the current branch, HEAD and dirty state.
+6. Compare current HEAD with the reviewed HEAD in global memory.
+7. Select the relevant NeoSecra skill.
+8. Load only memory files required by that skill.
+9. Inspect actual code before making implementation claims.
+10. Continue the user's task without asking them to repeat prior project context.
+
+At task completion, update the repository checkpoint so the next stateless task can continue from disk.
+
+---
+
 Before working in this repository, read and follow:
 
 `/home/sirgloomy/AGENTS.md`

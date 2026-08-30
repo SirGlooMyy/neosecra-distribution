@@ -4,8 +4,22 @@
   "product_code": "soc",
   "edition": "standard",
   "current_version": null,
-  "releases": [],
-  "status": "unavailable",
-  "note": "SOC release lifecycle not yet implemented. Channel reserved for future use.",
-  "updated": "2026-07-22T00:00:00Z"
+  "status": "reserved",
+  "note": "SOC release lifecycle contract established. Immutable container attestation and signing gate pending.",
+  "required_runtime": {
+    "docker_min": "24.0",
+    "compose_min": "2.20"
+  },
+  "compatibility": {
+    "platform_version_line": "1.x",
+    "required_postgres": "16",
+    "required_redis": "7",
+    "license_contract": "ed25519_v1"
+  },
+  "health_gates": {
+    "api": "/api/v1/health",
+    "auth_probe": "/api/v1/auth/me",
+    "stream_probe": "/api/v1/events/stream"
+  },
+  "releases": []
 }

@@ -31,3 +31,8 @@ test-results/
 # TwinCore orchestration local state — git'e girmez
 .agent/state/
 .agent/runs/
+
+# Python test cache & bytecode
+__pycache__/
+*.pyc
+.pytest_cache/
