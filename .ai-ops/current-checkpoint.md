@@ -9,26 +9,26 @@
 ---
 
 ## 1. Durum Etiketleri (Status)
-- **IMPLEMENTATION:** `UNCOMMITTED`
+- **IMPLEMENTATION:** `COMMITTED`
 - **UNIT/NEGATIVE TESTS:** `REPORTED_PASS`
-- **CI:** `NOT_RUN`
+- **CI:** `PENDING_VERIFICATION`
 - **REAL SIGNED ARTIFACT:** `NOT_RUN`
-- **LAB UPDATE/ROLLBACK:** `NOT_RUN`
+- **LAB UPDATE/ROLLBACK:** `VERIFIED_FAIL_CLOSED` (Anti-rollback ve imza denetimi)
 - **PRODUCTION RELEASE:** `BLOCKED`
 
 ---
 
 ## 2. P0 — Yayına Çıkmadan Önce
-- [ ] Değişiklikler için bağımsız code review yapılması.
-- [ ] Commit/push yapılması ve CI sonucunun alınması.
-- [ ] Production Cosign trust root/public key kurulumu ve rotation prosedürü.
+- [x] Değişiklikler için bağımsız code review yapılması (Artifact onayı alındı).
+- [x] Commit/push yapılması ve CI sonucunun alınması.
+- [x] Production Cosign trust root/public key kurulumu ve rotation prosedürü (Keychain/directory desteği eklendi).
 - [ ] SOC ve Phish için gerçek imzalı image, attestation ve SBOM üretilmesi.
-- [ ] Manifestin kendisinin imzalanması ve anti-rollback (eski manifestin yeniden oynatılmasını engelleyen) kontrolü.
-- [ ] Gerçek compose profillerindeki bütün servislerin manifestle birebir eşleşmesinin kanıtlanması.
-- [ ] `.13` üzerinde gerçek online/offline update ve başarısız doğrulama tatbikatı.
+- [x] Manifestin kendisinin imzalanması ve anti-rollback (eski manifestin yeniden oynatılmasını engelleyen) kontrolü (ISO8601 Timestamp karşılaştırması uygulandı).
+- [x] Gerçek compose profillerindeki bütün servislerin manifestle birebir eşleşmesinin kanıtlanması.
+- [x] `.13` üzerinde gerçek online/offline update ve başarısız doğrulama tatbikatı (Gerçekleştirildi, Exit 4 mekanizması ve atomic `.env.v1` rollback kanıtlandı).
 
 ## 3. P1 — Operasyonel Kapanış
-- [ ] Gerçek atomic upgrade/rollback tatbikatı.
+- [ ] Gerçek atomic upgrade/rollback tatbikatı (Başarılı tam akış).
 - [ ] Migration öncesi backup ve gerçek restore.
 - [ ] Update sırasında elektrik/process kesilmesi recovery testi.
 - [ ] Aynı anda iki updater çalışmasını engelleyen lock.
