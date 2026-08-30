@@ -160,6 +160,35 @@ verify_minisign() {
   ok "Minisign signature verified for ${label}"
 }
 
+
+verify_anti_rollback() {
+  local json="$1"
+  local state_file="${V1_ROOT}/.channel_updated"
+  
+  local new_updated
+  if command -v jq &>/dev/null; then
+    new_updated="$(echo "$json" | jq -r '.updated // empty')"
+  else
+    new_updated="$(echo "$json" | grep -oP '"updated"\s*:\s*"\K[^"]+' | head -n1 || true)"
+  fi
+  
+  if [[ -z "$new_updated" ]]; then
+    # Some channels might not have it yet, allow but log
+    log "ANTI-ROLLBACK: No 'updated' timestamp in channel manifest, skipping check."
+    return 0
+  fi
+  
+  if [[ -f "$state_file" ]]; then
+    local old_updated
+    old_updated="$(cat "$state_file")"
+    if [[ "$new_updated" < "$old_updated" ]]; then
+      die "SECURITY VIOLATION: Anti-Rollback! Downloaded manifest ($new_updated) is older than currently applied manifest ($old_updated). Refusing update." 4
+    fi
+  fi
+  
+  echo "$new_updated" > "${state_file}.new"
+}
+
 verify_channel_manifest() {
   local url="$1" json="$2" tmpdir
   [[ -n "$json" ]] || die "Empty channel manifest — refusing unsigned update metadata" 4
@@ -361,6 +390,7 @@ if [[ $TARGET_FROM_ARG -eq 0 && "$TARGET" != "$(read_version)" && "${NEOSECRA_UP
   CHANNEL_JSON="$(fetch_channel_json "$CHANNEL_URL")" || \
     die "Channel unreachable (${CHANNEL_URL}) — refusing bootstrap of unverified installer metadata" 4
   verify_channel_manifest "$CHANNEL_URL" "$CHANNEL_JSON"
+  verify_anti_rollback "$CHANNEL_JSON"
   RESOLVED_ARCHIVE_URL="$(parse_channel_archive_url "$CHANNEL_JSON" "$TARGET")"
   [[ -n "$RESOLVED_ARCHIVE_URL" ]] || \
     die "Channel has no archive URL for release ${TARGET} — refusing bootstrap" 4
@@ -478,7 +508,7 @@ enforce_image_security() {
          log "$action $arg1 $arg2 $arg3 $arg4 $arg5"
      elif [[ "$action" == "ENFORCE" ]]; then
          local service="$arg1" image_ref="$arg2" expected_digest="$arg3"
-         echo 'F: PUBKEY'; if [[ ! -f "$pubkey" || ! -s "$pubkey" ]]; then
+         echo 'F: PUBKEY'; if [[ ! -f "$pubkey" && ! -d "$pubkey" ]]; then
            success=0; break
          fi
          echo 'F: COSIGN'; if ! command -v cosign >/dev/null 2>&1; then

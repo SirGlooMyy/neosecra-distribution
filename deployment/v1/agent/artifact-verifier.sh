@@ -31,22 +31,42 @@ verify_minisign_file() {
 verify_image_signature() {
   local image_ref="${1:-}" expected_digest="${2:-}" pubkey="${3:-}"
   [[ -n "${image_ref}" && -n "${expected_digest}" && -n "${pubkey}" ]] || return 1
-  [[ -f "${pubkey}" && -s "${pubkey}" ]] || return 1
   [[ "${expected_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
   command -v cosign >/dev/null 2>&1 || return 1
 
-  cosign verify --key "${pubkey}" "${image_ref}@${expected_digest}" >/dev/null 2>&1
+  if [[ -d "${pubkey}" ]]; then
+    for key in "${pubkey}"/*.pub; do
+      [[ -f "$key" ]] || continue
+      if cosign verify --key "$key" "${image_ref}@${expected_digest}" >/dev/null 2>&1; then
+        return 0
+      fi
+    done
+    return 1
+  else
+    [[ -f "${pubkey}" && -s "${pubkey}" ]] || return 1
+    cosign verify --key "${pubkey}" "${image_ref}@${expected_digest}" >/dev/null 2>&1
+  fi
 }
 
 # 4. Image Attestation & Predicate Verification (cosign verify-attestation)
 verify_image_attestation() {
   local image_ref="${1:-}" expected_digest="${2:-}" pubkey="${3:-}" predicate_type="${4:-https://cosign.sigstore.dev/attestation/v1}"
   [[ -n "${image_ref}" && -n "${expected_digest}" && -n "${pubkey}" && -n "${predicate_type}" ]] || return 1
-  [[ -f "${pubkey}" && -s "${pubkey}" ]] || return 1
   [[ "${expected_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
   command -v cosign >/dev/null 2>&1 || return 1
 
-  cosign verify-attestation --key "${pubkey}" --type "${predicate_type}" "${image_ref}@${expected_digest}" >/dev/null 2>&1
+  if [[ -d "${pubkey}" ]]; then
+    for key in "${pubkey}"/*.pub; do
+      [[ -f "$key" ]] || continue
+      if cosign verify-attestation --key "$key" --type "${predicate_type}" "${image_ref}@${expected_digest}" >/dev/null 2>&1; then
+        return 0
+      fi
+    done
+    return 1
+  else
+    [[ -f "${pubkey}" && -s "${pubkey}" ]] || return 1
+    cosign verify-attestation --key "${pubkey}" --type "${predicate_type}" "${image_ref}@${expected_digest}" >/dev/null 2>&1
+  fi
 }
 
 # 5. SBOM Integrity & Structural Validation (SPDX / CycloneDX)
