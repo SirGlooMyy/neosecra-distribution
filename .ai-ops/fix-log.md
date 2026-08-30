@@ -6,3 +6,19 @@
   - **Drift Fix:** `deployment/lib/artifact-verifier.sh` ve `deployment/v1/agent/artifact-verifier.sh` eşitlendi; `test_verifier_copies_are_byte_identical` testi eklendi.
   - **Schema & Test Fix:** `platform-release-manifest.schema.json` içine RFC 4122 strict UUID pattern'i, URI formatı ve `additionalProperties: false` eklendi. Test yolları dinamik repo root'una bağlandı.
   - **Test Kapsamı:** 24 adet fail-closed ve negatif test eklendi ve %100 doğrulandı (`24 passed`).
+- **2026-08-30 (DIST-FOUNDATION-002-ENFORCEMENT):**
+  - **Runtime Enforcement:** `deployment/v1/upgrade/upgrade.sh` dosyasına `enforce_image_security` fonksiyonu eklendi; image pull ve bundle load sonrasında doğrudan tetiklenerek fail-closed doğrulama akışa bağlandı.
+  - **Negatif Entegrasyon Testi:** `tests/test_promotion_enforcement.py` eklenerek update script'inin eksik veya geçersiz imza durumunda Code 4 ile abort ettiği (`SECURITY VIOLATION`) doğrulandı.
+- **2026-08-30 (DIST-RUNTIME-ENFORCEMENT-CORRECTION):**
+  - **P0 Fix:** Kaldırılan "warn and continue" fallback mantığı; eksik public key durumunda artık anında exit 4 veriliyor.
+  - **P0 Fix:** Geriye dönük uyumluluk, sadece `assessment-stable` ve `hotspot-stable` için explicit Legacy Archive Verification Policy ile sınırlandırıldı.
+  - **P0 Fix:** Doğrulanmış digest'ın `.env.v1` dosyasına pin'lenerek (`image@sha256:...`) Compose'a mutable tag yerine immutable digest koşumu sağlandı.
+  - **P0 Fix:** Bütün component image'larını (dinamik `docker compose config --services`) kapsayacak şekilde döngü genişletildi.
+  - **Test Fix:** 11 özel fail condition senaryosunu test eden negatif entegrasyon testleri başarıyla kodlanıp doğrulandı.
+- **2026-08-30 (DIST-RUNTIME-ENFORCEMENT-MULTI-IMAGE-CORRECTION):**
+  - **P0 Fix:** `docker compose config --services` fallback kaldırıldı. Servis listesi alınamazsa Exit 4 devrede.
+  - **P0 Fix:** Platform şeması, servis başına bağımsız `images` ve `dependencies` dictionary destekleyecek şekilde refactor edildi.
+  - **P0 Fix:** Birebir (1:1) servis eşleme mekanizması (compose image vs manifest image) uygulandı. PostgreSQL/Redis gibi bağımlılıklar unpinned veya tanımsız bırakılamaz duruma getirildi.
+  - **P0 Fix:** Legacy allow-list strict kurallara bağlandı (exact product, version, hash match, expiration).
+  - **P0 Fix:** `.env.v1` modifikasyonları Python üzerinden safe/atomic olarak gerçekleştirilecek şekilde değiştirildi (Hata durumunda geri alınması garantiye alındı).
+  - **Test Fix:** İstenen 11 yeni edge-case (toplam 36) negatif test başarıyla tamamlandı.

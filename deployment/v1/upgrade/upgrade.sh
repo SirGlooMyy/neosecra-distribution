@@ -419,6 +419,113 @@ mkdir -p "$BACKUP_TARGET"
 bash "${V1_ROOT}/backup/backup.sh" --target "$BACKUP_TARGET"
 ok "Pre-upgrade backup: ${BACKUP_TARGET}"
 
+
+
+
+# --- Security Enforcement Integration ---
+
+
+# --- Security Enforcement Integration ---
+upsert_env_value_atomic() {
+  local key="$1" val="$2" file="${3:-$ENV_FILE}"
+  local tmp
+  tmp="${file}.tmp.$$"
+  python3 -c "
+import sys
+key, val, file, tmp = sys.argv[1:5]
+out = []
+found = False
+try:
+    with open(file, 'r') as f:
+        for line in f:
+            if line.startswith(key + '='):
+                out.append(f'{key}={val}\n')
+                found = True
+            else:
+                out.append(line)
+except FileNotFoundError:
+    pass
+if not found:
+    out.append(f'{key}={val}\n')
+with open(tmp, 'w') as f:
+    f.writelines(out)
+" "$key" "$val" "$file" "$tmp" || die "Env update failed" 4
+  mv -f "$tmp" "$file"
+}
+
+enforce_image_security() {
+  local pubkey="${NEOSECRA_COSIGN_PUBKEY:-/etc/neosecra/certs/cosign.pub}"
+
+  if [[ ! -f "${V1_ROOT}/agent/artifact-verifier.sh" ]]; then
+    die "SECURITY VIOLATION: artifact-verifier.sh missing" 4
+  fi
+  source "${V1_ROOT}/agent/artifact-verifier.sh"
+
+  local services_json
+  services_json="$(run_compose config --format json 2>/dev/null)" || die "SECURITY VIOLATION: Compose config failure" 4
+  [[ -n "$services_json" ]] || die "SECURITY VIOLATION: Service enumeration failure" 4
+
+  local mapping_output
+  mapping_output="$(echo "$services_json" | ARCHIVE_SHA256="$EXPECTED_SHA256" LEGACY_ALLOWLIST="${V1_ROOT}/upgrade/legacy_allowlist.json" python3 "${V1_ROOT}/upgrade/verify_mapping.py")" || die "SECURITY VIOLATION: Image mapping failure" 4
+
+  # Backup env file for atomic rollback if verification fails mid-way
+  cp -a "$ENV_FILE" "${ENV_FILE}.bak"
+
+  local success=1
+  while read -r action arg1 arg2 arg3 arg4 arg5; do
+     if [[ -z "$action" ]]; then continue; fi
+     if [[ "$action" == "AUDIT_LOG" ]]; then
+         log "$action $arg1 $arg2 $arg3 $arg4 $arg5"
+     elif [[ "$action" == "ENFORCE" ]]; then
+         local service="$arg1" image_ref="$arg2" expected_digest="$arg3"
+         echo 'F: PUBKEY'; if [[ ! -f "$pubkey" || ! -s "$pubkey" ]]; then
+           success=0; break
+         fi
+         echo 'F: COSIGN'; if ! command -v cosign >/dev/null 2>&1; then
+           success=0; break
+         fi
+         
+         # local digest check
+         local local_digest
+         local_digest="$(docker inspect --format '{{range .RepoDigests}}{{.}}{{println}}{{end}}' "$image_ref" 2>/dev/null | grep -oP 'sha256:\w+' | head -n1 || true)"
+         if [[ "$local_digest" != "$expected_digest" ]]; then
+             echo 'F: DIGEST_MISMATCH ' "$local_digest" "$expected_digest"; success=0; break
+         fi
+         
+         echo 'F: SIG'; if ! verify_image_signature "$image_ref" "$expected_digest" "$pubkey"; then
+             success=0; break
+         fi
+         echo 'F: ATT'; if ! verify_image_attestation "$image_ref" "$expected_digest" "$pubkey"; then
+             success=0; break
+         fi
+         
+         # Pin
+         local env_prefix
+         env_prefix="$(echo "$service" | LC_ALL=C tr 'a-z-' 'A-Z_')"
+         upsert_env_value_atomic "${env_prefix}_IMAGE" "${image_ref}@${expected_digest}"
+         
+     elif [[ "$action" == "DEPENDENCY" ]]; then
+         local service="$arg1" image_ref="$arg2" expected_digest="$arg3"
+         local local_digest
+         local_digest="$(docker inspect --format '{{range .RepoDigests}}{{.}}{{println}}{{end}}' "$image_ref" 2>/dev/null | grep -oP 'sha256:\w+' | head -n1 || true)"
+         if [[ "$local_digest" != "$expected_digest" ]]; then
+             echo 'F: DIGEST_MISMATCH ' "$local_digest" "$expected_digest"; success=0; break
+         fi
+         local env_prefix
+         env_prefix="$(echo "$service" | LC_ALL=C tr 'a-z-' 'A-Z_')"
+         upsert_env_value_atomic "${env_prefix}_IMAGE" "${image_ref}@${expected_digest}"
+     fi
+  done <<< "$mapping_output"
+
+  if [[ $success -eq 0 ]]; then
+      # Atomic restore
+      mv -f "${ENV_FILE}.bak" "$ENV_FILE"
+      die "SECURITY VIOLATION: Enforcement checks failed" 4
+  fi
+  rm -f "${ENV_FILE}.bak"
+  ok "All images enforced and pinned"
+}
+
 # --- Pull images ---
 if [[ -n "$BUNDLE" ]]; then
   TMP_DIR=$(mktemp -d)
@@ -429,10 +536,14 @@ if [[ -n "$BUNDLE" ]]; then
   warn "Temporary bundle extraction left for audit: ${TMP_DIR}"
 else
   ghcr_login
-  for service in backend worker frontend; do
+  services="$(run_compose config --services 2>/dev/null || true)"
+  for service in $services; do
     pull_service_image "$service"
   done
 fi
+
+enforce_image_security
+
 
 # --- Dependencies ---
 log "Ensuring PostgreSQL and Redis are running..."

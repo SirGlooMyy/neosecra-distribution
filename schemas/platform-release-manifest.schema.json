@@ -185,9 +185,9 @@
       "required": [
         "version",
         "commit_hash",
-        "image_digest",
         "migration_head",
-        "health_gate_endpoint"
+        "health_gate_endpoint",
+        "images"
       ],
       "properties": {
         "version": {
@@ -197,10 +197,6 @@
         "commit_hash": {
           "type": "string",
           "pattern": "^[a-f0-9]{7,40}$"
-        },
-        "image_digest": {
-          "type": "string",
-          "pattern": "^sha256:[a-f0-9]{64}$"
         },
         "migration_head": {
           "type": "string",
@@ -212,6 +208,52 @@
         },
         "optional": {
           "type": "boolean"
+        },
+        "images": {
+          "type": "object",
+          "patternProperties": {
+            "^[a-zA-Z0-9_-]+$": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "reference",
+                "digest"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "dependencies": {
+          "type": "object",
+          "patternProperties": {
+            "^[a-zA-Z0-9_-]+$": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "reference",
+                "digest"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         }
       }
     }

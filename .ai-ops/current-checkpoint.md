@@ -3,34 +3,46 @@
 - **Updated:** 2026-08-30
 - **Repository:** `/home/sirgloomy/projects/neosecra-distribution`
 - **Branch:** `main`
-- **HEAD:** `5172329d404ccb6f19331201aa52c460b6ac63ec`
-- **Status:** `CHANGES_REQUIRED_CORRECTED (DIST-FOUNDATION-001-CORRECTION Verified)`
 - **Canonical Governance:** `/home/sirgloomy/AGENTS.md`
 - **Project Memory:** `.ai-ops/project-memory/DISTRIBUTION-CANONICAL-MODEL.md`
 
 ---
 
-## 1. Düzeltilen Güvenlik ve Doğrulama Altyapısı
-
-1. **Fail-Closed Kriptografik Attestation & İmza Doğrulayıcı:**
-   - `verify_image_signature` & `verify_image_attestation`: Eksik cosign binary'si, eksik public key veya malformed digest durumlarında başarı dönen P0 fail-open açığı giderildi; kesin **fail-closed** kılındı.
-   - `cosign verify` (image signature) ve `cosign verify-attestation` (predicate doğrulama) ayrıştırıldı.
-2. **Yapısal SBOM Doğrulaması:**
-   - `verify_sbom_integrity`: SHA-256 bütünlüğünün yanında SPDX (`spdxVersion`) ve CycloneDX (`bomFormat`, `specVersion`) yapısal JSON geçerliliği zorunlu kılındı.
-3. **Drift Koruması & Byte-Identical Kanıtı:**
-   - `deployment/lib/artifact-verifier.sh` ve `deployment/v1/agent/artifact-verifier.sh` byte-identical kılındı ve testle mühürlendi.
-4. **Test Matrisi:**
-   - Toplam **24 test** başarıyla geçti (`24 passed, 0 failed, 0 skipped`):
-     - `test_artifact_verifier.py` (16 test: SHA-256 sidecar, Minisign fail-closed, cosign signature/attestation fail-closed ve mock decision matrix, SPDX/CycloneDX yapısal doğrulama).
-     - `test_platform_release_contract.py` (8 test: Şema geçerliliği, strict UUID/format kontrolleri, ek özellik reddi, kanal tutarlılığı ve verifier drift koruması).
+## 1. Durum Etiketleri (Status)
+- **IMPLEMENTATION:** `UNCOMMITTED`
+- **UNIT/NEGATIVE TESTS:** `REPORTED_PASS`
+- **CI:** `NOT_RUN`
+- **REAL SIGNED ARTIFACT:** `NOT_RUN`
+- **LAB UPDATE/ROLLBACK:** `NOT_RUN`
+- **PRODUCTION RELEASE:** `BLOCKED`
 
 ---
 
-## 2. Release & Rollback Sınıflandırması (Implementation Truth)
+## 2. P0 — Yayına Çıkmadan Önce
+- [ ] Değişiklikler için bağımsız code review yapılması.
+- [ ] Commit/push yapılması ve CI sonucunun alınması.
+- [ ] Production Cosign trust root/public key kurulumu ve rotation prosedürü.
+- [ ] SOC ve Phish için gerçek imzalı image, attestation ve SBOM üretilmesi.
+- [ ] Manifestin kendisinin imzalanması ve anti-rollback (eski manifestin yeniden oynatılmasını engelleyen) kontrolü.
+- [ ] Gerçek compose profillerindeki bütün servislerin manifestle birebir eşleşmesinin kanıtlanması.
+- [ ] `.13` üzerinde gerçek online/offline update ve başarısız doğrulama tatbikatı.
 
-- **Pre-Migration Backup:** `IMPLEMENTED` (`upgrade.sh` satır 416-420, `backup/backup.sh` çalıştırılıyor).
-- **Atomic Promotion (Candidate Symlink):** `IMPLEMENTED` (`upgrade.sh` satır 485, `switch_current`).
-- **Automatic Rollback on Health Failure:** `IMPLEMENTED` (`upgrade.sh` satır 455, 479, `postflight.sh` başarısızlığında `rollback.sh` çağrılıyor).
-- **SPDX/CycloneDX Standart Uyumu:** `STRUCTURAL_VALIDATION_VERIFIED` (JSON yapısı ve anahtar kontrolü; harici validator olmadan tam compliance iddia edilmez).
-- **Cosign / Notation Canlı İmzalı Release:** `PRODUCTION_SIGNING_NOT_RUN` (Testler izole stub/fixture ile doğrulandı; repoya private key konulmadı).
-- **Canlı Lab Güncelleme Tatbikatı:** `LIVE_PROMOTION_ROLLBACK_NOT_RUN` (Lab sunucusuna dokunulmadı).
+## 3. P1 — Operasyonel Kapanış
+- [ ] Gerçek atomic upgrade/rollback tatbikatı.
+- [ ] Migration öncesi backup ve gerçek restore.
+- [ ] Update sırasında elektrik/process kesilmesi recovery testi.
+- [ ] Aynı anda iki updater çalışmasını engelleyen lock.
+- [ ] Disk dolması, registry kesintisi ve yarım bundle senaryoları.
+- [ ] Rollback sırasında `.env.v1`, symlink, image ve DB sürümünün birlikte eski hâline dönmesi.
+- [ ] Assessment/Hotspot legacy allow-list’in sahibi, sona erme tarihi ve tamamen kaldırılacağı sürümün belirlenmesi.
+- [ ] License servisinin gerçek paketleme/update/rollback akışı.
+- [ ] Update audit kayıtları, heartbeat ve merkezi GUI görünürlüğü.
+- [ ] Customer package ile gerçek air-gap kurulum testi.
+
+## 4. P2 — Hardening
+- [ ] Tam SPDX/CycloneDX validation ve vulnerability/license policy (şu an sadece yapısal düzeyde).
+- [ ] Key rotation, certificate-chain ve keyless/Rekor politikası.
+- [ ] Canary/percentage rollout.
+- [ ] Otomatik compatibility çözümleme.
+- [ ] Çoklu mimari image doğrulaması.
+- [ ] Release promotion dashboard’u.
