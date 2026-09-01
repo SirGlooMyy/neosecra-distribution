@@ -3,6 +3,7 @@
 - **Updated:** 2026-09-01
 - **Repository:** `/home/sirgloomy/projects/neosecra-distribution`
 - **Branch:** `fix/assessment-live-installer`
+- **Latest HEAD:** `250d3f1` (checkpoint/evidence documentation only)
 - **Product/runtime HEAD:** `ff7feb0` (later commits are checkpoint/evidence only)
 - **Worktree:** clean after scoped Cloudflare Origin TLS commit; no live mutation
 
