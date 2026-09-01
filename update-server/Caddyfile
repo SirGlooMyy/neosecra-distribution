@@ -1,5 +1,9 @@
+# Cloudflare Full (strict) origin certificate.  The wildcard SAN covers
+# update.neosecra.com, license.neosecra.com and registry.neosecra.com.
+# Keep the private key in the operator-provided CADDY_CERTS_DIR (normally
+# /opt/neosecra/secrets/caddy); it is never stored in this repository.
 update.neosecra.com:9445, update.neosecra.com {
-    tls /etc/caddy/certs/update-neosecra-com.crt /etc/caddy/certs/update-neosecra-com.key
+    tls /etc/caddy/certs/neosecra-origin.crt /etc/caddy/certs/neosecra-origin.key
     root * /srv/update
     encode zstd gzip
 
@@ -17,7 +21,7 @@ update.neosecra.com:9445, update.neosecra.com {
 }
 
 license.neosecra.com:9446, license.neosecra.com {
-    tls /etc/caddy/certs/license-neosecra-com.crt /etc/caddy/certs/license-neosecra-com.key
+    tls /etc/caddy/certs/neosecra-origin.crt /etc/caddy/certs/neosecra-origin.key
 
     header {
         X-Content-Type-Options "nosniff"
@@ -43,14 +47,14 @@ license.neosecra.com:9446, license.neosecra.com {
 }
 
 registry.neosecra.com:9447, registry.neosecra.com {
-    tls /etc/caddy/certs/registry.neosecra.com.crt /etc/caddy/certs/registry.neosecra.com.key
+    tls /etc/caddy/certs/neosecra-origin.crt /etc/caddy/certs/neosecra-origin.key
     reverse_proxy registry:5000
 }
 
 # Assessment lab/public entrypoint. Keep both spellings during the DNS
 # transition; the wildcard Cloudflare Origin certificate covers each host.
 assessment.neosecra.com, assesment.neosecra.com {
-    tls /etc/caddy/certs/neosecra.com.crt /etc/caddy/certs/neosecra.com.key
+    tls /etc/caddy/certs/neosecra-origin.crt /etc/caddy/certs/neosecra-origin.key
 
     header {
         X-Content-Type-Options "nosniff"
@@ -77,7 +81,7 @@ assessment.neosecra.com, assesment.neosecra.com {
 }
 
 :443, :7443 {
-    tls /etc/caddy/certs/neosecra.com.crt /etc/caddy/certs/neosecra.com.key
+    tls /etc/caddy/certs/neosecra-origin.crt /etc/caddy/certs/neosecra-origin.key
     encode zstd gzip
 
     header {

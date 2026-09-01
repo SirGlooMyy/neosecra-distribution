@@ -1,5 +1,10 @@
 # NeoSecra Custom CA — TLS for update.neosecra.com + license.neosecra.com
 
+> **Legacy mode:** The repository default `update-server/Caddyfile` now uses
+> the Cloudflare Origin CA pair for Full (strict). Use a separately retained
+> legacy Caddyfile and matching `CADDY_CERTS_DIR` when this custom-CA mode is
+> required. Never mix its keys with the Origin CA key.
+
 ## Overview
 
 Replaces Caddy's ephemeral `tls internal` with a persistent Root CA so TLS

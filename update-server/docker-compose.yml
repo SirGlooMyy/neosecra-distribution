@@ -4,10 +4,10 @@
 # so the www directory lives outside the compose project.
 #
 # TLS mode selection:
-#   CADDY_MODE=internal     → Custom CA (update-server/certs/*.crt+.key)
-#                              Uses Caddyfile        (default, backward-compatible)
-#   CADDY_MODE=public       → Let's Encrypt (auto-provision)
-#                              Uses Caddyfile.public
+#   CADDY_MODE=internal     -> Static certificate mode (default Caddyfile now
+#                              uses the Cloudflare Origin CA pair).
+#                              CADDY_CERTS_DIR must contain the selected key.
+#   CADDY_MODE=public       -> Let's Encrypt (auto-provision, Caddyfile.public)
 
 services:
   caddy:
@@ -23,9 +23,12 @@ services:
       # - "80:80"
       # - "443:443"
     volumes:
-      # CADDYFILE: selectable via env; default to Caddyfile (internal/custom CA)
+      # CADDYFILE: selectable via env; default is the Cloudflare Origin config.
       - ${CADDYFILE:-./Caddyfile}:/etc/caddy/Caddyfile:ro
-      # Internal TLS: certs + CA are only needed in custom-CA mode
+      # Cloudflare Origin mode: set CADDY_CERTS_DIR to the root-owned secret
+      # directory containing neosecra-origin.crt (0644) and
+      # neosecra-origin.key (0600).  The ./certs default is retained only for
+      # local legacy/custom-CA runs with an explicitly selected Caddyfile.
       - ${CADDY_CERTS_DIR:-./certs}:/etc/caddy/certs:ro
       - ${CADDY_CA_DIR:-./ca}:/etc/caddy/ca:ro
       - ./www:/srv/update:ro
@@ -36,7 +39,7 @@ services:
 
   # Docker Registry — image'lar artik kendi sunucumuzdan (ghcr bagimliligi yok).
   # Caddy registry.neosecra.com vhost'u ile disari TLS'li acilir.
-  # 127.0.0.1:5000 bu makineden sifresiz push icin (docker localhost'a insecure davranir).
+  # 127.0.0.1:5000 yalnizca host-local bakim icindir; dis istemciler TLS vhost'unu kullanir.
   registry:
     image: registry:2
     restart: unless-stopped

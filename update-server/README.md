@@ -43,6 +43,26 @@ Caddy auto-HTTPS (Let's Encrypt) requires:
 CADDY_MODE=public CADDYFILE=./Caddyfile.public docker compose up -d
 ```
 
+### Cloudflare Origin CA (Public / Full strict)
+
+The default `Caddyfile` uses one Cloudflare Origin CA certificate for the
+update, license, registry, assessment, and default TLS listeners. Cloudflare
+must remain in **Full (strict)** mode. The public certificate is tracked at
+`update-server/certs/neosecra-origin.crt`; its matching private key is an
+external root-owned secret and is never committed.
+
+```bash
+CADDY_MODE=internal \
+CADDYFILE=./Caddyfile \
+CADDY_CERTS_DIR=/opt/neosecra/secrets/caddy \
+docker compose up -d
+```
+
+The secret directory must contain `neosecra-origin.crt` (0644) and
+`neosecra-origin.key` (0600). See
+[docs/CLOUDFLARE-ORIGIN-TLS.md](../docs/CLOUDFLARE-ORIGIN-TLS.md) for the
+installation, SNI validation, smoke, and rollback procedure.
+
 ### Internal / Custom CA (LAN / Air-Gap / Lab)
 
 ```dns
@@ -50,18 +70,23 @@ CADDY_MODE=public CADDYFILE=./Caddyfile.public docker compose up -d
 100.125.0.108  update.neosecra.com license.neosecra.com
 ```
 
-Use `Caddyfile` (default, with `tls /etc/caddy/certs/...` directive) and
-the custom CA from `update-server/certs/` and `update-server/ca/`.
+Use a legacy Caddyfile selected with `CADDYFILE`, plus the custom CA from
+`update-server/certs/` and `update-server/ca/`. Do not point the Origin CA
+configuration at a custom-CA key.
 
 **Start internal server:**
 ```bash
+# Select the legacy custom-CA Caddyfile and its matching certificate directory:
+CADDY_MODE=internal \
+CADDYFILE=/opt/neosecra-update/Caddyfile.internal \
+CADDY_CERTS_DIR=/opt/neosecra/secrets/custom-ca \
 docker compose up -d
-# or explicitly:
-CADDY_MODE=internal docker compose up -d
 ```
 
 For full custom CA documentation see [docs/CUSTOM-CA.md](../docs/CUSTOM-CA.md).
 For public deployment details see [docs/PUBLIC-UPDATE-SERVER.md](../docs/PUBLIC-UPDATE-SERVER.md).
+For Cloudflare Full (strict) Origin CA installation, validation, and rollback
+see [docs/CLOUDFLARE-ORIGIN-TLS.md](../docs/CLOUDFLARE-ORIGIN-TLS.md).
 
 ## First Deploy
 
