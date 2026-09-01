@@ -46,3 +46,12 @@
 - [ ] Otomatik compatibility çözümleme.
 - [ ] Çoklu mimari image doğrulaması.
 - [ ] Release promotion dashboard’u.
+
+---
+
+## DIST-LIVE-CLOUDFLARE-TLS-012 (2026-09-01 retry)
+- Authorized origin `10.33.99.13`: TCP 22/80/443/7443/9445/9446/9447 unreachable; no SSH authentication or live mutation occurred.
+- Public Cloudflare baseline: `license.neosecra.com`, `update.neosecra.com`, and `registry.neosecra.com` each returned strict TLS `526`.
+- Local candidate: Cloudflare Origin wildcard SAN `*.neosecra.com`, issuer Cloudflare Origin SSL CA, valid 2026-08-29 through 2041-08-25; public-key/key match PASS; Caddy/Compose validation PASS.
+- Scoped runbook/test/evidence added: `docs/CLOUDFLARE-ORIGIN-TLS-012.md`, `update-server/src/cloudflare-origin-test-012.sh`, `.ai-ops/evidence/DIST-LIVE-CLOUDFLARE-TLS-012.md`.
+- Status: `BLOCKED`; direct `.33` SNI, pre-change live backup, proxy reload, and two-round public smokes are `NOT_RUN`; `LIVE_VERIFIED` is prohibited until all gates pass.
