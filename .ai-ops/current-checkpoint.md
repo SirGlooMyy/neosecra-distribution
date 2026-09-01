@@ -2,8 +2,8 @@
 
 - **Updated:** 2026-09-01
 - **Repository:** `/home/sirgloomy/projects/neosecra-distribution`
-- **Branch / HEAD:** `fix/assessment-live-installer` / `77e0625`
-- **Worktree:** dirty by scoped Cloudflare Origin TLS fix; no live mutation yet
+- **Branch / HEAD:** `fix/assessment-live-installer` / `ff7feb0`
+- **Worktree:** clean after scoped Cloudflare Origin TLS commit; no live mutation
 
 ## Verified repository state
 
@@ -34,7 +34,7 @@
 
 HANDOFF:
 - Component: neosecra-distribution Cloudflare Origin TLS
-- Status: BLOCKED (HEAD: 77e0625)
+- Status: BLOCKED (HEAD: ff7feb0)
 - Completed: scoped certificate binding, offline validation, regression/runbook evidence
 - Blockers/Open: authorized 10.33.99.13 control path unavailable; live 526 remains
 - Next Action: obtain access to 10.33.99.13, install root-owned key/cert, validate/reload, run smokes
