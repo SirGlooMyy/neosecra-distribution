@@ -2,7 +2,7 @@
 
 - **Updated:** 2026-09-01
 - **Repository:** `/home/sirgloomy/projects/neosecra-distribution`
-- **Branch / HEAD:** `fix/assessment-live-installer` / `ff7feb0`
+- **Branch / HEAD:** `fix/assessment-live-installer` / `322d772`
 - **Worktree:** clean after scoped Cloudflare Origin TLS commit; no live mutation
 
 ## Verified repository state
@@ -17,6 +17,9 @@
   storage; public-key hash match and Cloudflare RSA root verification passed.
 - `docker compose config --quiet` and Caddy validation with the candidate
   certificate/key mount passed; no volume was recreated or deleted.
+- Focused results: Origin TLS contract `13 passed, 0 failed, 0 skipped`;
+  regression suite `19 passed, 0 failed`; agent contract suite `11 passed,
+  0 failed`; shell syntax and `git diff --check` passed.
 
 ## Live evidence and blocker
 
@@ -34,7 +37,7 @@
 
 HANDOFF:
 - Component: neosecra-distribution Cloudflare Origin TLS
-- Status: BLOCKED (HEAD: ff7feb0)
+- Status: BLOCKED (HEAD: 322d772)
 - Completed: scoped certificate binding, offline validation, regression/runbook evidence
 - Blockers/Open: authorized 10.33.99.13 control path unavailable; live 526 remains
 - Next Action: obtain access to 10.33.99.13, install root-owned key/cert, validate/reload, run smokes
