@@ -869,7 +869,7 @@ acquire_lock() {
   mkdir -p "$STATE_DIR"
   local exec_id
   local root; root="$(recovery_root)"
-  exec_id="$(python3 "${root}/upgrade/recovery.py" lock_acquire "${root}")" || die "Lock acquisition failed: $exec_id" 5
+  exec_id="$(python3 "${root}/upgrade/recovery.py" lock_acquire "${root}" "$$")" || die "Lock acquisition failed: $exec_id" 5
   exec_id="$(printf '%s\n' "$exec_id" | tail -n1)"
   export EXEC_ID="$exec_id"
   start_heartbeat
@@ -879,7 +879,7 @@ release_lock() {
   stop_heartbeat
   [[ -n "${EXEC_ID:-}" ]] || return 0
   local root; root="$(recovery_root)"
-  python3 "${root}/upgrade/recovery.py" lock_release "${root}" "$EXEC_ID" || true
+  python3 "${root}/upgrade/recovery.py" lock_release "${root}" "$EXEC_ID" "$$" || true
 }
 
 start_heartbeat() {
@@ -888,7 +888,7 @@ start_heartbeat() {
   (
     while true; do
       sleep 15
-      python3 "${root}/upgrade/recovery.py" lock_heartbeat "${root}" "${EXEC_ID}" || true
+      python3 "${root}/upgrade/recovery.py" lock_heartbeat "${root}" "${EXEC_ID}" "$$" || true
     done
   ) &
   export HEARTBEAT_PID=$!

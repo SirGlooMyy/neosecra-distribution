@@ -28,6 +28,20 @@ SAFE_COMPONENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 
 
+def _safe_component(part: str, parts: list[str]) -> bool:
+    """Allow only the non-sensitive Hotspot env template required by contract."""
+    if SAFE_COMPONENT.fullmatch(part):
+        return True
+    if part == "__init__.py":
+        return True
+    return (
+        part == ".env.example"
+        and len(parts) == 3
+        and parts[0].startswith("neosecra-hotspot-")
+        and parts[1] == "backend"
+    )
+
+
 def fail(message: str) -> NoReturn:
     print(f"SECURITY VIOLATION: {message}", file=sys.stderr)
     raise SystemExit(4)
@@ -46,7 +60,7 @@ def _safe_member_name(raw: str) -> tuple[str, list[str]]:
     parts = raw.split("/")
     if any(part in {"", ".", ".."} for part in parts):
         fail(f"archive member contains traversal or empty components: {raw!r}")
-    if any(not SAFE_COMPONENT.fullmatch(part) for part in parts):
+    if any(not _safe_component(part, parts) for part in parts):
         fail(f"archive member component is unsafe: {raw!r}")
     normal = str(PurePosixPath(*parts))
     if normal != raw:

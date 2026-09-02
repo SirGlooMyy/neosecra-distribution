@@ -3,7 +3,13 @@
 set -uo pipefail
 
 AGENT_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-V1_ROOT="$(cd "${AGENT_SCRIPT_DIR}/.." && pwd)"
+# The Hotspot installer keeps the agent's libraries beside this script.  A V1
+# release keeps them in the parent tree, so support both layouts explicitly.
+if [[ -d "${AGENT_SCRIPT_DIR}/lib" ]]; then
+  V1_ROOT="${AGENT_SCRIPT_DIR}"
+else
+  V1_ROOT="$(cd "${AGENT_SCRIPT_DIR}/.." && pwd)"
+fi
 
 source "${V1_ROOT}/lib/common.sh"
 source "${V1_ROOT}/lib/manifest.sh"

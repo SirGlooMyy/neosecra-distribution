@@ -135,10 +135,23 @@ def _atomic_json(path: Path, value: Any, mode: int = 0o600) -> None:
                 pass
 
 
-def lock_acquire(v1_root: str) -> str:
+def _owner_pid(value: str | int | None) -> int:
+    if value is None:
+        return os.getpid()
+    try:
+        pid = int(value)
+    except (TypeError, ValueError):
+        die("Lock owner pid is invalid", 14)
+    if pid <= 0:
+        die("Lock owner pid is invalid", 14)
+    return pid
+
+
+def lock_acquire(v1_root: str, owner_pid: str | int | None = None) -> str:
     root = _root(v1_root)
     lock_file = root / ".update.lock"
     exec_id = str(uuid.uuid4())
+    pid = _owner_pid(owner_pid)
     with _guard(root):
         state = _read_lock(lock_file)
         if state is not None:
@@ -150,7 +163,7 @@ def lock_acquire(v1_root: str) -> str:
             print(f"AUDIT_LOG [RECOVERY] Stale lock detected (last heartbeat {age:.1f}s ago). Taking over.")
         _atomic_json(
             lock_file,
-            {"exec_id": exec_id, "pid": os.getpid(), "heartbeat": time.time()},
+            {"exec_id": exec_id, "pid": pid, "heartbeat": time.time()},
         )
     print(exec_id)
     return exec_id
@@ -178,25 +191,27 @@ def lock_assert_owner(v1_root: str, exec_id: str, owner_pid: str | int | None = 
             die("Update lock owner is stale", 14)
 
 
-def lock_heartbeat(v1_root: str, exec_id: str) -> None:
+def lock_heartbeat(v1_root: str, exec_id: str, owner_pid: str | int | None = None) -> None:
     root = _root(v1_root)
+    pid = _owner_pid(owner_pid)
     with _guard(root):
         state = _read_lock(root / ".update.lock")
-        if state is None or state["exec_id"] != exec_id or state["pid"] != os.getpid():
+        if state is None or state["exec_id"] != exec_id or state["pid"] != pid:
             die("Update lock owner mismatch; heartbeat refused", 14)
         state["heartbeat"] = time.time()
         _atomic_json(root / ".update.lock", state)
 
 
-def lock_release(v1_root: str, exec_id: str) -> None:
+def lock_release(v1_root: str, exec_id: str, owner_pid: str | int | None = None) -> None:
     root = _root(v1_root)
     if not isinstance(exec_id, str) or not SAFE_TOKEN.fullmatch(exec_id):
         die("Lock owner token is required for release", 14)
+    pid = _owner_pid(owner_pid)
     with _guard(root):
         state = _read_lock(root / ".update.lock")
         if state is None:
             return
-        if state["exec_id"] != exec_id or state["pid"] != os.getpid():
+        if state["exec_id"] != exec_id or state["pid"] != pid:
             die("Update lock owner mismatch; release refused", 14)
         try:
             (root / ".update.lock").unlink()
@@ -314,14 +329,14 @@ def main() -> None:
         die("Usage: recovery.py <command> <absolute-v1-root> ...", 2)
     command = sys.argv[1]
     root = sys.argv[2]
-    if command == "lock_acquire" and len(sys.argv) == 3:
-        lock_acquire(root)
+    if command == "lock_acquire" and len(sys.argv) in {3, 4}:
+        lock_acquire(root, sys.argv[3] if len(sys.argv) == 4 else None)
     elif command == "lock_assert_owner" and len(sys.argv) == 5:
         lock_assert_owner(root, sys.argv[3], sys.argv[4])
-    elif command == "lock_heartbeat" and len(sys.argv) == 4:
-        lock_heartbeat(root, sys.argv[3])
-    elif command == "lock_release" and len(sys.argv) == 4:
-        lock_release(root, sys.argv[3])
+    elif command == "lock_heartbeat" and len(sys.argv) in {4, 5}:
+        lock_heartbeat(root, sys.argv[3], sys.argv[4] if len(sys.argv) == 5 else None)
+    elif command == "lock_release" and len(sys.argv) in {4, 5}:
+        lock_release(root, sys.argv[3], sys.argv[4] if len(sys.argv) == 5 else None)
     elif command == "journal_step" and len(sys.argv) in {6, 7}:
         journal_step(root, sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6] if len(sys.argv) == 7 else "")
     elif command == "check_resume_policy" and len(sys.argv) == 4:

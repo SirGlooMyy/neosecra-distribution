@@ -3,9 +3,9 @@
   "product": "hotspot",
   "product_code": "hotspot",
   "edition": "standard",
-  "current_version": "0.3.1",
+  "current_version": "0.3.15",
   "status": "available",
-  "updated": "2026-08-27T04:06:21Z",
+  "updated": "2026-09-02T15:24:43Z",
   "releases": [
     {
       "minimum_current_version": "0.3.0",
@@ -34,6 +34,52 @@
         "signature_url": "https://update.neosecra.com/releases/0.3.1/none"
       },
       "bundle_url": "https://update.neosecra.com/releases/0.3.1/none"
+    },
+    {
+      "version": "0.3.14",
+      "released_at": "2026-09-02T14:26:11Z",
+      "archive": {
+        "url": "https://update.neosecra.com/releases/0.3.14/hotspot-0.3.14-ebb121d.tar.gz",
+        "sha256": "a6abc3b991c98c08c5130527ed030bac2a20821692793010c87f745ccc62541f",
+        "size_bytes": 2695399,
+        "signature_url": "https://update.neosecra.com/releases/0.3.14/hotspot-0.3.14-ebb121d.tar.gz.minisig"
+      },
+      "bootstrap": {
+        "url": "https://update.neosecra.com/releases/0.3.14/bootstrap.sh",
+        "sha256": "3efcba0f741dd3ed884119601232d3050f412c316cb1c8162bcd1433758832bc",
+        "size_bytes": 28900,
+        "signature_url": "https://update.neosecra.com/releases/0.3.14/bootstrap.sh.minisig"
+      },
+      "docker_bundle": {
+        "url": "https://update.neosecra.com/releases/0.3.14/none",
+        "sha256": "0",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/0.3.14/none"
+      },
+      "bundle_url": "https://update.neosecra.com/releases/0.3.14/none"
+    },
+    {
+      "version": "0.3.15",
+      "released_at": "2026-09-02T15:24:43Z",
+      "archive": {
+        "url": "https://update.neosecra.com/releases/0.3.15/hotspot-0.3.15-2cd483c.tar.gz",
+        "sha256": "db0be4da16b5cbe155d081706422a3530cd9705afd00947d1c488fc3d74c50a5",
+        "size_bytes": 2663625,
+        "signature_url": "https://update.neosecra.com/releases/0.3.15/hotspot-0.3.15-2cd483c.tar.gz.minisig"
+      },
+      "bootstrap": {
+        "url": "https://update.neosecra.com/releases/0.3.15/bootstrap.sh",
+        "sha256": "3efcba0f741dd3ed884119601232d3050f412c316cb1c8162bcd1433758832bc",
+        "size_bytes": 28900,
+        "signature_url": "https://update.neosecra.com/releases/0.3.15/bootstrap.sh.minisig"
+      },
+      "docker_bundle": {
+        "url": "https://update.neosecra.com/releases/0.3.15/none",
+        "sha256": "0",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/0.3.15/none"
+      },
+      "bundle_url": "https://update.neosecra.com/releases/0.3.15/none"
     }
   ]
 }
