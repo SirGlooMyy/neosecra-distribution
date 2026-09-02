@@ -3,7 +3,7 @@
 - **Updated:** 2026-09-02
 - **Repository:** `/home/sirgloomy/projects/neosecra-distribution`
 - **Branch:** `main`
-- **HEAD:** `4adedccf7a46661ccb9b7bfda1702122ddcc73b6` (`origin/main` synchronized)
+- **Verified code commit:** `4adedccf7a46661ccb9b7bfda1702122ddcc73b6` (`origin/main`; checkpoint docs follow)
 - **Canonical Governance:** `/home/sirgloomy/AGENTS.md`
 - **Project Memory:** `.ai-ops/project-memory/DISTRIBUTION-CANONICAL-MODEL.md`
 
