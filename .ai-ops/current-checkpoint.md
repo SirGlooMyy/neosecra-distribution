@@ -3,6 +3,7 @@
 - **Updated:** 2026-09-02
 - **Repository:** `/home/sirgloomy/projects/neosecra-distribution`
 - **Branch:** `main`
+- **HEAD:** `4adedccf7a46661ccb9b7bfda1702122ddcc73b6` (`origin/main` synchronized)
 - **Canonical Governance:** `/home/sirgloomy/AGENTS.md`
 - **Project Memory:** `.ai-ops/project-memory/DISTRIBUTION-CANONICAL-MODEL.md`
 
@@ -58,3 +59,4 @@
 - Explicit targets pass anti-rollback; dry-run performs signed metadata/channel and read-only preflight only, with no lock, backup, release install, env/state write, image pull, or promotion.
 - Origin certificate is tracked as `update-server/certs/neosecra-origin.crt`; Caddy and the static test use the matching operator-supplied `neosecra-origin.key` name (private key remains untracked).
 - Full local verification: pytest 58 passed; focused promotion/recovery/trust tests 31 passed; real negative E2E passed; TLS static 12 passed/0 failed/3 skipped; release dry-run `rc=0`; all shell syntax checks passed. `ci/prerelease-gate.sh` correctly failed closed because local `cosign` is unavailable; `shellcheck` is unavailable. Live `.13` status remains `BLOCKED/NOT_RUN` and was not retried.
+- Scoped commit/push: `4adedccf7a46661ccb9b7bfda1702122ddcc73b6` is published on `origin/main`; unrelated scratch/debug/backup files remain untracked and untouched.
