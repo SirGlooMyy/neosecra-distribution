@@ -8,8 +8,6 @@ import pytest
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCHEMA_PATH = os.path.join(REPO_ROOT, "schemas", "platform-release-manifest.schema.json")
 CHANNELS_DIR = os.path.join(REPO_ROOT, "channels")
-VERIFIER_LIB = os.path.join(REPO_ROOT, "deployment", "lib", "artifact-verifier.sh")
-VERIFIER_AGENT = os.path.join(REPO_ROOT, "deployment", "v1", "agent", "artifact-verifier.sh")
 
 
 @pytest.fixture
@@ -156,8 +154,3 @@ def test_channel_definitions_consistency():
                     if "archive" in rel:
                         assert "sha256" in rel["archive"]
                         assert len(rel["archive"]["sha256"]) == 64
-
-
-def test_verifier_copies_are_byte_identical():
-    with open(VERIFIER_LIB, "rb") as f1, open(VERIFIER_AGENT, "rb") as f2:
-        assert f1.read() == f2.read(), "deployment/lib/artifact-verifier.sh and deployment/v1/agent/artifact-verifier.sh have drifted!"

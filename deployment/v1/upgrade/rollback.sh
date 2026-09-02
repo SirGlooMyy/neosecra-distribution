@@ -9,15 +9,16 @@ source "${V1_ROOT}/lib/state.sh"
 
 usage() { cat <<EOF
 neosecra rollback — revert to a previous version
-Usage: neosecra rollback --to <version> [--from-backup <dir>] [--dry-run] [--help]
+Usage: neosecra rollback --to <version> --auth <auth.json> [--from-backup <dir>] [--dry-run] [--help]
 EOF
 }
 
-TARGET=""; BACKUP_SRC=""; DRY=0
+TARGET=""; AUTH=""; BACKUP_SRC=""; DRY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --help|-h)      usage; exit 0 ;;
     --to)           shift; TARGET="$1" ;;
+    --auth)         shift; AUTH="$1" ;;
     --from-backup)  shift; BACKUP_SRC="$1" ;;
     --dry-run)      DRY=1 ;;
     *) usage; die "unexpected argument: $1" 2 ;;
@@ -28,7 +29,14 @@ done
 CURRENT=$(read_installed_version 2>/dev/null || true)
 [[ -n "$CURRENT" && "$CURRENT" != "none" ]] || CURRENT=$(read_version)
 [[ -n "$TARGET" ]] || { usage; die "--to <version> required" 1; }
+[[ -n "$AUTH" ]] || { usage; die "--auth <file.json> required for secure rollback" 4; }
 [[ "$TARGET" != "$CURRENT" ]] || die "Target equals current" 1
+
+log "Verifying signed rollback authorization: ${AUTH}"
+if ! python3 "${V1_ROOT}/upgrade/verify_rollback_auth.py" "$AUTH" "$TARGET"; then
+  die "SECURITY VIOLATION: Rollback authorization failed" 4
+fi
+
 
 log "Rollback: ${CURRENT} -> ${TARGET}"
 
@@ -61,7 +69,9 @@ mkdir -p "$SAFE_DIR"
 if stack_is_running; then
   PGUSER=$(env_value POSTGRES_USER neosecra)
   PGDB=$(env_value POSTGRES_DB neosecra_assessment)
-  run_compose exec -T postgres pg_dump -U "$PGUSER" -d "$PGDB" > "${SAFE_DIR}/pre-rollback-db.sql" 2>/dev/null || true
+  run_compose exec -T postgres pg_dump -U "$PGUSER" -d "$PGDB" > "${SAFE_DIR}/pre-rollback-db.sql" 2>/dev/null || \
+    die "Safety database backup failed; refusing rollback" 12
+  [[ -s "${SAFE_DIR}/pre-rollback-db.sql" ]] || die "Safety database backup is empty; refusing rollback" 12
 fi
 
 # --- Stop ---
@@ -122,7 +132,7 @@ SQL
     < "$DB_DUMP" || die "Database restore failed from ${DB_DUMP}" 1
   ok "Database restored: ${DB_DUMP}"
 else
-  warn "No database dump found in ${BACKUP_SRC} — database left untouched"
+  die "No database dump found in ${BACKUP_SRC} — refusing rollback without a verified restore point" 12
 fi
 
 # --- Start (from the TARGET tree, with the reverted pins) ---

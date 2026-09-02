@@ -147,6 +147,50 @@ env_file_value() {
   echo "${val:-$default}"
 }
 
+# Replace a file with a fully-written, fsync'd temporary file.  Release state
+# and environment files are security-sensitive: a process crash must never
+# leave a truncated value that can be interpreted as a new release or a
+# missing credential.  The parent directory is fsync'd after the rename so the
+# name change itself survives a power loss as well.
+atomic_replace_file() {
+  local source="$1" destination="$2" mode="${3:-600}" dir
+  [[ -f "$source" && -n "$destination" ]] || return 1
+  dir="$(dirname "$destination")"
+  mkdir -p "$dir" || return 1
+  chmod "$mode" "$source" || return 1
+  python3 - "$source" "$destination" "$dir" <<'PY'
+import os
+import sys
+
+source, destination, directory = sys.argv[1:]
+with open(source, "rb") as stream:
+    os.fsync(stream.fileno())
+os.replace(source, destination)
+fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+try:
+    os.fsync(fd)
+finally:
+    os.close(fd)
+PY
+}
+
+atomic_write_text() {
+  local destination="$1" mode="${2:-600}" dir base tmp
+  [[ -n "$destination" ]] || return 1
+  dir="$(dirname "$destination")"
+  base="$(basename "$destination")"
+  mkdir -p "$dir" || return 1
+  tmp="$(mktemp "${dir}/.${base}.tmp.XXXXXX")" || return 1
+  if ! cat > "$tmp"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  if ! atomic_replace_file "$tmp" "$destination" "$mode"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+}
+
 random_hex() {
   local bytes="$1"
   if command -v openssl >/dev/null 2>&1; then
@@ -215,9 +259,8 @@ upsert_env_value() {
     $0 ~ "^" k "=" { print k "=" v; done=1; next }
     { print }
     END { if (!done) print k "=" v }
-  ' "$ENV_FILE" > "$tmp"
-  mv "$tmp" "$ENV_FILE"
-  chmod 0600 "$ENV_FILE"
+  ' "$ENV_FILE" > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  atomic_replace_file "$tmp" "$ENV_FILE" 0600 || { rm -f -- "$tmp"; return 1; }
 }
 
 ensure_env_value() {
@@ -278,7 +321,9 @@ ensure_frontend_tls() {
   fi
   mkdir -p "$tls_dir"
   # SAN: every routable host IP + loopback, so both LAN and Tailscale access work.
-  local san="IP:127.0.0.1,DNS:localhost" ip
+  # The backend probe reaches nginx through the Compose service name. Include
+  # that identity so hostname verification stays enabled for the login gate.
+  local san="IP:127.0.0.1,DNS:localhost,DNS:frontend" ip
   while read -r ip; do
     [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ && "$ip" != "127.0.0.1" ]] && san="${san},IP:${ip}"
   done < <(hostname -I 2>/dev/null | tr ' ' '\n' | sort -u)
@@ -617,12 +662,14 @@ PY
 }
 
 wait_frontend_http() {
-  local timeout="${1:-120}" frontend_port tls_port code code_tls
+  local timeout="${1:-120}" frontend_port tls_port code code_tls ca_cert
   frontend_port="$(env_value FRONTEND_PORT 23300)"
   tls_port="$(env_value FRONTEND_TLS_PORT 9443)"
+  ca_cert="${NEOSECRA_FRONTEND_CA_CERT:-${V1_ROOT}/config/tls/server.crt}"
+  [[ -s "$ca_cert" ]] || { err "Frontend TLS CA certificate is missing: ${ca_cert}"; return 1; }
   log "Waiting for frontend HTTPS on 127.0.0.1:${tls_port} (timeout ${timeout}s)..."
   for _ in $(seq 1 "$timeout"); do
-    code_tls="$(curl -sk --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${tls_port}" 2>/dev/null || true)"
+    code_tls="$(curl --cacert "$ca_cert" --silent --show-error --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${tls_port}" 2>/dev/null || true)"
     if [[ "$code_tls" =~ ^(200|301|302|304)$ ]]; then
       # HTTP port must redirect to HTTPS (or at least answer /health)
       code="$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${frontend_port}/health" 2>/dev/null || true)"
@@ -635,11 +682,13 @@ wait_frontend_http() {
 }
 
 wait_frontend_api_proxy() {
-  local timeout="${1:-120}" tls_port code
+  local timeout="${1:-120}" tls_port code ca_cert
   tls_port="$(env_value FRONTEND_TLS_PORT 9443)"
+  ca_cert="${NEOSECRA_FRONTEND_CA_CERT:-${V1_ROOT}/config/tls/server.crt}"
+  [[ -s "$ca_cert" ]] || { err "Frontend TLS CA certificate is missing: ${ca_cert}"; return 1; }
   log "Waiting for frontend API proxy on 127.0.0.1:${tls_port} (timeout ${timeout}s)..."
   for _ in $(seq 1 "$timeout"); do
-    code="$(curl -sk --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${tls_port}/api/v1/health" 2>/dev/null || true)"
+    code="$(curl --cacert "$ca_cert" --silent --show-error --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${tls_port}/api/v1/health" 2>/dev/null || true)"
     if [[ "$code" == "200" ]]; then
       ok "Frontend API proxy responds (HTTPS 200)"
       return 0
@@ -665,8 +714,8 @@ payload = json.dumps({
     "password": settings.first_admin_password,
 }).encode()
 
-# Frontend terminates TLS with a per-install self-signed cert — skip
-# verification here (identity is not the point of this smoke check).
+# Frontend terminates TLS with the per-install certificate mounted into the
+# backend container. Hostname verification remains enabled.
 request = urllib.request.Request(
     "https://frontend/api/v1/auth/login",
     data=payload,
@@ -675,7 +724,7 @@ request = urllib.request.Request(
 )
 
 try:
-    ctx = ssl._create_unverified_context()
+    ctx = ssl.create_default_context(cafile="/app/tls/server.crt")
     with urllib.request.urlopen(request, timeout=10, context=ctx) as response:
         status = response.getcode()
         body = response.read(8192)
@@ -807,13 +856,51 @@ validate_env_file() {
 
 # --- Lock ---
 LOCK_FILE="${STATE_DIR}/.install.lock"
+
+# Upgrade transactions may switch V1_ROOT to a prepared target release after
+# taking the lock.  Keep lock/journal ownership anchored to the root that was
+# used to acquire it; otherwise a context switch would make the EXIT trap
+# release a different lock and leave the original transaction orphaned.
+recovery_root() {
+  printf '%s' "${RECOVERY_ROOT:-${V1_ROOT}}"
+}
+
 acquire_lock() {
   mkdir -p "$STATE_DIR"
-  if ! mkdir "$LOCK_FILE" 2>/dev/null; then
-    die "Another install/upgrade is in progress (lock: ${LOCK_FILE})" 5
+  local exec_id
+  local root; root="$(recovery_root)"
+  exec_id="$(python3 "${root}/upgrade/recovery.py" lock_acquire "${root}")" || die "Lock acquisition failed: $exec_id" 5
+  exec_id="$(printf '%s\n' "$exec_id" | tail -n1)"
+  export EXEC_ID="$exec_id"
+  start_heartbeat
+}
+
+release_lock() {
+  stop_heartbeat
+  [[ -n "${EXEC_ID:-}" ]] || return 0
+  local root; root="$(recovery_root)"
+  python3 "${root}/upgrade/recovery.py" lock_release "${root}" "$EXEC_ID" || true
+}
+
+start_heartbeat() {
+  stop_heartbeat
+  local root; root="$(recovery_root)"
+  (
+    while true; do
+      sleep 15
+      python3 "${root}/upgrade/recovery.py" lock_heartbeat "${root}" "${EXEC_ID}" || true
+    done
+  ) &
+  export HEARTBEAT_PID=$!
+}
+
+stop_heartbeat() {
+  if [[ -n "${HEARTBEAT_PID:-}" ]]; then
+    kill $HEARTBEAT_PID 2>/dev/null || true
+    unset HEARTBEAT_PID
   fi
 }
-release_lock() { rmdir "$LOCK_FILE" 2>/dev/null || true; }
+
 
 # --- Upgrade failure recovery ---
 # Start previous release's compose when upgrade fails mid-flight.
@@ -856,3 +943,29 @@ recover_previous_release() {
 release_dir() { echo "${RELEASES_DIR}/${1}"; }
 current_symlink() { echo "${INSTALL_ROOT}/current"; }
 previous_symlink() { echo "${INSTALL_ROOT}/previous"; }
+
+
+log() {
+  local msg="$1"
+  local prefix=""
+  [[ -n "${EXEC_ID:-}" ]] && prefix="[${EXEC_ID}] "
+  echo "[info]  ${prefix}${msg}"
+}
+err() {
+  local msg="$1"
+  local prefix=""
+  [[ -n "${EXEC_ID:-}" ]] && prefix="[${EXEC_ID}] "
+  echo "[error] ${prefix}${msg}" >&2
+}
+warn() {
+  local msg="$1"
+  local prefix=""
+  [[ -n "${EXEC_ID:-}" ]] && prefix="[${EXEC_ID}] "
+  echo "[warn]  ${prefix}${msg}" >&2
+}
+ok() {
+  local msg="$1"
+  local prefix=""
+  [[ -n "${EXEC_ID:-}" ]] && prefix="[${EXEC_ID}] "
+  echo "[ok]    ${prefix}${msg}"
+}

@@ -274,7 +274,7 @@ ensure_frontend_tls() {
   fi
   mkdir -p "$tls_dir"
   # SAN: every routable host IP + loopback, so both LAN and Tailscale access work.
-  local san="IP:127.0.0.1,DNS:localhost" ip
+  local san="IP:127.0.0.1,DNS:localhost,DNS:frontend" ip
   while read -r ip; do
     [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ && "$ip" != "127.0.0.1" ]] && san="${san},IP:${ip}"
   done < <(hostname -I 2>/dev/null | tr ' ' '\n' | sort -u)
@@ -613,12 +613,14 @@ PY
 }
 
 wait_frontend_http() {
-  local timeout="${1:-120}" frontend_port tls_port code code_tls
+  local timeout="${1:-120}" frontend_port tls_port code code_tls ca_cert
   frontend_port="$(env_value FRONTEND_PORT 23300)"
   tls_port="$(env_value FRONTEND_TLS_PORT 9443)"
+  ca_cert="${NEOSECRA_FRONTEND_CA_CERT:-${V1_ROOT}/config/tls/server.crt}"
+  [[ -s "$ca_cert" ]] || { err "Frontend TLS CA certificate is missing: ${ca_cert}"; return 1; }
   log "Waiting for frontend HTTPS on 127.0.0.1:${tls_port} (timeout ${timeout}s)..."
   for _ in $(seq 1 "$timeout"); do
-    code_tls="$(curl -sk --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${tls_port}" 2>/dev/null || true)"
+    code_tls="$(curl --cacert "$ca_cert" --silent --show-error --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${tls_port}" 2>/dev/null || true)"
     if [[ "$code_tls" =~ ^(200|301|302|304)$ ]]; then
       # HTTP port must redirect to HTTPS (or at least answer /health)
       code="$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${frontend_port}/health" 2>/dev/null || true)"
@@ -631,11 +633,13 @@ wait_frontend_http() {
 }
 
 wait_frontend_api_proxy() {
-  local timeout="${1:-120}" tls_port code
+  local timeout="${1:-120}" tls_port code ca_cert
   tls_port="$(env_value FRONTEND_TLS_PORT 9443)"
+  ca_cert="${NEOSECRA_FRONTEND_CA_CERT:-${V1_ROOT}/config/tls/server.crt}"
+  [[ -s "$ca_cert" ]] || { err "Frontend TLS CA certificate is missing: ${ca_cert}"; return 1; }
   log "Waiting for frontend API proxy on 127.0.0.1:${tls_port} (timeout ${timeout}s)..."
   for _ in $(seq 1 "$timeout"); do
-    code="$(curl -sk --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${tls_port}/api/v1/health" 2>/dev/null || true)"
+    code="$(curl --cacert "$ca_cert" --silent --show-error --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${tls_port}/api/v1/health" 2>/dev/null || true)"
     if [[ "$code" == "200" ]]; then
       ok "Frontend API proxy responds (HTTPS 200)"
       return 0
@@ -661,8 +665,8 @@ payload = json.dumps({
     "password": settings.first_admin_password,
 }).encode()
 
-# Frontend terminates TLS with a per-install self-signed cert — skip
-# verification here (identity is not the point of this smoke check).
+# Frontend terminates TLS with the per-install certificate mounted into the
+# backend container. Hostname verification remains enabled.
 request = urllib.request.Request(
     "https://frontend/api/v1/auth/login",
     data=payload,
@@ -671,7 +675,7 @@ request = urllib.request.Request(
 )
 
 try:
-    ctx = ssl._create_unverified_context()
+    ctx = ssl.create_default_context(cafile="/app/tls/server.crt")
     with urllib.request.urlopen(request, timeout=10, context=ctx) as response:
         status = response.getcode()
         body = response.read(8192)

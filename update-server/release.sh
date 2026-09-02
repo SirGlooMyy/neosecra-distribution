@@ -20,7 +20,7 @@ Steps:
   [1/6] Bump VERSION + release-manifest.yaml in assessment repo, commit, tag, push
   [2/6] Wait for GitHub Actions CI (security-health-release.yml) to complete
   [3/6] Build distribution archive via build-release.sh
-  [4/6] Push container images from GHCR to registry.neosecra.com
+  [4/6] Promote signed image digests from GHCR to registry.neosecra.com
   [5/6] Sign & publish archive via publish.sh
   [6/6] Rsync published artifacts to update server(s)
 
@@ -31,7 +31,9 @@ Options:
   --assessment-repo <path>   Path to neosecra-assessment repo
                              (default: ../neosecra-assessment relative to repo root)
   --skip-ci-wait             Skip waiting for GitHub CI completion
-  --skip-registry-push       Skip pushing container images to registry.neosecra.com
+  --skip-registry-push       Skip image promotion (only with an explicit reason)
+  --image-digests <path>     JSON lock produced by CI with backend/frontend
+                             sha256 digests; required for image promotion
   --rsync <target>           rsync target for publish.sh (user@host:/path)
   --dry-run                  Print actions without executing anything destructive
   --help                     Show this help and exit
@@ -39,6 +41,8 @@ Options:
 Environment:
   UPDATE_SERVER_TARGETS   Space-separated rsync targets (alternative to --rsync).
                           When combined with --rsync, all targets are synced.
+  UPDATE_REGISTRY_COSIGN_PUBLIC_KEY
+                          Trusted cosign public-key path on the promotion host
 
 Examples:
   ./release.sh 9.9.9 --dry-run
@@ -54,6 +58,7 @@ VERSION=""
 ASSESSMENT_REPO=""
 SKIP_CI_WAIT=0
 SKIP_REGISTRY_PUSH=0
+IMAGE_DIGESTS_FILE="${NEOSECRA_IMAGE_DIGESTS_FILE:-}"
 RSYNC_TARGET=""
 DRY_RUN=0
 
@@ -62,6 +67,7 @@ while [[ $# -gt 0 ]]; do
         --assessment-repo)   ASSESSMENT_REPO="$2";  shift 2 ;;
         --skip-ci-wait)      SKIP_CI_WAIT=1;        shift   ;;
         --skip-registry-push) SKIP_REGISTRY_PUSH=1;  shift   ;;
+        --image-digests)     IMAGE_DIGESTS_FILE="$2"; shift 2 ;;
         --rsync)             RSYNC_TARGET="$2";     shift 2 ;;
         --dry-run)           DRY_RUN=1;             shift   ;;
         --help)              usage                         ;;
@@ -124,6 +130,7 @@ REGISTRY_PUSH_TARGET="${UPDATE_REGISTRY_PUSH_TARGET:-ssh neosecra@100.125.0.108}
 PUBLISH_TMPDIR=""
 cleanup() {
     [[ -n "$PUBLISH_TMPDIR" && -d "$PUBLISH_TMPDIR" ]] && rm -rf "$PUBLISH_TMPDIR"
+    return 0
 }
 trap cleanup EXIT
 
@@ -156,6 +163,103 @@ guard_gh() {
         echo "[ERROR] GitHub CLI is not authenticated. Run 'gh auth login' first."
         exit 1
     fi
+}
+
+validate_image_digest() {
+    local name="$1" digest="$2"
+    if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+        echo "[ERROR] ${name} image digest is missing or not a lowercase sha256 digest" >&2
+        return 1
+    fi
+}
+
+# Resolve the CI-produced image digests before any registry promotion.  A
+# mutable GHCR tag is never accepted as the transport identity.  CI may hand
+# us a small JSON lock (for example {"backend":{"digest":"sha256:..."},
+# "frontend":{"digest":"sha256:..."}}); when it does not, the assessment
+# release manifest is the only fallback and must contain both digests.
+load_image_digests() {
+    local output backend frontend
+    backend="${NEOSECRA_BACKEND_DIGEST:-${BACKEND_DIGEST:-}}"
+    frontend="${NEOSECRA_FRONTEND_DIGEST:-${FRONTEND_DIGEST:-}}"
+
+    if [[ -n "$IMAGE_DIGESTS_FILE" ]]; then
+        [[ -f "$IMAGE_DIGESTS_FILE" && ! -L "$IMAGE_DIGESTS_FILE" ]] || {
+            echo "[ERROR] Image digest lock is missing or unsafe: ${IMAGE_DIGESTS_FILE}" >&2
+            return 1
+        }
+        output="$(python3 - "$IMAGE_DIGESTS_FILE" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as stream:
+        value = json.load(stream)
+except (OSError, ValueError) as exc:
+    print(f"invalid image digest lock: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+if not isinstance(value, dict):
+    print("image digest lock must be a JSON object", file=sys.stderr)
+    raise SystemExit(1)
+images = value.get("images") if isinstance(value.get("images"), dict) else value
+for name in ("backend", "frontend"):
+    item = images.get(name)
+    digest = item.get("digest") if isinstance(item, dict) else item
+    if not isinstance(digest, str):
+        print(f"{name}=", end="\n")
+    else:
+        print(f"{name}={digest}")
+PY
+        )" || return 1
+        backend="$(printf '%s\n' "$output" | awk -F= '$1=="backend" {print $2; exit}')"
+        frontend="$(printf '%s\n' "$output" | awk -F= '$1=="frontend" {print $2; exit}')"
+    elif [[ -z "$backend" || -z "$frontend" ]]; then
+        [[ -f "$MANIFEST_FILE" && ! -L "$MANIFEST_FILE" ]] || {
+            echo "[ERROR] Assessment release manifest is missing or unsafe: ${MANIFEST_FILE}" >&2
+            return 1
+        }
+        output="$(python3 - "$MANIFEST_FILE" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+try:
+    lines = open(path, encoding="utf-8")
+except OSError as exc:
+    print(exc, file=sys.stderr)
+    raise SystemExit(1)
+inside_images = False
+current = None
+found = {}
+for raw in lines:
+    if re.match(r"^images:\s*$", raw):
+        inside_images = True
+        current = None
+        continue
+    if inside_images and re.match(r"^\S", raw):
+        inside_images = False
+        current = None
+    match = re.match(r"^\s*-\s+name:\s*([a-z0-9_-]+)\s*$", raw)
+    if inside_images and match:
+        current = match.group(1)
+        continue
+    match = re.match(r"^\s+digest:\s*(sha256:[0-9a-f]{64})\s*$", raw)
+    if inside_images and current in {"backend", "frontend"} and match:
+        found.setdefault(current, match.group(1))
+for name in ("backend", "frontend"):
+    print(f"{name}={found.get(name, '')}")
+PY
+        )" || return 1
+        [[ -n "$backend" ]] || backend="$(printf '%s\n' "$output" | awk -F= '$1=="backend" {print $2; exit}')"
+        [[ -n "$frontend" ]] || frontend="$(printf '%s\n' "$output" | awk -F= '$1=="frontend" {print $2; exit}')"
+    fi
+
+    validate_image_digest "backend" "$backend" || return 1
+    validate_image_digest "frontend" "$frontend" || return 1
+    IMAGE_BACKEND_DIGEST="$backend"
+    IMAGE_FRONTEND_DIGEST="$frontend"
+    return 0
 }
 
 # ============================================================================
@@ -333,31 +437,135 @@ fi
 # ============================================================================
 log_step 4 6 "Pushing container images to registry.neosecra.com"
 
-GHCR_BACKEND="ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend:${VERSION}"
-GHCR_FRONTEND="ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend:${VERSION}"
+GHCR_BACKEND_BASE="ghcr.io/sirgloomyy/neosecra-assessment/security-health-backend"
+GHCR_FRONTEND_BASE="ghcr.io/sirgloomyy/neosecra-assessment/security-health-frontend"
 REGISTRY_BACKEND="registry.neosecra.com/security-health-backend:${VERSION}"
 REGISTRY_FRONTEND="registry.neosecra.com/security-health-frontend:${VERSION}"
-
-REGISTRY_PUSH_CMD="
-docker pull '${GHCR_BACKEND}' || { echo '[ERROR] Failed to pull ${GHCR_BACKEND}'; exit 1; }
-docker pull '${GHCR_FRONTEND}' || { echo '[ERROR] Failed to pull ${GHCR_FRONTEND}'; exit 1; }
-docker tag '${GHCR_BACKEND}' '${REGISTRY_BACKEND}'
-docker tag '${GHCR_FRONTEND}' '${REGISTRY_FRONTEND}'
-docker push '${REGISTRY_BACKEND}' || { echo '[ERROR] Failed to push ${REGISTRY_BACKEND}'; exit 1; }
-docker push '${REGISTRY_FRONTEND}' || { echo '[ERROR] Failed to push ${REGISTRY_FRONTEND}'; exit 1; }
-"
+COSIGN_PUBLIC_KEY="${UPDATE_REGISTRY_COSIGN_PUBLIC_KEY:-/etc/neosecra/certs/cosign.pub}"
+SPDX_ATTESTATION_TYPE="${UPDATE_REGISTRY_SPDX_ATTESTATION_TYPE:-https://spdx.dev/Document}"
 
 if [[ $SKIP_REGISTRY_PUSH -eq 1 ]]; then
-    log " [SKIP] --skip-registry-push flag set — skipping registry push."
-elif [[ $DRY_RUN -eq 1 ]]; then
-    log " [DRY-RUN]   ${REGISTRY_PUSH_TARGET} '${REGISTRY_PUSH_CMD}'"
-else
-    log " Registry push target: ${REGISTRY_PUSH_TARGET}"
-    if ! ${REGISTRY_PUSH_TARGET} "${REGISTRY_PUSH_CMD}"; then
-        echo "[ERROR] Registry push FAILED. Images may be missing from registry.neosecra.com."
-        exit 1
+    if [[ "$CHANNEL" == "stable" && "$DRY_RUN" -eq 0 ]]; then
+        echo "[ERROR] Stable promotion cannot skip immutable image promotion." >&2
+        exit 4
     fi
-    log " Registry push complete — images available at registry.neosecra.com"
+    log " [SKIP] --skip-registry-push flag set — no image promotion will be performed."
+elif [[ $DRY_RUN -eq 1 ]]; then
+    if ! load_image_digests; then
+        log " [DRY-RUN]   image promotion would fail closed: CI digest lock is required"
+    else
+        log " [DRY-RUN]   verify cosign signature + SPDX attestation for immutable digests"
+        log " [DRY-RUN]   ${REGISTRY_PUSH_TARGET} docker buildx imagetools create --tag '${REGISTRY_BACKEND}' '${GHCR_BACKEND_BASE}@${IMAGE_BACKEND_DIGEST}'"
+        log " [DRY-RUN]   ${REGISTRY_PUSH_TARGET} docker buildx imagetools create --tag '${REGISTRY_FRONTEND}' '${GHCR_FRONTEND_BASE}@${IMAGE_FRONTEND_DIGEST}'"
+    fi
+else
+    load_image_digests || {
+        echo "[ERROR] Immutable CI image digests are required; refusing mutable image promotion." >&2
+        exit 4
+    }
+    if [[ "$REGISTRY_PUSH_TARGET" == "ssh "* ]]; then
+        remote_host="${REGISTRY_PUSH_TARGET#ssh }"
+        [[ "$remote_host" != *[!A-Za-z0-9@._:-]* ]] || {
+            echo "[ERROR] UPDATE_REGISTRY_PUSH_TARGET contains unsafe SSH host characters" >&2
+            exit 4
+        }
+        remote_script=$(cat <<'REMOTE'
+set -Eeuo pipefail
+command -v docker >/dev/null 2>&1 || { echo '[ERROR] docker is required on registry host' >&2; exit 4; }
+docker buildx version >/dev/null 2>&1 || { echo '[ERROR] docker buildx imagetools is required on registry host' >&2; exit 4; }
+command -v cosign >/dev/null 2>&1 || { echo '[ERROR] cosign is required on registry host' >&2; exit 4; }
+[[ -f "$COSIGN_PUBLIC_KEY" && ! -L "$COSIGN_PUBLIC_KEY" ]] || { echo '[ERROR] trusted cosign public key is missing or unsafe' >&2; exit 4; }
+
+extract_digest() {
+  awk '$1 == "Digest:" {print $2; exit}'
+}
+
+inspect_digest() {
+  local ref="$1" output rc digest lower
+  if output="$(docker buildx imagetools inspect "$ref" 2>&1)"; then
+    digest="$(printf '%s\n' "$output" | extract_digest)"
+    [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "[ERROR] registry returned no valid digest for $ref" >&2; return 1; }
+    printf '%s' "$digest"
+    return 0
+  else
+    rc=$?
+    lower="${output,,}"
+    case "$lower" in
+      *"manifest unknown"*|*"no such manifest"*|*"not found"*|*"404"*) return 2 ;;
+      *) echo "$output" >&2; return "$rc" ;;
+    esac
+  fi
+}
+
+promote_immutable() {
+  local name="$1" source_base="$2" target_ref="$3" expected="$4" source_ref target_digest rc
+  [[ "$expected" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "[ERROR] invalid $name digest" >&2; return 4; }
+  source_ref="${source_base}@${expected}"
+
+  source_digest="$(inspect_digest "$source_ref")" || {
+    echo "[ERROR] immutable $name source is unavailable: $source_ref" >&2
+    return 4
+  }
+  [[ "$source_digest" == "$expected" ]] || {
+    echo "[ERROR] immutable $name source digest mismatch: $source_digest != $expected" >&2
+    return 4
+  }
+  cosign verify --key "$COSIGN_PUBLIC_KEY" "$source_ref" >/dev/null || {
+    echo "[ERROR] cosign signature verification failed for $source_ref" >&2
+    return 4
+  }
+  cosign verify-attestation --key "$COSIGN_PUBLIC_KEY" --type "$SPDX_ATTESTATION_TYPE" "$source_ref" >/dev/null || {
+    echo "[ERROR] SPDX attestation verification failed for $source_ref" >&2
+    return 4
+  }
+
+  if target_digest="$(inspect_digest "$target_ref")"; then
+    [[ "$target_digest" == "$expected" ]] || {
+      echo "[ERROR] existing $name target points to $target_digest, expected $expected; refusing replacement" >&2
+      return 4
+    }
+    printf 'IMAGE_PROMOTION|PASS|%s|%s (existing digest)\n' "$name" "$target_digest"
+    return 0
+  else
+    rc=$?
+    [[ "$rc" -eq 2 ]] || {
+      echo "[ERROR] unable to determine existing $name target state; refusing promotion" >&2
+      return 4
+    }
+  fi
+
+  # The only write is a digest-addressed OCI copy.  The version tag is created
+  # as an idempotent alias and is never allowed to replace a different digest.
+  docker buildx imagetools create --tag "$target_ref" "$source_ref" >/dev/null || {
+    echo "[ERROR] immutable $name target creation failed" >&2
+    return 4
+  }
+  target_digest="$(inspect_digest "$target_ref")" || {
+    echo "[ERROR] unable to verify $name target after creation" >&2
+    return 4
+  }
+  [[ "$target_digest" == "$expected" ]] || {
+    echo "[ERROR] $name target digest mismatch after immutable promotion: $target_digest != $expected" >&2
+    return 4
+  }
+  printf 'IMAGE_PROMOTION|PASS|%s|%s\n' "$name" "$target_digest"
+}
+
+REMOTE
+)
+        remote_script="COSIGN_PUBLIC_KEY=$(printf '%q' "$COSIGN_PUBLIC_KEY"); SPDX_ATTESTATION_TYPE=$(printf '%q' "$SPDX_ATTESTATION_TYPE"); REGISTRY_BACKEND=$(printf '%q' "$REGISTRY_BACKEND"); REGISTRY_FRONTEND=$(printf '%q' "$REGISTRY_FRONTEND"); ${remote_script}"
+        remote_script+=$'\n'"promote_immutable backend $(printf '%q' "$GHCR_BACKEND_BASE") $(printf '%q' "$REGISTRY_BACKEND") $(printf '%q' "$IMAGE_BACKEND_DIGEST")"
+        remote_script+=$'\n'"promote_immutable frontend $(printf '%q' "$GHCR_FRONTEND_BASE") $(printf '%q' "$REGISTRY_FRONTEND") $(printf '%q' "$IMAGE_FRONTEND_DIGEST")"
+        log " Registry push target: ${REGISTRY_PUSH_TARGET}"
+        if ! ssh -o BatchMode=yes -o ConnectTimeout=15 "${remote_host}" "bash -s" <<<"${remote_script}"; then
+            echo "[ERROR] Immutable registry promotion FAILED; stable release remains unpublished." >&2
+            exit 4
+        fi
+    else
+        echo "[ERROR] UPDATE_REGISTRY_PUSH_TARGET must use the explicit 'ssh user@host' form" >&2
+        exit 4
+    fi
+    log " Registry promotion complete — immutable digests verified at registry.neosecra.com"
 fi
 
 # ============================================================================

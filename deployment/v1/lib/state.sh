@@ -7,24 +7,27 @@ set -Euo pipefail
 write_installed_version() {
   local version="$1"
   mkdir -p "$STATE_DIR"
-  echo "$version" > "${STATE_DIR}/installed-version"
-  echo "$version" > "${STATE_DIR}/active-release"
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "Invalid installed release version: ${version}" 4
+  atomic_write_text "${STATE_DIR}/installed-version" 0600 <<< "${version}" || die "Installed version state commit failed" 12
+  atomic_write_text "${STATE_DIR}/active-release" 0600 <<< "${version}" || die "Active release state commit failed" 12
 }
 
 # Read installed version
 read_installed_version() {
+  local self_heal="${1:-1}"
   local stored=""
   if [[ -f "${STATE_DIR}/installed-version" ]]; then
     stored="$(tr -d '[:space:]' < "${STATE_DIR}/installed-version" 2>/dev/null || true)"
   fi
   if [[ -n "$stored" ]]; then
     echo "$stored"
-  elif [[ -L "$(current_symlink)" ]]; then
+  elif [[ "$self_heal" == "1" && -L "$(current_symlink)" ]]; then
     # Self-heal: installs done before the state file existed, an unreadable
     # (root-owned) state file, or a state wipe — derive from current symlink.
     local healed; healed="$(basename "$(readlink -f "$(current_symlink)")")"
     if [[ -n "$healed" ]]; then
-      mkdir -p "$STATE_DIR" 2>/dev/null && echo "$healed" > "${STATE_DIR}/installed-version" 2>/dev/null || true
+      mkdir -p "$STATE_DIR" || return 1
+      atomic_write_text "${STATE_DIR}/installed-version" 0600 <<< "$healed" || return 1
       echo "$healed"
       return 0
     fi
@@ -46,14 +49,30 @@ create_release_dir() {
 switch_current() {
   local version="$1"
   local target; target=$(release_dir "$version")
+  [[ -d "$target" && ! -L "$target" ]] || die "Release directory is missing or unsafe: ${target}" 4
 
   # Save previous
   if [[ -L "$(current_symlink)" ]]; then
     local old; old=$(readlink "$(current_symlink)")
-    ln -sfn "$old" "$(previous_symlink)"
+    local previous_tmp="$(previous_symlink).new.$$"
+    ln -s "$old" "$previous_tmp"
+    mv -Tf "$previous_tmp" "$(previous_symlink)" || die "Previous release symlink update failed" 12
   fi
 
-  ln -sfn "$target" "$(current_symlink)"
+  # A same-directory rename makes the promotion atomic for readers.  Never
+  # use ln -sfn here: it briefly removes the link and can expose a half-state.
+  local current_tmp="$(current_symlink).new.$$"
+  ln -s "$target" "$current_tmp"
+  mv -Tf "$current_tmp" "$(current_symlink)" || die "Active release symlink switch failed" 12
+  # Persist the directory entry update before returning from promotion.
+  python3 - "$(dirname "$(current_symlink)")" <<'PY'
+import os, sys
+fd = os.open(sys.argv[1], os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+try:
+    os.fsync(fd)
+finally:
+    os.close(fd)
+PY
   ok "Active release switched to ${version}"
 }
 
@@ -71,7 +90,7 @@ create_install_dirs() {
     "${CREDENTIAL_DIR}"
 
   # Secure credential directory
-  chmod 0700 "$CREDENTIAL_DIR" 2>/dev/null || true
+  chmod 0700 "$CREDENTIAL_DIR" || die "Credential directory permissions could not be secured" 12
 }
 
 # Ensure a release dir satisfies the `current/v1/...` path contract.
@@ -91,7 +110,7 @@ ensure_release_v1_link() {
 write_journal() {
   local file="$1" previous="${2:-}" status="${3:-completed}"
   mkdir -p "$JOURNAL_DIR"
-  cat > "${JOURNAL_DIR}/${file}" << JOURNAL
+  atomic_write_text "${JOURNAL_DIR}/${file}" 0600 << JOURNAL
 {
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "product": "${PRODUCT}",
@@ -115,7 +134,7 @@ journal_previous_version() {
 write_install_state() {
   local version="$1" phase="$2" status="$3"
   mkdir -p "$STATE_DIR"
-  cat > "${STATE_DIR}/install-${version}.state" << STATE
+  atomic_write_text "${STATE_DIR}/install-${version}.state" 0600 << STATE
 timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 product=${PRODUCT}
 edition=${EDITION}

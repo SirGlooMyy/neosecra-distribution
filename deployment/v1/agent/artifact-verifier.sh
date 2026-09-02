@@ -77,31 +77,104 @@ verify_sbom_integrity() {
   actual="$(sha256sum "${sbom_file}" 2>/dev/null | awk '{print tolower($1)}')"
   [[ -n "${actual}" && "${actual}" == "${expected_sha256}" ]] || return 1
 
-  # Structural JSON & format validation
-  python3 -c "
-import json, sys
+  # Structural JSON & format validation.  Pass values as argv rather than
+  # interpolating them into Python source; SBOM paths and format strings are
+  # release metadata and must never become executable code.  A format marker
+  # alone is not an SBOM: the trust gate requires the mandatory document,
+  # provenance and package/component fields as well.
+  python3 - "${sbom_file}" "${declared_format}" <<'PY' 2>/dev/null
+import datetime as dt
+import json
+import re
+import sys
+import uuid
 
-with open('${sbom_file}', 'r', encoding='utf-8') as f:
+path, declared = sys.argv[1:3]
+try:
+    with open(path, "r", encoding="utf-8") as stream:
+        data = json.load(stream)
+except (OSError, ValueError, TypeError):
+    sys.exit(1)
+
+if not isinstance(data, dict):
+    sys.exit(1)
+if declared in ("SPDX", "SPDX-2.3-JSON"):
+    if data.get("spdxVersion") != "SPDX-2.3":
+        sys.exit(1)
+    if not re.fullmatch(r"SPDXRef-[A-Za-z0-9][A-Za-z0-9.-]*", str(data.get("SPDXID") or "")):
+        sys.exit(1)
+    if not isinstance(data.get("name"), str) or not data["name"].strip():
+        sys.exit(1)
+    if data.get("dataLicense") != "CC0-1.0":
+        sys.exit(1)
+    namespace = data.get("documentNamespace")
+    if not isinstance(namespace, str) or not re.fullmatch(r"https?://[^\s]+", namespace):
+        sys.exit(1)
+    creation = data.get("creationInfo")
+    if not isinstance(creation, dict):
+        sys.exit(1)
+    created = creation.get("created")
     try:
-        data = json.load(f)
-    except Exception:
+        parsed = dt.datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
         sys.exit(1)
-
-declared = '${declared_format}'
-if declared in ('SPDX', 'SPDX-2.3-JSON'):
-    if 'spdxVersion' not in data or not str(data.get('spdxVersion', '')).startswith('SPDX-'):
+    if parsed.tzinfo is None or not isinstance(creation.get("creators"), list) or not creation["creators"]:
         sys.exit(1)
-elif declared in ('CycloneDX', 'CycloneDX-1.5-JSON'):
-    if data.get('bomFormat') != 'CycloneDX' or 'specVersion' not in data:
+    if any(not isinstance(value, str) or not value.strip() for value in creation["creators"]):
         sys.exit(1)
+    packages = data.get("packages")
+    if not isinstance(packages, list):
+        sys.exit(1)
+    for package in packages:
+        if not isinstance(package, dict):
+            sys.exit(1)
+        if not re.fullmatch(r"SPDXRef-[A-Za-z0-9][A-Za-z0-9.-]*", str(package.get("SPDXID") or "")):
+            sys.exit(1)
+        if not isinstance(package.get("name"), str) or not package["name"].strip():
+            sys.exit(1)
+        checksums = package.get("checksums")
+        if not isinstance(checksums, list) or not checksums:
+            sys.exit(1)
+        for checksum in checksums:
+            if not isinstance(checksum, dict) or checksum.get("algorithm") != "SHA256":
+                sys.exit(1)
+            if not re.fullmatch(r"[0-9a-fA-F]{64}", str(checksum.get("checksumValue") or "")):
+                sys.exit(1)
+    # SPDX permits an empty package set for a document-only SBOM, but all
+    # document/provenance fields above remain mandatory.
+elif declared in ("CycloneDX", "CycloneDX-1.5-JSON"):
+    if data.get("bomFormat") != "CycloneDX" or data.get("specVersion") != "1.5":
+        sys.exit(1)
+    serial = data.get("serialNumber")
+    version = data.get("version")
+    serial_ok = False
+    if isinstance(serial, str):
+        try:
+            uuid.UUID(serial.removeprefix("urn:uuid:"))
+            serial_ok = True
+        except ValueError:
+            serial_ok = False
+    version_ok = isinstance(version, int) and not isinstance(version, bool) and version > 0
+    if not (serial_ok or version_ok):
+        sys.exit(1)
+    components = data.get("components")
+    if not isinstance(components, list):
+        sys.exit(1)
+    for component in components:
+        if not isinstance(component, dict):
+            sys.exit(1)
+        if not isinstance(component.get("type"), str) or not component["type"].strip():
+            sys.exit(1)
+        if not isinstance(component.get("name"), str) or not component["name"].strip():
+            sys.exit(1)
+        if not isinstance(component.get("version"), str) or not component["version"].strip():
+            sys.exit(1)
 else:
-    # Auto-detect if declared_format is empty
-    if 'spdxVersion' in data and str(data.get('spdxVersion', '')).startswith('SPDX-'):
-        pass
-    elif data.get('bomFormat') == 'CycloneDX' and 'specVersion' in data:
-        pass
-    else:
+    if declared:
         sys.exit(1)
+    # Auto-detection is intentionally strict and uses the same validators as
+    # an explicitly declared format.
+    sys.exit(1)
 sys.exit(0)
-" 2>/dev/null
+PY
 }

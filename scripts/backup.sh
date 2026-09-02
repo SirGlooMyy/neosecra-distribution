@@ -75,11 +75,11 @@ run_pg_dump() {
 
   log "pg_dump (custom format): ${pgdb} as ${pguser}..."
   compose_cmd exec -T postgres pg_dump -Fc -U "$pguser" -d "$pgdb" > "$output" 2>/dev/null || {
-    warn "pg_dump failed — backup continues without database"
+    err "pg_dump failed — refusing to create an incomplete backup"
     return 1
   }
   if [[ ! -s "$output" ]]; then
-    warn "pg_dump produced empty file"
+    err "pg_dump produced empty file — refusing to create an incomplete backup"
     return 1
   fi
   ok "pg_dump: $(du -h "$output" | cut -f1)"
@@ -133,9 +133,9 @@ TEMP_DIR=$(mktemp -d)
 # --- Database dump ---
 DUMP_FILE="${TEMP_DIR}/neosecra-db-${STAMP}.dump"
 if postgres_is_running; then
-  run_pg_dump "$DUMP_FILE" || true
+  run_pg_dump "$DUMP_FILE" || die "Database backup failed" 12
 else
-  warn "Postgres not running — database dump SKIPPED"
+  die "Postgres not running — database dump is required" 12
 fi
 
 # --- Application env snapshot ---
@@ -143,7 +143,7 @@ if [[ -f "$ENV_FILE" ]]; then
   cp "$ENV_FILE" "${TEMP_DIR}/env.v1"
   ok "env.v1 copied"
 else
-  warn ".env.v1 not found at ${ENV_FILE}"
+  die ".env.v1 not found at ${ENV_FILE} — refusing incomplete backup" 12
 fi
 
 # --- Secrets ---
@@ -151,7 +151,7 @@ if [[ -d "$SECRETS_DIR" ]] && ls -A "$SECRETS_DIR" &>/dev/null; then
   cp -a "$SECRETS_DIR" "${TEMP_DIR}/secrets"
   ok "Secrets copied from ${SECRETS_DIR}"
 else
-  warn "No secrets directory at ${SECRETS_DIR}"
+  die "No secrets directory at ${SECRETS_DIR} — refusing incomplete backup" 12
 fi
 
 # --- Upgrade journal ---
@@ -160,7 +160,7 @@ if [[ -d "$JOURNAL_DIR" ]] && ls -A "$JOURNAL_DIR" &>/dev/null; then
   cp -a "$JOURNAL_DIR"/. "${TEMP_DIR}/upgrade-journal/"
   ok "Upgrade journal copied"
 else
-  warn "No upgrade journal at ${JOURNAL_DIR}"
+  die "No upgrade journal at ${JOURNAL_DIR} — refusing incomplete backup" 12
 fi
 
 # --- Version ---

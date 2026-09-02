@@ -38,6 +38,8 @@ AGENT_ROOT="${AGENT_ROOT:-${ROOT}/update-agent}"
 [[ "$AGENT_ROOT" = /* && "$AGENT_ROOT" != / && "$AGENT_ROOT" != */.. ]] || { echo "Unsafe agent root" >&2; exit 2; }
 
 [[ -f "${SCRIPT_DIR}/artifact-verifier.sh" ]] || { echo "Missing artifact verifier: ${SCRIPT_DIR}/artifact-verifier.sh" >&2; exit 1; }
+[[ -f "${V1_ROOT}/upgrade/secure_extract.py" ]] || { echo "Missing bounded extractor: ${V1_ROOT}/upgrade/secure_extract.py" >&2; exit 1; }
+[[ -f "${V1_ROOT}/upgrade/verify_rollback_auth.py" ]] || { echo "Missing rollback verifier: ${V1_ROOT}/upgrade/verify_rollback_auth.py" >&2; exit 1; }
 
 STATE_BRIDGE="${ROOT}/state/upgrade-bridge"
 TRIGGER_DIR="${STATE_BRIDGE}/trigger"
@@ -48,6 +50,8 @@ mkdir -p "$AGENT_ROOT/lib" "$AGENT_ROOT/ca" "$TRIGGER_DIR" "$JOURNAL_DIR" "${ROO
 install -m 0755 "${SCRIPT_DIR}/update-agent.sh" "$AGENT_ROOT/update-agent.sh"
 install -m 0644 "${SCRIPT_DIR}/artifact-verifier.sh" "$AGENT_ROOT/artifact-verifier.sh"
 install -m 0755 "${SCRIPT_DIR}/hotspot-updater.sh" "$AGENT_ROOT/hotspot-updater.sh"
+install -m 0755 "${V1_ROOT}/upgrade/secure_extract.py" "$AGENT_ROOT/secure_extract.py"
+install -m 0755 "${V1_ROOT}/upgrade/verify_rollback_auth.py" "$AGENT_ROOT/verify_rollback_auth.py"
 for lib in common.sh manifest.sh state.sh; do install -m 0644 "${V1_ROOT}/lib/${lib}" "$AGENT_ROOT/lib/${lib}"; done
 install -m 0644 "${V1_ROOT}/ca/update-neosecra-com.pub" "$AGENT_ROOT/ca/update-neosecra-com.pub"
 install -d -m 0755 -o root -g root "$STATE_BRIDGE" "$JOURNAL_DIR"
@@ -67,6 +71,8 @@ NEOSECRA_COMPOSE_PROJECT=neosecra-hotspot
 UPGRADE_CHANNEL_URL=${CHANNEL_URL}
 UPGRADE_RELEASE_CHANNEL=hotspot-stable
 UPGRADE_CHANNEL_PUBLIC_KEY=${AGENT_ROOT}/ca/update-neosecra-com.pub
+NEOSECRA_SECURE_EXTRACT=${AGENT_ROOT}/secure_extract.py
+NEOSECRA_ROLLBACK_VERIFIER=${AGENT_ROOT}/verify_rollback_auth.py
 EOF
 chmod 0644 "$ENV_FILE"
 

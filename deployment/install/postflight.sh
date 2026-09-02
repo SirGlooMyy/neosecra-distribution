@@ -77,7 +77,7 @@ FRONTEND_TLS_PORT="$(env_value FRONTEND_TLS_PORT 9443)"
 FRONTEND_OK=0
 f_code="000"
 for _ in $(seq 1 "$TIMEOUT"); do
-  f_code=$(curl -sk --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${FRONTEND_TLS_PORT}" 2>/dev/null || true)
+  f_code=$(curl --cacert "${NEOSECRA_FRONTEND_CA_CERT:-${V1_ROOT}/config/tls/server.crt}" --silent --show-error --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${FRONTEND_TLS_PORT}" 2>/dev/null || true)
   if [[ "$f_code" =~ ^(200|304|301|302)$ ]]; then
     chk_pass "Frontend responds (HTTPS ${f_code})"
     FRONTEND_OK=1
@@ -100,7 +100,7 @@ fi
 FRONTEND_API_OK=0
 fp_code="000"
 for _ in $(seq 1 "$TIMEOUT"); do
-  fp_code=$(curl -sk --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${FRONTEND_TLS_PORT}/api/v1/health" 2>/dev/null || true)
+  fp_code=$(curl --cacert "${NEOSECRA_FRONTEND_CA_CERT:-${V1_ROOT}/config/tls/server.crt}" --silent --show-error --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${FRONTEND_TLS_PORT}/api/v1/health" 2>/dev/null || true)
   if [[ "$fp_code" == "200" ]]; then
     chk_pass "Frontend API proxy responds (HTTPS 200)"
     FRONTEND_API_OK=1

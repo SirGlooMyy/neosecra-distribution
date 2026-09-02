@@ -45,6 +45,11 @@ run_compose exec -T postgres pg_isready -U "$PGUSER" -d "$PGDB" >/dev/null 2>&1 
 run_compose exec -T redis redis-cli ping 2>/dev/null | grep -q PONG && \
   chk_pass "Redis healthy" || chk_fail "Redis not healthy"
 
+PRODUCT_CODE="$(env_value PRODUCT_CODE assessment)"
+if [[ ! "$PRODUCT_CODE" =~ ^(assessment|pish|soc|hotspot|license|distribution)$ ]]; then
+  die "SECURITY VIOLATION: Invalid PRODUCT_CODE '${PRODUCT_CODE}'" 1
+fi
+
 # --- Backend ---
 BACKEND_PORT="$(env_value BACKEND_PORT 23800)"
 BASE="http://127.0.0.1:${BACKEND_PORT}"
@@ -53,13 +58,24 @@ health_file="$(mktemp)"
 for _ in $(seq 1 "$TIMEOUT"); do
   code=$(curl -s -o "$health_file" -w '%{http_code}' "${BASE}/api/v1/health" 2>/dev/null || true)
   if [[ "$code" == "200" ]]; then
-    edition=$(grep -oE '"edition"[[:space:]]*:[[:space:]]*"[^"]*"' "$health_file" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-    app_version=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$health_file" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-    database=$(grep -oE '"database"[[:space:]]*:[[:space:]]*"[^"]*"' "$health_file" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-    if [[ "$edition" == "security_health" ]] && [[ "$database" == "connected" ]] && grep -Eq '"product"[[:space:]]*:[[:space:]]*"NeoSecra"' "$health_file"; then
-      chk_pass "Backend healthy, product=NeoSecra Assessment, edition=${edition}, release=${VERSION}, app_health_version=${app_version:-unknown}"
-      HEALTHY=1
-      break
+    if [[ "$PRODUCT_CODE" == "pish" ]]; then
+      # Phish health check logic
+      database=$(grep -oE '"database"[[:space:]]*:[[:space:]]*"[^"]*"' "$health_file" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+      if [[ "$database" == "connected" ]]; then
+        chk_pass "Backend healthy, product=Phish, release=${VERSION}"
+        HEALTHY=1
+        break
+      fi
+    else
+      # Assessment health check logic
+      edition=$(grep -oE '"edition"[[:space:]]*:[[:space:]]*"[^"]*"' "$health_file" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+      app_version=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$health_file" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+      database=$(grep -oE '"database"[[:space:]]*:[[:space:]]*"[^"]*"' "$health_file" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+      if [[ "$edition" == "security_health" ]] && [[ "$database" == "connected" ]] && grep -Eq '"product"[[:space:]]*:[[:space:]]*"NeoSecra"' "$health_file"; then
+        chk_pass "Backend healthy, product=NeoSecra Assessment, edition=${edition}, release=${VERSION}, app_health_version=${app_version:-unknown}"
+        HEALTHY=1
+        break
+      fi
     fi
   fi
   sleep 1
@@ -77,7 +93,7 @@ FRONTEND_TLS_PORT="$(env_value FRONTEND_TLS_PORT 9443)"
 FRONTEND_OK=0
 f_code="000"
 for _ in $(seq 1 "$TIMEOUT"); do
-  f_code=$(curl -sk --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${FRONTEND_TLS_PORT}" 2>/dev/null || true)
+  f_code=$(curl --cacert "${NEOSECRA_FRONTEND_CA_CERT:-${V1_ROOT}/config/tls/server.crt}" --silent --show-error --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${FRONTEND_TLS_PORT}" 2>/dev/null || true)
   if [[ "$f_code" =~ ^(200|304|301|302)$ ]]; then
     chk_pass "Frontend responds (HTTPS ${f_code})"
     FRONTEND_OK=1
@@ -100,7 +116,7 @@ fi
 FRONTEND_API_OK=0
 fp_code="000"
 for _ in $(seq 1 "$TIMEOUT"); do
-  fp_code=$(curl -sk --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${FRONTEND_TLS_PORT}/api/v1/health" 2>/dev/null || true)
+  fp_code=$(curl --cacert "${NEOSECRA_FRONTEND_CA_CERT:-${V1_ROOT}/config/tls/server.crt}" --silent --show-error --max-time 3 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${FRONTEND_TLS_PORT}/api/v1/health" 2>/dev/null || true)
   if [[ "$fp_code" == "200" ]]; then
     chk_pass "Frontend API proxy responds (HTTPS 200)"
     FRONTEND_API_OK=1
@@ -112,9 +128,13 @@ done
 
 # --- API endpoints ---
 if [[ $HEALTHY -eq 1 ]]; then
-  for ep in "/api/v1/health" "/api/v1/auth/login" "/api/v1/auth/me" "/api/v1/customers" \
-            "/api/v1/fortigate" "/api/v1/active-directory" "/api/v1/veeam" "/api/v1/m365" \
-            "/api/v1/scans" "/api/v1/findings" "/api/v1/reports"; do
+  if [[ "$PRODUCT_CODE" == "pish" ]]; then
+    ep_list="/api/v1/health /api/v1/auth/login /api/v1/campaigns /api/v1/recipients /api/v1/reports"
+  else
+    ep_list="/api/v1/health /api/v1/auth/login /api/v1/auth/me /api/v1/customers /api/v1/fortigate /api/v1/active-directory /api/v1/veeam /api/v1/m365 /api/v1/scans /api/v1/findings /api/v1/reports"
+  fi
+
+  for ep in $ep_list; do
     code=$(curl -s -o /dev/null -w '%{http_code}' "${BASE}${ep}" 2>/dev/null || true)
     # Reachability probe (no auth token): 2xx/3xx/401/403/404 all prove the API
     # is alive and routing — module roots legitimately answer 404, protected

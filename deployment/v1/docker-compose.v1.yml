@@ -55,6 +55,7 @@ services:
       - backups:/app/backups
       - ./ca:/app/ca:ro
       - ./ca:/etc/neosecra/ca:ro
+      - ./config/tls:/app/tls:ro
       # Update-agent bridge mounts (host-side systemd path unit)
       - ${STATE_BRIDGE_HOST_DIR:-/opt/neosecra/assessment/state/upgrade-bridge}/trigger:/upgrade-bridge/trigger:rw
       - ${STATE_BRIDGE_HOST_DIR:-/opt/neosecra/assessment/state/upgrade-bridge}/journal:/upgrade-bridge/journal:ro

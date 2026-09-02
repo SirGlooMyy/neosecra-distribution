@@ -6,7 +6,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-CERT="${CLOUDFLARE_ORIGIN_CERT:-${ROOT_DIR}/update-server/certs/neosecra.com.crt}"
+CERT="${CLOUDFLARE_ORIGIN_CERT:-${ROOT_DIR}/update-server/certs/neosecra-origin.crt}"
 CADDYFILE="${CLOUDFLARE_ORIGIN_CADDYFILE:-${ROOT_DIR}/update-server/Caddyfile}"
 KEY="${CLOUDFLARE_ORIGIN_KEY:-}"
 CA_ROOT="${CLOUDFLARE_ORIGIN_CA_ROOT:-}"
@@ -71,14 +71,14 @@ for path in \
   'registry.neosecra.com:9447'; do
   host="${path%:*}"
   port="${path##*:}"
-  pair="tls /etc/caddy/certs/neosecra.com.crt /etc/caddy/certs/neosecra.com.key"
+  pair="tls /etc/caddy/certs/neosecra-origin.crt /etc/caddy/certs/neosecra-origin.key"
   if grep -Fq "$pair" "$CADDYFILE" && grep -Fq "$host:$port" "$CADDYFILE"; then
     pass "Caddy maps $host:$port to the Origin pair"
   else
     fail "Caddy maps $host:$port to the Origin pair"
   fi
 done
-if grep -Fq 'tls /etc/caddy/certs/neosecra.com.crt /etc/caddy/certs/neosecra.com.key' "$CADDYFILE"; then
+if grep -Fq 'tls /etc/caddy/certs/neosecra-origin.crt /etc/caddy/certs/neosecra-origin.key' "$CADDYFILE"; then
   pass "Caddy has a public listener Origin pair"
 else
   fail "Caddy has a public listener Origin pair"

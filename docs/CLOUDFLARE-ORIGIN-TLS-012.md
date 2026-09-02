@@ -14,7 +14,7 @@ Cloudflare mode.
 ## Candidate certificate and secret boundary
 
 The public Cloudflare Origin CA wildcard leaf is
-`update-server/certs/neosecra.com.crt`. It must contain SANs
+`update-server/certs/neosecra-origin.crt`. It must contain SANs
 `*.neosecra.com` and `neosecra.com`, be currently valid, and verify against
 the operator-supplied Cloudflare Origin RSA root. The matching private key is
 never committed or copied into this repository. On the origin host keep it in
@@ -22,8 +22,8 @@ the root-owned directory below:
 
 ```text
 /opt/neosecra/secrets/caddy/
-  neosecra.com.crt  root:root  0644
-  neosecra.com.key  root:root  0600
+  neosecra-origin.crt  root:root  0644
+  neosecra-origin.key  root:root  0600
 ```
 
 The key is supplied only through an interactive, approved operator path. Do
@@ -80,8 +80,8 @@ the key:
 
 ```bash
 ROOT=/secure/operator-input/cloudflare-origin-rsa-root.pem
-CERT=/opt/neosecra/secrets/caddy/neosecra.com.crt
-KEY=/opt/neosecra/secrets/caddy/neosecra.com.key
+CERT=/opt/neosecra/secrets/caddy/neosecra-origin.crt
+KEY=/opt/neosecra/secrets/caddy/neosecra-origin.key
 
 openssl x509 -in "$CERT" -noout -subject -issuer -dates \
   -fingerprint -sha256 -ext subjectAltName

@@ -1,0 +1,8 @@
+{
+  "rollback_to": "0.9.0",
+  "authorized_at": "2026-08-30T13:00:00Z",
+  "expires_at": "2027-01-01T00:00:00Z",
+  "signatures": {
+    "minisign_signature": "mock_signature_base64_data"
+  }
+}

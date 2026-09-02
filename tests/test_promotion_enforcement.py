@@ -85,13 +85,18 @@ def get_standard_channel(digest):
     return {
         "channel": "soc-stable",
         "product": "soc",
+        "product_code": "soc",
+        "edition": "standard",
+        "status": "available",
+        "updated": "2026-08-31T00:00:00Z",
+        "current_version": "1.0.0",
         "releases": [{"version": "1.0.0", "images": {"backend": {"reference": "reg/backend", "digest": digest}}}]
     }
 
 def get_standard_docker_mock(digest):
     return f"""#!/bin/bash
 if [[ "$1" == "compose" && "$2" == "config" ]]; then
-  echo '{{"services": {{"backend": {{"image": "reg/backend"}}}}}}'
+  echo '{{"services": {{"backend": {{"image": "reg/backend@{digest}"}}}}}}'
   exit 0
 fi
 if [[ "$1" == "inspect" ]]; then
@@ -131,6 +136,8 @@ def test_duplicate_digest(base_env):
     run_script, _ = base_env
     channel = {
         "channel": "soc-stable", "product": "soc",
+        "product_code": "soc", "edition": "standard", "status": "available",
+        "updated": "2026-08-31T00:00:00Z", "current_version": "1.0.0",
         "releases": [{"version": "1.0.0", "images": {
             "backend": {"reference": "reg/backend", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
             "frontend": {"reference": "reg/frontend", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
@@ -163,7 +170,7 @@ def test_local_repodigest_mismatch(base_env):
     run_script, _ = base_env
     res = run_script(get_standard_docker_mock("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"), "#!/bin/bash\nexit 0", get_standard_channel("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
     assert res.returncode == 4
-    assert "Enforcement checks failed" in res.stdout
+    assert "Image mapping failure" in res.stdout
 
 def test_unpinned_third_party(base_env):
     run_script, _ = base_env
@@ -200,7 +207,9 @@ def test_atomic_env_update(base_env):
     run_script, env_file = base_env
     # We simulate a success mapping, but signature fails. Env should remain unchanged.
     channel = {
-        "channel": "soc-stable", "product": "soc",
+        "channel": "soc-stable", "product": "soc", "product_code": "soc",
+        "edition": "standard", "status": "available", "updated": "2026-08-31T00:00:00Z",
+        "current_version": "1.0.0",
         "releases": [{"version": "1.0.0", "images": {
             "backend": {"reference": "reg/backend", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
         }}]
@@ -214,7 +223,9 @@ def test_atomic_env_update(base_env):
 def test_success_three_images(base_env):
     run_script, env_file = base_env
     channel = {
-        "channel": "soc-stable", "product": "soc",
+        "channel": "soc-stable", "product": "soc", "product_code": "soc",
+        "edition": "standard", "status": "available", "updated": "2026-08-31T00:00:00Z",
+        "current_version": "1.0.0",
         "releases": [{"version": "1.0.0", 
             "images": {
                 "backend": {"reference": "reg/backend", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
@@ -227,7 +238,7 @@ def test_success_three_images(base_env):
     }
     docker_mock = """#!/bin/bash
 if [[ "$1" == "compose" && "$2" == "config" ]]; then
-  echo '{"services": {"backend": {"image": "reg/backend"}, "frontend": {"image": "reg/frontend"}, "redis": {"image": "redis"}}}'
+  echo '{"services": {"backend": {"image": "reg/backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "frontend": {"image": "reg/frontend@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, "redis": {"image": "redis@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}}'
   exit 0
 fi
 if [[ "$1" == "inspect" ]]; then
@@ -246,4 +257,3 @@ exit 0
     assert "BACKEND_IMAGE=reg/backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" in content
     assert "FRONTEND_IMAGE=reg/frontend@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" in content
     assert "REDIS_IMAGE=redis@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" in content
-

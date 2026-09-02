@@ -152,6 +152,17 @@ VERSION_ENDPOINT="${PRERELEASE_VERSION_ENDPOINT:-/api/v1/version}"
 
 COMPOSE=(docker compose --profile openvas -f docker-compose.v1.yml --env-file .env.v1)
 
+TLS_CURL_OPTS=(--silent --show-error --max-time 10)
+TLS_MODE="${PRERELEASE_TLS_MODE:-public}"
+if [[ "${TLS_MODE}" == "internal" ]]; then
+  CA_BUNDLE="$(env_val UPGRADE_CHANNEL_CA_BUNDLE)"
+  [[ -n "${CA_BUNDLE}" && -f "${CA_BUNDLE}" ]] || {
+    echo "PRERELEASE_GATE|FAIL|frontend-https|internal TLS CA bundle missing"
+    exit 1
+  }
+  TLS_CURL_OPTS+=(--cacert "${CA_BUNDLE}")
+fi
+
 # (a) 7 container ayakta
 running="$("${COMPOSE[@]}" ps --status running --format '{{.Service}}' 2>/dev/null || true)"
 for svc in backend frontend worker beat openvas postgres redis; do
@@ -226,7 +237,7 @@ fi
 # (h2) frontend HTTPS + HTTP→HTTPS redirect
 FE_TLS_PORT="$(env_val FRONTEND_TLS_PORT)"; FE_TLS_PORT="${FE_TLS_PORT:-23443}"
 FE_PORT="$(env_val FRONTEND_PORT)"; FE_PORT="${FE_PORT:-23300}"
-fe_tls_code="$(curl -sk --max-time 10 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${FE_TLS_PORT}/health" 2>/dev/null || true)"
+fe_tls_code="$(curl "${TLS_CURL_OPTS[@]}" -o /dev/null -w '%{http_code}' "https://127.0.0.1:${FE_TLS_PORT}/health" 2>/dev/null || true)"
 if [[ "$fe_tls_code" == "200" ]]; then
   echo "PRERELEASE_GATE|PASS|frontend-https|HTTPS ${fe_tls_code} on ${FE_TLS_PORT}"
 else

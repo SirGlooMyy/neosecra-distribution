@@ -20,9 +20,6 @@ services:
       - "9445:9445"
       - "9446:9446"
       - "9447:9447"
-      # Geri donus plani (eski public davranis; Cloudflare gecis oncesi):
-      # - "80:80"
-      # - "443:443"
     volumes:
       # CADDYFILE: selectable via env; default to Caddyfile (internal/custom CA)
       - ${CADDYFILE:-./Caddyfile}:/etc/caddy/Caddyfile:ro

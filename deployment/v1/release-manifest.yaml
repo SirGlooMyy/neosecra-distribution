@@ -8,7 +8,7 @@
 
 product: neosecra-security-health
 edition: security-health
-version: 1.3.2
+version: 1.3.44
 channel: stable
 
 # Git commit — stamped at release time by CI.

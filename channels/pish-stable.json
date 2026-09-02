@@ -4,21 +4,7 @@
   "product_code": "pish",
   "edition": "standard",
   "current_version": null,
-  "status": "reserved",
-  "note": "Phish release lifecycle contract established. Test foundation verified. Signed artifact staging pending.",
-  "required_runtime": {
-    "docker_min": "24.0",
-    "compose_min": "2.20"
-  },
-  "compatibility": {
-    "platform_version_line": "1.x",
-    "required_postgres": "16",
-    "required_redis": "7",
-    "license_contract": "ed25519_v1"
-  },
-  "health_gates": {
-    "api": "/health",
-    "celery_probe": "celery status"
-  },
-  "releases": []
+  "releases": [],
+  "status": "unavailable",
+  "note": "No signed PISH artifact has been published."
 }

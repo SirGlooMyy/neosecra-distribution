@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VERIFIER_SCRIPT = os.path.join(REPO_ROOT, "deployment", "lib", "artifact-verifier.sh")
+VERIFIER_SCRIPT = os.path.join(REPO_ROOT, "deployment", "v1", "agent", "artifact-verifier.sh")
 
 
 def run_verifier_fn(fn_name, *args, extra_path=None):
@@ -168,6 +168,11 @@ def test_sbom_spdx_pass(tmp_path):
         "dataLicense": "CC0-1.0",
         "SPDXID": "SPDXRef-DOCUMENT",
         "name": "NeoSecra-Platform-SBOM",
+        "documentNamespace": "https://update.neosecra.com/sbom/test",
+        "creationInfo": {
+            "created": "2026-08-31T00:00:00Z",
+            "creators": ["Tool: NeoSecra test generator"],
+        },
         "packages": []
     }
     content = json.dumps(spdx_data).encode("utf-8")

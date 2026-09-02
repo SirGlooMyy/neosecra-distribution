@@ -82,6 +82,23 @@ FAIL=""
 [[ -z "$ARCHIVE" ]] && { echo "[ERROR] --archive is required"; FAIL=1; }
 [[ -n "$FAIL" ]] && exit 1
 
+
+# ---------------------------------------------------------------------------
+# Pre-release Gate Enforcement
+# --------------------------------------------------------------------------
+if [[ "$CHANNEL" == *"stable"* ]]; then
+    echo "[INFO] Stable promotion detected. Enforcing pre-release gate..."
+    GATE_SCRIPT="${REPO_ROOT}/ci/prerelease-gate.sh"
+    if [[ ! -x "$GATE_SCRIPT" ]]; then
+        echo "[ERROR] Pre-release gate script not found or not executable: $GATE_SCRIPT"
+        exit 1
+    fi
+    if ! "$GATE_SCRIPT"; then
+        echo "[ERROR] Pre-release gate failed. Stable promotion aborted."
+        exit 1
+    fi
+fi
+
 # Validate semver
 if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
     echo "[ERROR] --version must match ^[0-9]+\.[0-9]+\.[0-9]+$ (got: $VERSION)"

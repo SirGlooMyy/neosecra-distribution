@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "platform_version": "1.0.0",
+  "release_id": "b1cd2e65-38c2-4a74-b586-21b330dc37dc",
+  "released_at": "2026-08-30T12:00:00Z",
+  "channel": "assessment-stable",
+  "components": {
+    "assessment": {
+      "version": "1.0.0",
+      "commit_hash": "abcdef1234567890",
+      "migration_head": "063_head",
+      "health_gate_endpoint": "/api/v1/health",
+      "optional": false,
+      "images": {
+        "backend": {
+          "reference": "registry.neosecra.local/assessment-backend",
+          "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "dependencies": {}
+    }
+  },
+  "signatures": {
+    "sha256_checksum": "1111111111111111111111111111111111111111111111111111111111111111",
+    "minisign_signature": "mock_signature_base64_data",
+    "ed25519_signature": "mock_ed25519_signature"
+  },
+  "attestations": {
+    "cosign_attestation_type": "custom-ed25519",
+    "verifier_chain": "neosecra-ca",
+    "provenance_predicate": "mock-predicate"
+  },
+  "sbom": {
+    "format": "SPDX-2.3-JSON",
+    "uri": "https://neosecra.local/sbom.json",
+    "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "rollback_plan": {
+    "supported_rollback_version": "0.9.0",
+    "database_strategy": "backup_restore",
+    "automatic_on_health_failure": true
+  }
+}

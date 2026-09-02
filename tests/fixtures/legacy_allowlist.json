@@ -1,0 +1,15 @@
+{
+  "assessment-stable": {
+    "product": "assessment",
+    "releases": {
+      "0.9.0": {
+        "expires_at": "2020-01-01T00:00:00Z",
+        "archive_sha256": "mock_sha"
+      },
+      "0.9.1": {
+        "expires_at": "2028-01-01T00:00:00Z",
+        "archive_sha256": "mock_sha"
+      }
+    }
+  }
+}

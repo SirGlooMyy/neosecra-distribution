@@ -47,7 +47,7 @@ root cause but is not proof of the requested origin.
 
 ## Candidate certificate and local mapping
 
-`update-server/certs/neosecra.com.crt` is the existing Cloudflare Origin CA
+`update-server/certs/neosecra-origin.crt` is the existing Cloudflare Origin CA
 wildcard leaf and is byte-identical to the prior approved Origin candidate.
 
 | Field | Observed |

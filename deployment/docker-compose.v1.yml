@@ -48,6 +48,7 @@ services:
       - reports:/app/reports
       - backups:/app/backups
       - ./ca:/app/ca:ro
+      - ./config/tls:/app/tls:ro
     ports:
       - "${BACKEND_PORT:-23800}:8000"
     depends_on:
