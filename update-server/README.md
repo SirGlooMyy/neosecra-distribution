@@ -140,6 +140,19 @@ minisign -G -s ~/.neosecra/update-signing-YYYYMMDD.key \
     --bundle /tmp/docker-bundle-1.1.2.tar.zst \
     --rsync user@update.neosecra.com:/srv/update
 
+# SOC releases require a complete immutable lock for the nine Compose
+# services (each value is name=reference@sha256:<64 lowercase hex>) and a
+# Docker bundle. The publisher refuses mutable, missing, duplicate, or
+# unknown entries before staging or signing.
+./update-server/publish.sh \
+    --product soc \
+    --channel beta \
+    --version 1.0.1 \
+    --archive /tmp/neosecra-soc-1.0.1.tar.gz \
+    --bundle /tmp/neosecra-soc-1.0.1-bundle.tar.zst \
+    --images-lock /tmp/neosecra-soc-1.0.1.images.lock \
+    --rsync user@update.neosecra.com:/srv/update
+
 # Dry-run first to verify:
 ./update-server/publish.sh \
     --product assessment \

@@ -262,7 +262,7 @@ def main() -> None:
     if manifest_services != compose_services:
         fail("Compose services do not exactly match the release image mapping")
 
-    seen_digests: set[str] = set()
+    seen_digests: dict[str, tuple[str, str]] = {}
     for service_name in sorted(compose_services):
         service = services[service_name]
         raw_ref = service.get("image")
@@ -296,8 +296,12 @@ def main() -> None:
             fail(f"{label} compose digest does not match the release")
         if service_name in images:
             if expected_digest in seen_digests:
-                fail(f"Duplicate application image digest for {service_name}")
-            seen_digests.add(expected_digest)
+                previous_service, previous_ref = seen_digests[expected_digest]
+                allowed_shared = {previous_service, service_name} <= {"backend", "worker", "beat"}
+                if not allowed_shared or previous_ref != expected_ref:
+                    fail(f"Duplicate application image digest for {service_name}")
+            else:
+                seen_digests[expected_digest] = (service_name, expected_ref)
             print(f"ENFORCE {service_name} {base_ref} {expected_digest}")
         else:
             print(f"DEPENDENCY {service_name} {base_ref} {expected_digest}")

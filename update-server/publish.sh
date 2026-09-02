@@ -29,6 +29,7 @@ Required:
 
 Options:
   --bundle <path>        Path to docker-bundle-<version>.tar.zst (optional)
+  --images-lock <path>   SOC image lock (required for --product soc)
   --key <path>           Minisign secret key (default: ${DEFAULT_KEY})
   --www <path>           WWW directory (default: ${DEFAULT_WWW})
   --rsync <target>       rsync target, e.g. user@host:/srv/update
@@ -51,6 +52,7 @@ CHANNEL=""
 VERSION=""
 ARCHIVE=""
 BUNDLE=""
+IMAGES_LOCK=""
 KEY="${DEFAULT_KEY}"
 WWW="${DEFAULT_WWW}"
 RSYNC_TARGET=""
@@ -63,6 +65,7 @@ while [[ $# -gt 0 ]]; do
         --version)   VERSION="$2";  shift 2 ;;
         --archive)   ARCHIVE="$2";  shift 2 ;;
         --bundle)    BUNDLE="$2";   shift 2 ;;
+        --images-lock) IMAGES_LOCK="$2"; shift 2 ;;
         --key)       KEY="$2";      shift 2 ;;
         --www)       WWW="$2";      shift 2 ;;
         --rsync)     RSYNC_TARGET="$2"; shift 2 ;;
@@ -81,6 +84,68 @@ FAIL=""
 [[ -z "$VERSION" ]] && { echo "[ERROR] --version is required"; FAIL=1; }
 [[ -z "$ARCHIVE" ]] && { echo "[ERROR] --archive is required"; FAIL=1; }
 [[ -n "$FAIL" ]] && exit 1
+
+# SOC releases are composed from nine services in release/compose.yaml.  The
+# lock is the publisher-side source of truth for the channel's image map; a
+# missing or mutable entry must abort before any artifact is staged or signed.
+validate_soc_images_lock() {
+    [[ "$PRODUCT" == "soc" ]] || {
+        [[ -z "$IMAGES_LOCK" ]] || { echo "[ERROR] --images-lock is only valid for --product soc"; return 1; }
+        return 0
+    }
+    [[ -n "$IMAGES_LOCK" ]] || { echo "[ERROR] --images-lock is required for --product soc"; return 1; }
+    [[ -n "$BUNDLE" ]] || { echo "[ERROR] --bundle is required for --product soc"; return 1; }
+    [[ -f "$IMAGES_LOCK" && ! -L "$IMAGES_LOCK" ]] || { echo "[ERROR] SOC images lock is missing or unsafe: $IMAGES_LOCK"; return 1; }
+    command -v python3 >/dev/null 2>&1 || { echo "[ERROR] python3 is required to validate SOC images lock"; return 1; }
+    python3 - "$IMAGES_LOCK" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+required = {"postgres", "redis", "backend", "worker", "beat", "frontend", "soc-ai-agent", "nginx", "caddy"}
+name_re = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
+ref_re = re.compile(r"^[a-z0-9][a-z0-9./:_-]*$")
+digest_re = re.compile(r"^sha256:[0-9a-f]{64}$")
+entries = {}
+seen_digests = {}
+for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    line = raw.strip()
+    if not line or line.startswith("#"):
+        continue
+    if "=" not in line:
+        raise SystemExit(f"[ERROR] invalid SOC images lock line {lineno}: expected name=ref@sha256:<64 hex>")
+    name, value = (part.strip() for part in line.split("=", 1))
+    if not name_re.fullmatch(name) or name in entries:
+        raise SystemExit(f"[ERROR] invalid or duplicate SOC image name at line {lineno}")
+    if "@" not in value:
+        raise SystemExit(f"[ERROR] mutable SOC image reference at line {lineno}")
+    reference, digest = value.rsplit("@", 1)
+    if not ref_re.fullmatch(reference) or reference != reference.lower() or reference.endswith(":latest"):
+        raise SystemExit(f"[ERROR] invalid or mutable SOC image reference for {name}")
+    if not digest_re.fullmatch(digest):
+        raise SystemExit(f"[ERROR] SOC image {name} is not pinned to a lowercase sha256 digest")
+    if digest in seen_digests:
+        previous_name, previous_reference = seen_digests[digest]
+        shared_names = {previous_name, name}
+        if not shared_names <= {"backend", "worker", "beat"} or previous_reference != reference:
+            raise SystemExit(f"[ERROR] duplicate SOC image digest is not an allowed backend/worker/beat share: {name}")
+    else:
+        seen_digests[digest] = (name, reference)
+    entries[name] = {"reference": reference, "digest": digest}
+if set(entries) != required:
+    missing = ",".join(sorted(required - set(entries)))
+    extra = ",".join(sorted(set(entries) - required))
+    detail = []
+    if missing:
+        detail.append("missing=" + missing)
+    if extra:
+        detail.append("unknown=" + extra)
+    raise SystemExit("[ERROR] SOC images lock must match compose services exactly (" + "; ".join(detail) + ")")
+PY
+}
+
+validate_soc_images_lock || exit 1
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +297,7 @@ echo " Channel:        ${CHANNEL}"
 echo " Version:        ${VERSION}"
 echo " Archive:        ${ARCHIVE}"
 echo " Bundle:         ${BUNDLE:-<not provided>}"
+echo " Images lock:    ${IMAGES_LOCK:-<not provided>}"
 echo " Bootstrap:      ${BOOTSTRAP_BASENAME:-<not found>}"
 echo " Key:            ${KEY}"
 echo " WWW dir:        ${WWW}"
@@ -309,6 +375,7 @@ if [[ $DRY_RUN -eq 1 ]]; then
     echo "[DRY-RUN] Would sign channel JSON"
 else
     # Seed from repo if www copy doesn't exist
+    mkdir -p "${WWW_CHANNELS}"
     if [[ ! -f "${WWW_CHANNEL_FILE}" ]]; then
         if [[ -f "${REPO_CHANNEL_FILE}" ]]; then
             log "Seeding ${WWW_CHANNEL_FILE} from ${REPO_CHANNEL_FILE}"
@@ -368,9 +435,23 @@ bundle_url     = sys.argv[13]
 bundle_sha256  = sys.argv[14]
 bundle_size    = int(sys.argv[15])
 bundle_sig_url = sys.argv[16]
+images_lock_path = sys.argv[17]
 
 with open(inpath, "r") as f:
     channel = json.load(f)
+
+if images_lock_path != "none":
+    if channel.get("channel") != "soc-beta" and channel.get("channel") != "soc-stable":
+        raise SystemExit("SOC images can only be published to soc-beta or soc-stable")
+    channel_product = str(channel.get("product_code") or channel.get("product") or "").strip().lower()
+    if channel_product not in {"soc", "neosecra-soc"}:
+        raise SystemExit("SOC channel product identity mismatch")
+    # Normalize the historical soc-beta alias before writing the generated
+    # channel. Consumers bind to the canonical product_code= soc identity.
+    channel["product"] = "soc"
+    channel["product_code"] = "soc"
+    channel["edition"] = "standard"
+    channel["status"] = "available"
 
 channel["current_version"] = version
 channel["updated"] = released_at
@@ -404,6 +485,25 @@ if bundle_url != "none":
     # bundle_url field instead of docker_bundle.url — emit both (same value).
     new_rel["bundle_url"] = bundle_url
 
+if images_lock_path != "none":
+    import re
+    required = {"postgres", "redis", "backend", "worker", "beat", "frontend", "soc-ai-agent", "nginx", "caddy"}
+    digest_re = re.compile(r"^sha256:[0-9a-f]{64}$")
+    images = {}
+    with open(images_lock_path, "r", encoding="utf-8") as stream:
+        for lineno, raw in enumerate(stream, 1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            name, value = (part.strip() for part in line.split("=", 1))
+            reference, digest = value.rsplit("@", 1)
+            if name in images or name not in required or not digest_re.fullmatch(digest):
+                raise SystemExit(f"invalid SOC images lock entry at line {lineno}")
+            images[name] = {"reference": reference, "digest": digest}
+    if set(images) != required:
+        raise SystemExit("SOC images lock does not match the release compose service set")
+    new_rel["images"] = images
+
 # Find and update existing entry, or append
 found = False
 for i, rel in enumerate(channel.get("releases", [])):
@@ -432,7 +532,8 @@ with open(outpath, "w") as f:
     "${BASE_URL}/releases/${VERSION}/${BOOTSTRAP_SIG_FILE:-none}" \
     "${BASE_URL}/releases/${VERSION}/${BUNDLE_BASENAME:-none}" \
     "${BUNDLE_SHA256:-0}" "${BUNDLE_SIZE:-0}" \
-    "${BASE_URL}/releases/${VERSION}/${BUNDLE_SIG_FILE:-none}"
+    "${BASE_URL}/releases/${VERSION}/${BUNDLE_SIG_FILE:-none}" \
+    "${IMAGES_LOCK:-none}"
 
     # Atomic mv
     mv "${TMPFILE}" "${WWW_CHANNEL_FILE}"

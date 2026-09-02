@@ -268,7 +268,7 @@ if status not in {"available", "ready"}:
 releases = data.get("releases")
 if not isinstance(releases, list) or not releases:
     raise SystemExit(3)
-seen = set()
+seen = {}
 matches = []
 for release in releases:
     if not isinstance(release, dict):
@@ -909,7 +909,7 @@ if not isinstance(images, dict) or not isinstance(dependencies, dict):
     raise SystemExit(1)
 digest_re = re.compile(r"^sha256:[0-9a-f]{64}$")
 name_re = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
-seen = set()
+seen = {}
 for section, label in ((images, "ENFORCE"), (dependencies, "DEPENDENCY")):
     for name in sorted(section):
         if not name_re.fullmatch(str(name)):
@@ -923,10 +923,13 @@ for section, label in ((images, "ENFORCE"), (dependencies, "DEPENDENCY")):
             raise SystemExit(1)
         if not digest_re.fullmatch(digest):
             raise SystemExit(1)
-        if label == "ENFORCE" and digest in seen:
-            raise SystemExit(1)
         if label == "ENFORCE":
-            seen.add(digest)
+            if digest in seen:
+                previous_name, previous_ref = seen[digest]
+                if not ({previous_name, name} <= {"backend", "worker", "beat"}) or previous_ref != ref:
+                    raise SystemExit(1)
+            else:
+                seen[digest] = (name, ref)
         print(f"{label}\t{name}\t{ref}\t{digest}")
 PY
   )" || die "SECURITY VIOLATION: Signed channel image mapping is invalid" 4
