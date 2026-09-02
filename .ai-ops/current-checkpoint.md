@@ -54,6 +54,11 @@
 - Scoped runbook/test/evidence added: `docs/CLOUDFLARE-ORIGIN-TLS-012.md`, `update-server/src/cloudflare-origin-test-012.sh`, `.ai-ops/evidence/DIST-LIVE-CLOUDFLARE-TLS-012.md`.
 - Status: `BLOCKED`; direct `.33` SNI, pre-change live backup, proxy reload, and two-round public smokes are `NOT_RUN`; `LIVE_VERIFIED` is prohibited until all gates pass.
 
+## DIST-LIVE-CLOUDFLARE-TLS-012 current attempt (2026-09-02)
+- Exact authorized SSH target `neosecra@10.33.99.13` was attempted once with a 15-second connection timeout and timed out before authentication (`rc=255`). No secret was entered or stored, no alternate host was used, and no further discovery/retry was performed.
+- Live config/cert inspection, metadata backup, Caddy validation/reload, rollback, direct SNI, and two-round public smoke remain `NOT_RUN`; public strict-TLS baseline remains `526` for all three names. `LIVE_VERIFIED` is prohibited.
+- Distribution task verdict: `BLOCKED` on the single verified reachability blocker. Next authorized workstream: `/home/sirgloomy/projects/neosecra-lisans` existing License entitlement implementation.
+
 ## DIST-GEMINI-AUDIT-011 completion checkpoint (2026-09-02)
 - Upgrade path now keeps canonical script/recovery roots stable across target-context switches; EXIT recovery trap is valid at top level and signed rollback invokes the original verifier.
 - Explicit targets pass anti-rollback; dry-run performs signed metadata/channel and read-only preflight only, with no lock, backup, release install, env/state write, image pull, or promotion.

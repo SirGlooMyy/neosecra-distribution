@@ -108,3 +108,22 @@ After the requested 429 wait interval, the exact same gates were rechecked:
 - No live backup, certificate/key copy, reload/recreate, rollback, or smoke
   round was possible. Verdict remains `BLOCKED` and `LIVE_VERIFIED` remains
   prohibited.
+
+## Current authorized access attempt (2026-09-02 UTC)
+
+- The exact authorized target `10.33.99.13` was attempted once with
+  `ssh -o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=1
+  neosecra@10.33.99.13 true`; it timed out before authentication
+  (`SSH_RC=255`, 15 seconds elapsed).
+- No password, private key, or interactive secret was entered, printed, stored,
+  or written to history. No alternate host was substituted and no further
+  discovery/retry was performed.
+- Because the origin control path is unavailable, no pre-change metadata
+  backup, Caddy/certificate path inspection, certificate/key installation,
+  config validation, reload/recreate, rollback, direct SNI probe, or public
+  smoke round was run. The three public Cloudflare endpoints remain at the
+  previously observed strict-TLS `526` baseline.
+
+**Current verdict: `BLOCKED`** — restore authorized SSH reachability to
+`10.33.99.13`, then execute the runbook and require both public smoke rounds
+plus all three direct SNI checks to pass before any `LIVE_VERIFIED` status.

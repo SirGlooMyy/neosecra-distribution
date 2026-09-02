@@ -48,3 +48,7 @@
   - **Verification:** pytest 58 passed; real offline missing-minisig E2E passed; Origin TLS static 12 passed/0 failed/3 skipped; `bash -n` passed; shellcheck unavailable; live `10.33.99.13` gates remain blocked/not run.
   - **Release orchestrator closure:** `cleanup()` now returns success so a successful dry-run exits `0`; immutable digest promotion remains the only stable path and refuses missing CI digests, missing cosign/SPDX verification, or mutable target replacement.
   - **Final local verification:** focused promotion/recovery/trust tests 31 passed; full pytest 58 passed; release dry-run `rc=0`; all shell syntax checks passed; prerelease gate failed closed on unavailable local `cosign`; live `.13` was not retried.
+
+- **2026-09-02 (DIST-LIVE-CLOUDFLARE-TLS-012 current attempt):**
+  - **Reachability gate:** One exact-target SSH attempt to `neosecra@10.33.99.13` timed out before authentication after 15 seconds (`rc=255`). No credentials, private key material, alternate host, or repeated discovery was used.
+  - **Live change state:** No backup, proxy/certificate inspection, install, validation, reload, recreate, rollback, direct SNI, or public smoke was possible. Strict Cloudflare `526` baseline and `BLOCKED` verdict remain; `LIVE_VERIFIED` is prohibited.
