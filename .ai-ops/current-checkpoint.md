@@ -1,5 +1,22 @@
 # neosecra-distribution — Operational Checkpoint
 
+## 2026-09-03 — SOC immutable channel publisher
+
+- SOC publisher now requires a Docker bundle and an exact nine-service
+  `name=reference@sha256:<64 lowercase hex>` lock, rejecting mutable, missing,
+  unknown, duplicate, or unsafe entries before staging/signing.
+- Upgrade mapping permits only the intentional shared backend/worker/beat
+  digest; all other duplicate application digests remain fail-closed.
+- Verification: full `pytest -q` `61 passed`; SOC publish/promotion/recovery/
+  trust/platform focus `34 passed`; shell syntax and diff/secret checks passed.
+- Scoped commit `6d15a5ec51f3daf045b89df112fce24003cb1df6` is pushed to
+  `origin/main`. Existing Hotspot channel and scratch/debug/backup files remain
+  dirty and untouched.
+- `.13` live publish/deploy is `NOT_RUN/BLOCKED`: `soc-stable` is reserved with
+  no release, and no real signing key, image bundle, or attested SOC artifact
+  was created. Evidence is in
+  `.ai-ops/evidence/soc-publish-contract-20260903.json`.
+
 - **Updated:** 2026-09-02
 - **Repository:** `/home/sirgloomy/projects/neosecra-distribution`
 - **Branch:** `main`

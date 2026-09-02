@@ -1,0 +1,29 @@
+{
+  "task": "SOC immutable Distribution publisher contract",
+  "recorded_at": "2026-09-02T22:55:50Z",
+  "repository": "/home/sirgloomy/projects/neosecra-distribution",
+  "branch": "main",
+  "head": "6d15a5ec51f3daf045b89df112fce24003cb1df6",
+  "origin_main": "6d15a5ec51f3daf045b89df112fce24003cb1df6",
+  "checks": {
+    "full_pytest": "61 passed; 0 failed",
+    "soc_publish_and_promotion_focus": "34 passed; 0 failed",
+    "shell_and_python_syntax": "PASS",
+    "diff_check": "PASS",
+    "staged_secret_scan": "PASS"
+  },
+  "publisher_contract": {
+    "required_soc_images": ["postgres", "redis", "backend", "worker", "beat", "frontend", "soc-ai-agent", "nginx", "caddy"],
+    "digest_policy": "immutable lowercase sha256; only backend/worker/beat may share exact ref+digest",
+    "bundle_required": true,
+    "channel_status": "available only after validated publish"
+  },
+  "live": {
+    "target": "10.34.99.13",
+    "status": "NOT_RUN",
+    "soc_stable": "reserved; no releases",
+    "reason": "A real signing key, immutable image bundle, and attested SOC release were not available",
+    "verdict": "BLOCKED"
+  },
+  "secrets": "No secret values recorded; unrelated dirty files were not staged"
+}
