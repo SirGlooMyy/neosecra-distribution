@@ -836,7 +836,9 @@ ok "Preflight passed"
 upsert_env_value_atomic() {
   local key="$1" val="$2" file="${3:-$ENV_FILE}"
   local tmp dir
-  [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "Invalid environment key" 4
+  if ! (LC_ALL=C; [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]); then
+    die "Invalid environment key" 4
+  fi
   [[ "$val" != *$'\n'* && "$val" != *$'\r'* ]] || die "Environment value contains a newline" 4
   dir="$(dirname "$file")"
   mkdir -p "$dir" || die "Environment directory could not be created" 12
