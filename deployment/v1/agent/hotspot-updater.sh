@@ -3,8 +3,8 @@
 #
 # The distribution update-agent verifies the channel/archive signature before
 # invoking this script. This script owns the Hotspot-specific transaction:
-# database backup, staged Compose build/migration, health gate, atomic current
-# symlink switch, and rollback on failure.
+# migration-gated database checkpoint, staged Compose build/migration, health
+# gate, atomic current symlink switch, and rollback on failure.
 set -Eeuo pipefail
 
 AGENT_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -142,14 +142,108 @@ env_value() {
   printf '%s' "${value}"
 }
 
+database_password_from_env() {
+  local env_file="$1"
+  [[ -f "${env_file}" && ! -L "${env_file}" ]] || return 1
+  python3 - "${env_file}" <<'PY'
+import re
+import sys
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
+path = Path(sys.argv[1])
+for line in path.read_text(encoding="utf-8").splitlines():
+    raw = line.strip()
+    if not raw or raw.startswith("#"):
+        continue
+    key, separator, value = line.partition("=")
+    if separator != "=" or key.strip() != "DATABASE_URL":
+        continue
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        value = value[1:-1]
+    value = re.sub(r"^postgres(?:ql)?\+[^:/@]+://", "postgresql://", value, count=1)
+    try:
+        password = urlsplit(value).password
+    except ValueError:
+        password = None
+    if password:
+        sys.stdout.write(unquote(password))
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+set_env_value() {
+  local file="$1" key="$2" value="$3"
+  [[ -f "${file}" && ! -L "${file}" ]] || return 1
+  python3 - "${file}" "${key}" "${value}" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+key = sys.argv[2]
+value = sys.argv[3]
+lines = path.read_text(encoding="utf-8").splitlines()
+replacement = f"{key}={value}"
+updated = False
+for index, line in enumerate(lines):
+    stripped = line.lstrip()
+    if stripped.startswith("#"):
+        continue
+    candidate, separator, _ = line.partition("=")
+    if separator == "=" and candidate.strip() == key:
+        lines[index] = replacement
+        updated = True
+        break
+if not updated:
+    lines.append(replacement)
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+}
+
+migration_signature() {
+  local tree="$1"
+  python3 - "${tree}/backend/alembic/versions" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+digest = hashlib.sha256()
+if root.is_dir():
+    for path in sorted(root.glob("*.py")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        digest.update(path.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+print(digest.hexdigest())
+PY
+}
+
+migration_required() {
+  [[ "$(migration_signature "$1")" != "$(migration_signature "$2")" ]]
+}
+
 compose_file() { printf '%s/docker-compose.yml' "$1"; }
 compose_env() { printf '%s/backend/.env' "$1"; }
 run_compose() {
-  local tree="$1" env_file="$2"
+  local tree="$1" env_file="$2" pg_password
   shift 2
   [[ -f "$(compose_file "$tree")" ]] || { echo "Compose file missing: $(compose_file "$tree")" >&2; return 1; }
   [[ -f "$env_file" ]] || { echo "Hotspot environment missing: $env_file" >&2; return 1; }
-  docker compose --project-name "$COMPOSE_PROJECT" --project-directory "$tree" \
+  pg_password="$(env_value "$env_file" POSTGRES_PASSWORD || true)"
+  pg_password="${pg_password:-${POSTGRES_PASSWORD:-}}"
+  if [[ -z "${pg_password}" ]]; then
+    pg_password="$(database_password_from_env "$env_file" || true)"
+  fi
+  [[ -n "${pg_password}" ]] || {
+    echo "POSTGRES_PASSWORD is missing and DATABASE_URL has no usable password" >&2
+    return 1
+  }
+  POSTGRES_PASSWORD="${pg_password}" docker compose --project-name "$COMPOSE_PROJECT" --project-directory "$tree" \
     --env-file "$env_file" -f "$(compose_file "$tree")" "$@"
 }
 
@@ -167,21 +261,22 @@ wait_api() {
 }
 
 write_journal() {
-  local status="$1" from="$2" backup="$3" error="${4:-}" path tmp
+  local status="$1" from="$2" backup="$3" error="${4:-}" migration="${5:-}" path tmp
   path="${JOURNAL_DIR}/upgrade-${from}-to-${TARGET}-$(date -u +%Y%m%dT%H%M%SZ).json"
   tmp="$(mktemp "${path}.tmp.XXXXXX")"
-  python3 - "${tmp}" "${status}" "${from}" "${TARGET}" "${backup}" "${error}" <<'PY'
+  python3 - "${tmp}" "${status}" "${from}" "${TARGET}" "${backup}" "${error}" "${migration}" <<'PY'
 import json
 import os
 import sys
 from datetime import datetime, timezone
-path, status, previous, target, backup, error = sys.argv[1:]
+path, status, previous, target, backup, error, migration = sys.argv[1:]
 record = {
     "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     "product": "hotspot", "product_code": "hotspot",
     "edition": os.environ.get("NEOSECRA_EDITION_ID", "standard"),
     "previous_version": previous, "target_version": target,
     "status": status, "backup_path": backup, "error": error,
+    "migration": migration or None,
 }
 with open(path, "w", encoding="utf-8") as stream:
     json.dump(record, stream, sort_keys=True, separators=(",", ":"))
@@ -224,7 +319,7 @@ validate_backup_source() {
 }
 
 backup_database() {
-  local tree="$1" env_file="$2" from="$3" stamp backup_dir pg_user pg_db dump
+  local tree="$1" env_file="$2" from="$3" migration="${4:-1}" stamp backup_dir pg_user pg_db dump
   [[ -f "${env_file}" && ! -L "${env_file}" ]] || { echo "Hotspot environment missing for backup" >&2; return 1; }
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   backup_dir="${BACKUPS_DIR}/${stamp}-${from}"
@@ -234,11 +329,17 @@ backup_database() {
   pg_user="$(env_value "$env_file" POSTGRES_USER)"; pg_user="${pg_user:-hotspot}"
   pg_db="$(env_value "$env_file" POSTGRES_DB)"; pg_db="${pg_db:-hotspot}"
   dump="${backup_dir}/hotspot-${from}-db.sql"
-  if ! run_compose "$tree" "$env_file" exec -T postgres pg_dump --no-owner --clean --if-exists -U "$pg_user" -d "$pg_db" > "$dump"; then
-    rm -rf -- "$backup_dir"
-    return 1
+  if [[ "${migration}" == "1" ]]; then
+    if ! run_compose "$tree" "$env_file" exec -T postgres pg_dump --no-owner --clean --if-exists -U "$pg_user" -d "$pg_db" > "$dump"; then
+      rm -rf -- "$backup_dir"
+      return 1
+    fi
+    [[ -s "$dump" ]] || { rm -rf -- "$backup_dir"; echo "Database backup is empty" >&2; return 1; }
+  else
+    # Frontend/backend-only updates with an unchanged migration set do not
+    # take a database dump. Keep a metadata marker and env checkpoint.
+    printf '%s\n' "SKIPPED_NO_MIGRATION" > "$dump"
   fi
-  [[ -s "$dump" ]] || { rm -rf -- "$backup_dir"; echo "Database backup is empty" >&2; return 1; }
   atomic_write_text "${dump}.sha256" "$(sha256sum "${dump}")" 600
   atomic_write_text "${backup_dir}/env.sha256" "$(sha256sum "${backup_dir}/env")" 600
   printf '%s\n' "$backup_dir"
@@ -285,6 +386,11 @@ preserve_install_config() {
     echo "Existing Hotspot backend/.env not found" >&2
     return 1
   fi
+  # The application reports the deployed release through this non-secret
+  # setting; preserving the old value would make a successful upgrade appear
+  # to be running the previous version.
+  set_env_value "${staging}/backend/.env" PRODUCT_VERSION "${TARGET}"
+  chmod 0600 "${staging}/backend/.env"
   if [[ -d "${old_tree}/deploy/ca" && ! -d "${staging}/deploy/ca" ]]; then
     mkdir -p "${staging}/deploy"
     cp -a "${old_tree}/deploy/ca" "${staging}/deploy/ca"
@@ -294,6 +400,10 @@ preserve_install_config() {
 restore_database() {
   local tree="$1" env_file="$2" backup_dir="$3" pg_user pg_db dump
   dump="$(verify_backup "$backup_dir")" || return 1
+  if grep -Fxq "SKIPPED_NO_MIGRATION" "$dump"; then
+    echo "Database restore is unavailable: backup was skipped because no migration was required" >&2
+    return 12
+  fi
   pg_user="$(env_value "$env_file" POSTGRES_USER)"; pg_user="${pg_user:-hotspot}"
   pg_db="$(env_value "$env_file" POSTGRES_DB)"; pg_db="${pg_db:-hotspot}"
   run_compose "$tree" "$env_file" up -d postgres
@@ -381,27 +491,34 @@ fail_update() {
 }
 
 apply_update() {
-  local old_tree from backup_dir
+  local old_tree from backup_dir migration migration_status start_args
   old_tree="$(current_tree)"
   [[ -n "${old_tree}" && -f "$(compose_file "${old_tree}")" ]] || { echo "Hotspot current release is not installed" >&2; return 1; }
   from="$(current_version)"
   [[ "${TARGET}" != "${from}" ]] || { echo "Hotspot is already on ${TARGET}" >&2; return 1; }
   verify_archive
-  if ! backup_dir="$(backup_database "${old_tree}" "$(compose_env "${old_tree}")" "${from}")"; then
-    write_journal "FAILED" "${from}" "" "BACKUP_FAILED"
-    return 1
-  fi
   STAGING="${RELEASES_DIR}/.staging-${TARGET}-$$"
   if [[ -e "${STAGING}" || -L "${STAGING}" ]]; then rm -rf -- "${STAGING}"; fi
   if ! extract_release "${ARCHIVE}" "${STAGING}"; then
-    write_journal "FAILED" "${from}" "${backup_dir}" "ARCHIVE_EXTRACTION_FAILED"
+    write_journal "FAILED" "${from}" "" "ARCHIVE_EXTRACTION_FAILED"
     return 1
   fi
   if ! preserve_install_config "${old_tree}" "${STAGING}"; then
-    fail_update "${old_tree}" "$(compose_env "${old_tree}")" "${from}" "${backup_dir}" "CONFIG_PRESERVE_FAILED"
+    fail_update "${old_tree}" "$(compose_env "${old_tree}")" "${from}" "" "CONFIG_PRESERVE_FAILED"
     return 1
   fi
   atomic_write_text "${STAGING}/VERSION" "${TARGET}" 600
+  if migration_required "${old_tree}" "${STAGING}"; then
+    migration=1
+    migration_status="REQUIRED"
+  else
+    migration=0
+    migration_status="SKIPPED_NO_MIGRATION"
+  fi
+  if ! backup_dir="$(backup_database "${old_tree}" "$(compose_env "${old_tree}")" "${from}" "${migration}")"; then
+    fail_update "${old_tree}" "$(compose_env "${old_tree}")" "${from}" "" "BACKUP_FAILED"
+    return 1
+  fi
   if ! run_compose "${STAGING}" "$(compose_env "${STAGING}")" config >/dev/null; then
     fail_update "${old_tree}" "$(compose_env "${old_tree}")" "${from}" "${backup_dir}" "COMPOSE_CONFIG_FAILED"
     return 1
@@ -414,11 +531,18 @@ apply_update() {
     fail_update "${old_tree}" "$(compose_env "${STAGING}")" "${from}" "${backup_dir}" "DEPENDENCY_START_FAILED"
     return 1
   fi
-  if ! run_compose "${STAGING}" "$(compose_env "${STAGING}")" run --rm migrate; then
+  if [[ "${migration}" == "1" ]] && ! run_compose "${STAGING}" "$(compose_env "${STAGING}")" run --rm migrate; then
     fail_update "${old_tree}" "$(compose_env "${STAGING}")" "${from}" "${backup_dir}" "MIGRATION_FAILED"
     return 1
   fi
-  if ! run_compose "${STAGING}" "$(compose_env "${STAGING}")" up -d --remove-orphans api worker beat admin portal; then
+  if [[ "${migration}" == "1" ]]; then
+    start_args=(up -d --remove-orphans api worker beat admin portal)
+  else
+    # Avoid Compose implicitly starting the migrate dependency when there are
+    # no migration changes in this release.
+    start_args=(up -d --no-deps api worker beat admin portal)
+  fi
+  if ! run_compose "${STAGING}" "$(compose_env "${STAGING}")" "${start_args[@]}"; then
     fail_update "${old_tree}" "$(compose_env "${STAGING}")" "${from}" "${backup_dir}" "APPLICATION_START_FAILED"
     return 1
   fi
@@ -434,7 +558,7 @@ apply_update() {
   STAGING=""
   atomic_switch_current "${RELEASES_DIR}/${TARGET}"
   write_state "${TARGET}"
-  write_journal "COMPLETED" "${from}" "${backup_dir}"
+  write_journal "COMPLETED" "${from}" "${backup_dir}" "" "${migration_status}"
 }
 
 if (( ROLLBACK )); then
