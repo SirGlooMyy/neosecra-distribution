@@ -127,3 +127,11 @@ After the requested 429 wait interval, the exact same gates were rechecked:
 **Current verdict: `BLOCKED`** — restore authorized SSH reachability to
 `10.33.99.13`, then execute the runbook and require both public smoke rounds
 plus all three direct SNI checks to pass before any `LIVE_VERIFIED` status.
+
+## Sequential rollup (2026-09-03T00:42:30Z)
+
+- This run reused the verified 2026-09-02 reachability result; the exact
+  authorized `.13` target was not retried and no new discovery was performed.
+- No live certificate/config mutation, proxy reload, backup, rollback, or
+  public smoke was claimed. Strict Cloudflare `526` and `BLOCKED` remain the
+  only honest live status until the control path is restored.

@@ -76,6 +76,10 @@
 - Live config/cert inspection, metadata backup, Caddy validation/reload, rollback, direct SNI, and two-round public smoke remain `NOT_RUN`; public strict-TLS baseline remains `526` for all three names. `LIVE_VERIFIED` is prohibited.
 - Distribution task verdict: `BLOCKED` on the single verified reachability blocker. Next authorized workstream: `/home/sirgloomy/projects/neosecra-lisans` existing License entitlement implementation.
 
+## Sequential rollup (2026-09-03)
+- Reused the 2026-09-02 exact `.13` timeout evidence; no SSH/discovery retry was performed.
+- Cloudflare TLS live mutation and two-round smoke remain `NOT_RUN`; verdict stays `BLOCKED` until authorized reachability returns.
+
 ## DIST-GEMINI-AUDIT-011 completion checkpoint (2026-09-02)
 - Upgrade path now keeps canonical script/recovery roots stable across target-context switches; EXIT recovery trap is valid at top level and signed rollback invokes the original verifier.
 - Explicit targets pass anti-rollback; dry-run performs signed metadata/channel and read-only preflight only, with no lock, backup, release install, env/state write, image pull, or promotion.
