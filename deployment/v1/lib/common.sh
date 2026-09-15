@@ -409,7 +409,7 @@ initialize_env_file() {
   # minisign imza doğrulaması için kullanılır; CA bundle boş bırakılırsa
   # sistem trust store kullanılır (update.neosecra.com Cloudflare/Google CA).
   ensure_env_value UPGRADE_CHANNEL_URL "https://update.neosecra.com/channels/assessment-stable.json"
-  ensure_env_value UPGRADE_CHANNEL_PUBLIC_KEY "/etc/neosecra/ca/update-neosecra-com.pub"
+  ensure_env_value UPGRADE_CHANNEL_PUBLIC_KEY "/etc/neosecra/ca"
 
   ensure_env_value NOTIFICATION_ENABLED "false"
   ensure_env_value SMTP_PORT "587"

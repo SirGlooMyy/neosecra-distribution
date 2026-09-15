@@ -8,12 +8,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V1_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ROOT="/opt/neosecra/hotspot"
 AGENT_ROOT=""
+BACKUP_ROOT=""
 BACKEND_UID="1000:1000"
 CHANNEL_URL="https://update.neosecra.com/channels/hotspot-stable.json"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --hotspot-root) shift; ROOT="${1:-}" ;;
     --agent-root) shift; AGENT_ROOT="${1:-}" ;;
+    --backup-root) shift; BACKUP_ROOT="${1:-}" ;;
     --backend-uid) shift; BACKEND_UID="${1:-}" ;;
     --channel-url) shift; CHANNEL_URL="${1:-}" ;;
     --help|-h)
@@ -21,6 +23,7 @@ while [[ $# -gt 0 ]]; do
 Usage: sudo install-hotspot-agent.sh [options]
   --hotspot-root PATH   Hotspot installation root (default /opt/neosecra/hotspot)
   --agent-root PATH     Agent runtime path (default <root>/update-agent)
+  --backup-root PATH    Persistent backup path (default <root>/backups)
   --backend-uid UID:GID  Host ownership for the API trigger directory (default 1000:1000)
   --channel-url URL     Signed Hotspot channel URL
 EOF
@@ -36,6 +39,8 @@ done
 [[ $EUID -eq 0 ]] || { echo "Run as root (sudo)" >&2; exit 1; }
 AGENT_ROOT="${AGENT_ROOT:-${ROOT}/update-agent}"
 [[ "$AGENT_ROOT" = /* && "$AGENT_ROOT" != / && "$AGENT_ROOT" != */.. ]] || { echo "Unsafe agent root" >&2; exit 2; }
+BACKUP_ROOT="${BACKUP_ROOT:-${ROOT}/backups}"
+[[ "$BACKUP_ROOT" = /* && "$BACKUP_ROOT" != / && "$BACKUP_ROOT" != */.. && "$BACKUP_ROOT" != *$'\n'* && "$BACKUP_ROOT" != *$'\r'* && "$BACKUP_ROOT" != *'/../'* ]] || { echo "Unsafe backup root" >&2; exit 2; }
 
 [[ -f "${SCRIPT_DIR}/artifact-verifier.sh" ]] || { echo "Missing artifact verifier: ${SCRIPT_DIR}/artifact-verifier.sh" >&2; exit 1; }
 [[ -f "${V1_ROOT}/upgrade/secure_extract.py" ]] || { echo "Missing bounded extractor: ${V1_ROOT}/upgrade/secure_extract.py" >&2; exit 1; }
@@ -44,9 +49,11 @@ AGENT_ROOT="${AGENT_ROOT:-${ROOT}/update-agent}"
 STATE_BRIDGE="${ROOT}/state/upgrade-bridge"
 TRIGGER_DIR="${STATE_BRIDGE}/trigger"
 JOURNAL_DIR="${STATE_BRIDGE}/journal"
+AGENT_STATE="${ROOT}/state/update-agent"
 UNITS_DIR="/etc/systemd/system"
 ENV_FILE="/etc/neosecra/hotspot-update-agent.env"
-mkdir -p "$AGENT_ROOT/lib" "$AGENT_ROOT/ca" "$AGENT_ROOT/upgrade" "$TRIGGER_DIR" "$JOURNAL_DIR" "${ROOT}/state" "${ROOT}/upgrade-journal"
+mkdir -p "$AGENT_ROOT/lib" "$AGENT_ROOT/ca" "$AGENT_ROOT/upgrade" "$TRIGGER_DIR" "$JOURNAL_DIR" "${ROOT}/state" "${ROOT}/upgrade-journal" "$AGENT_STATE/home" "$AGENT_STATE/docker-config" "$AGENT_STATE/buildx"
+install -d -m 0700 -o root -g root "$AGENT_STATE/home" "$AGENT_STATE/docker-config" "$AGENT_STATE/buildx"
 install -m 0755 "${SCRIPT_DIR}/update-agent.sh" "$AGENT_ROOT/update-agent.sh"
 install -m 0644 "${SCRIPT_DIR}/artifact-verifier.sh" "$AGENT_ROOT/artifact-verifier.sh"
 install -m 0755 "${SCRIPT_DIR}/hotspot-updater.sh" "$AGENT_ROOT/hotspot-updater.sh"
@@ -54,7 +61,14 @@ install -m 0755 "${V1_ROOT}/upgrade/secure_extract.py" "$AGENT_ROOT/secure_extra
 install -m 0755 "${V1_ROOT}/upgrade/verify_rollback_auth.py" "$AGENT_ROOT/verify_rollback_auth.py"
 install -m 0755 "${V1_ROOT}/upgrade/recovery.py" "$AGENT_ROOT/upgrade/recovery.py"
 for lib in common.sh manifest.sh state.sh; do install -m 0644 "${V1_ROOT}/lib/${lib}" "$AGENT_ROOT/lib/${lib}"; done
-install -m 0644 "${V1_ROOT}/ca/update-neosecra-com.pub" "$AGENT_ROOT/ca/update-neosecra-com.pub"
+for pubkey in "${V1_ROOT}/ca/"*.pub; do
+  [[ -f "${pubkey}" && ! -L "${pubkey}" ]] || continue
+  install -m 0644 "${pubkey}" "$AGENT_ROOT/ca/$(basename "${pubkey}")"
+done
+[[ -s "$AGENT_ROOT/ca/update-neosecra-com.pub" ]] || {
+  echo "Trusted update public key is missing from the distribution payload" >&2
+  exit 1
+}
 install -d -m 0755 -o root -g root "$STATE_BRIDGE" "$JOURNAL_DIR"
 install -d -m 0770 -o "${BACKEND_UID%%:*}" -g "${BACKEND_UID##*:}" "$TRIGGER_DIR"
 touch "${STATE_BRIDGE}/agent-alive"
@@ -69,9 +83,13 @@ NEOSECRA_PRODUCT=neosecra-hotspot
 NEOSECRA_EDITION_ID=standard
 NEOSECRA_PROJECT=neosecra-hotspot
 NEOSECRA_COMPOSE_PROJECT=neosecra-hotspot
+NEOSECRA_BACKUP_ROOT=${BACKUP_ROOT}
+# Routine Hotspot updates never create a full database/log/volume copy. The
+# legacy switch is retained only as an explicit fail-closed compatibility key.
+NEOSECRA_UPDATE_DB_BACKUP=off
 UPGRADE_CHANNEL_URL=${CHANNEL_URL}
 UPGRADE_RELEASE_CHANNEL=hotspot-stable
-UPGRADE_CHANNEL_PUBLIC_KEY=${AGENT_ROOT}/ca/update-neosecra-com.pub
+UPGRADE_CHANNEL_PUBLIC_KEY=${AGENT_ROOT}/ca
 NEOSECRA_SECURE_EXTRACT=${AGENT_ROOT}/secure_extract.py
 NEOSECRA_ROLLBACK_VERIFIER=${AGENT_ROOT}/verify_rollback_auth.py
 EOF
@@ -86,6 +104,10 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=${ENV_FILE}
+Environment=HOME=${AGENT_STATE}/home
+Environment=XDG_CONFIG_HOME=${AGENT_STATE}/docker-config
+Environment=DOCKER_CONFIG=${AGENT_STATE}/docker-config
+Environment=BUILDX_CONFIG=${AGENT_STATE}/buildx
 ExecStart=${AGENT_ROOT}/update-agent.sh
 PrivateTmp=true
 ProtectSystem=full

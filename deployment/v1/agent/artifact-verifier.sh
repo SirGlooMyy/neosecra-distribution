@@ -22,8 +22,19 @@ verify_minisign_file() {
   local file="${1:-}" signature="${2:-${1:-}.minisig}" public_key="${3:-}"
   [[ -n "${file}" && -f "${file}" && -s "${file}" ]] || return 1
   [[ -n "${signature}" && -f "${signature}" && -s "${signature}" ]] || return 1
-  [[ -n "${public_key}" && -f "${public_key}" && -s "${public_key}" ]] || return 1
+  [[ -n "${public_key}" ]] || return 1
   command -v minisign >/dev/null 2>&1 || return 1
+  # A keyring directory permits a fail-closed key rotation: every pinned
+  # public key is tried, while legacy single-file paths remain supported.
+  if [[ -d "${public_key}" && ! -L "${public_key}" ]]; then
+    local key
+    for key in "${public_key}"/*.pub; do
+      [[ -f "${key}" && ! -L "${key}" && -s "${key}" ]] || continue
+      minisign -V -p "${key}" -m "${file}" -x "${signature}" -q >/dev/null 2>&1 && return 0
+    done
+    return 1
+  fi
+  [[ -f "${public_key}" && ! -L "${public_key}" && -s "${public_key}" ]] || return 1
   minisign -V -p "${public_key}" -m "${file}" -x "${signature}" -q >/dev/null 2>&1
 }
 

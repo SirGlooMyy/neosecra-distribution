@@ -33,7 +33,10 @@ HEARTBEAT_FILE="${STATE_BRIDGE}/agent-alive"
 # rooted below NEOSECRA_OFFLINE_ROOT.  Trigger payloads never select transport
 # URLs.
 NEOSECRA_TLS_MODE="${NEOSECRA_TLS_MODE:-public}"
-AGENT_CURL_OPTS=("-fsSL" "--proto" "=https" "--proto-redir" "=https" "-H" "User-Agent: NeoSecra-Agent/1.0")
+# Customer hosts may have a routable IPv4 path but no working IPv6 route.
+# Force IPv4 so curl does not fail after selecting an unreachable AAAA record.
+# TLS verification and the HTTPS-only policy remain unchanged.
+AGENT_CURL_OPTS=("-4" "-fsSL" "--proto" "=https" "--proto-redir" "=https" "-H" "User-Agent: NeoSecra-Agent/1.0")
 if [[ "${NEOSECRA_TLS_MODE}" == "internal" ]]; then
   NEOSECRA_CHANNEL_CA_BUNDLE="${UPGRADE_CHANNEL_CA_BUNDLE:-${NEOSECRA_CA_CERT:-}}"
   [[ -n "${NEOSECRA_CHANNEL_CA_BUNDLE}" && -f "${NEOSECRA_CHANNEL_CA_BUNDLE}" ]] || {
@@ -111,7 +114,19 @@ fetch_agent_url() {
 # (a container path, /etc/neosecra/ca/...) usually does not exist here; fall
 # back to the copy shipped inside the release tree.
 CHANNEL_PUBLIC_KEY="${UPGRADE_CHANNEL_PUBLIC_KEY:-/etc/neosecra/ca/update-neosecra-com.pub}"
-[[ -f "${CHANNEL_PUBLIC_KEY}" ]] || CHANNEL_PUBLIC_KEY="${V1_ROOT}/ca/update-neosecra-com.pub"
+public_key_source_valid() {
+  if [[ -f "$1" && ! -L "$1" && -s "$1" ]]; then
+    return 0
+  fi
+  if [[ -d "$1" && ! -L "$1" ]]; then
+    local key
+    for key in "$1"/*.pub; do
+      [[ -f "$key" && ! -L "$key" && -s "$key" ]] && return 0
+    done
+  fi
+  return 1
+}
+public_key_source_valid "${CHANNEL_PUBLIC_KEY}" || CHANNEL_PUBLIC_KEY="${V1_ROOT}/ca"
 
 # --- Strict semver ---
 SEMVER_RE='^[0-9]+[.][0-9]+[.][0-9]+$'
@@ -181,6 +196,10 @@ write_agent_status() {
   "exit_code": ${rc}
 }
 JSONEOF
+  # The bridge is mounted read-only into the API container.  Status metadata
+  # contains no secrets and must be readable there even though the agent runs
+  # as root; the source/runtime journals remain protected on the host.
+  chmod 0644 "${JOURNAL_DIR}/agent-status.json"
 }
 
 # --- Journal bridge sync ---
@@ -197,9 +216,23 @@ sync_upgrade_journals() {
     [[ -f "${f}" ]] || continue
     base="$(basename "${f}")"
     if [[ ! -f "${JOURNAL_DIR}/${base}" || "${f}" -nt "${JOURNAL_DIR}/${base}" ]]; then
-      cp -p "${f}" "${JOURNAL_DIR}/${base}" && copied=$((copied+1))
+      cp -p "${f}" "${JOURNAL_DIR}/${base}" && chmod 0644 "${JOURNAL_DIR}/${base}" && copied=$((copied+1))
+    elif [[ "$(stat -c '%a' "${JOURNAL_DIR}/${base}" 2>/dev/null || true)" != "644" ]]; then
+      chmod 0644 "${JOURNAL_DIR}/${base}" || true
     fi
   done
+  # The Hotspot updater writes this atomic snapshot between terminal journal
+  # records. Bridge it while the process is running so the API can expose the
+  # live stage, percentage and detail instead of waiting for completion.
+  f="${src_dir}/upgrade-progress.json"
+  if [[ -f "${f}" && ! -L "${f}" ]]; then
+    base="upgrade-progress.json"
+    if [[ ! -f "${JOURNAL_DIR}/${base}" || "${f}" -nt "${JOURNAL_DIR}/${base}" ]]; then
+      cp -p "${f}" "${JOURNAL_DIR}/${base}" && chmod 0644 "${JOURNAL_DIR}/${base}" && copied=$((copied+1))
+    elif [[ "$(stat -c '%a' "${JOURNAL_DIR}/${base}" 2>/dev/null || true)" != "644" ]]; then
+      chmod 0644 "${JOURNAL_DIR}/${base}" || true
+    fi
+  fi
   [[ ${copied} -gt 0 ]] && agent_ok "Copied ${copied} journal(s) to bridge: ${JOURNAL_DIR}"
   return 0
 }
@@ -209,13 +242,15 @@ sync_upgrade_journals() {
 # Hotspot installer; the fixed path avoids executing trigger-controlled or
 # arbitrary environment-provided commands as root.
 run_hotspot_apply() {
-  local target="$1" archive_path="${2:-}" rollback_auth="${3:-}" command_path="${INSTALL_ROOT}/update-agent/hotspot-updater.sh"
+  local target="$1" archive_path="${2:-}" rollback_auth="${3:-}" metadata_path="${4:-}" command_path="${INSTALL_ROOT}/update-agent/hotspot-updater.sh"
   [[ -f "$command_path" ]] || { agent_err "Hotspot updater missing: ${command_path}"; return 127; }
   [[ -n "$archive_path" ]] || { agent_err "Signed Hotspot archive is missing"; return 4; }
+  [[ -n "$metadata_path" && -f "$metadata_path" && ! -L "$metadata_path" ]] || { agent_err "Signed Hotspot migration metadata is missing"; return 4; }
   local args=(--target "$target" --archive "$archive_path"
     --archive-sha256 "${CHANNEL_ARCHIVE_SHA256:-}"
     --archive-signature "${archive_path}.minisig"
-    --signature-pubkey "${CHANNEL_PUBLIC_KEY}")
+    --signature-pubkey "${CHANNEL_PUBLIC_KEY}"
+    --release-metadata "${metadata_path}")
   if [[ -n "$rollback_auth" ]]; then
     [[ "$rollback_auth" == /* && "$rollback_auth" != *..* && -f "$rollback_auth" ]] || {
       agent_err "Hotspot rollback authorization path is unsafe"; return 4;
@@ -223,17 +258,26 @@ run_hotspot_apply() {
     args+=(--rollback-auth "$rollback_auth")
   fi
   agent_info "Running Hotspot updater: ${command_path} ${args[*]}"
-  bash "$command_path" "${args[@]}"
+  bash "$command_path" "${args[@]}" &
+  local updater_pid=$! rc=0
+  # Mirror the updater's atomic progress journal while it is running so the
+  # API container can expose live stage/percentage updates to the admin UI.
+  while kill -0 "${updater_pid}" 2>/dev/null; do
+    sync_upgrade_journals || true
+    sleep 1
+  done
+  wait "${updater_pid}" || rc=$?
+  sync_upgrade_journals || agent_warn "Journal bridge sync failed after Hotspot update"
+  return "${rc}"
 }
 
 run_hotspot_rollback() {
-  local target="$1" backup_source="${2:-}" auth_path="${3:-}" command_path="${INSTALL_ROOT}/update-agent/hotspot-updater.sh"
+  local target="$1" auth_path="${2:-}" command_path="${INSTALL_ROOT}/update-agent/hotspot-updater.sh"
   [[ -f "$command_path" ]] || { agent_err "Hotspot updater missing: ${command_path}"; return 127; }
   [[ -n "$auth_path" && "$auth_path" == /* && "$auth_path" != *..* && -f "$auth_path" ]] || {
     agent_err "Hotspot rollback authorization file is missing or unsafe"; return 4;
   }
   local args=(--rollback --target "$target" --auth "$auth_path")
-  [[ -n "$backup_source" ]] && args+=(--backup "$backup_source")
   agent_info "Running Hotspot rollback: ${command_path} ${args[*]}"
   bash "$command_path" "${args[@]}"
 }
@@ -312,7 +356,7 @@ fetch_channel() {
   fetch_agent_url "${channel_url}.minisig" "${channel_file}.minisig" || {
     agent_err "Channel signature download failed"; rm -rf "${tmpdir}"; return 1;
   }
-  [[ -f "${CHANNEL_PUBLIC_KEY}" ]] || {
+  public_key_source_valid "${CHANNEL_PUBLIC_KEY}" || {
     agent_err "Channel public key missing: ${CHANNEL_PUBLIC_KEY}"; rm -rf "${tmpdir}"; return 1;
   }
   verify_minisign_file "${channel_file}" "${channel_file}.minisig" "${CHANNEL_PUBLIC_KEY}" || {
@@ -383,6 +427,49 @@ if not bundle_url or bundle_url.rsplit("/", 1)[-1].lower() == "none":
     bundle_url = bundle_sha = bundle_sig = ""
 elif not sha256.fullmatch(bundle_sha) or not bundle_sig:
     raise SystemExit(11)
+contract = release.get("migration_contract")
+if not isinstance(contract, dict):
+    contract = release.get("upgrade") if isinstance(release.get("upgrade"), dict) else release
+def first(*keys):
+    for key in keys:
+        if key in contract:
+            return contract.get(key)
+        if key in release:
+            return release.get(key)
+    return None
+migration_required = first("migration_required", "migrations")
+migration_contract = {
+    "migration_required": migration_required,
+    "migration_strategy": first("migration_strategy"),
+    "backward_compatible_with_previous_app": first("backward_compatible_with_previous_app"),
+    "rollback_safe_without_db_restore": first("rollback_safe_without_db_restore"),
+    "migration_checksum": first("migration_checksum", "migration_identity"),
+    "schema_from": first("schema_from"),
+    "schema_to": first("schema_to"),
+    "estimated_lock_seconds": first("estimated_lock_seconds"),
+    "estimated_temp_space_bytes": first("estimated_temp_space_bytes"),
+}
+required_contract_keys = (
+    "migration_required", "migration_strategy",
+    "backward_compatible_with_previous_app", "rollback_safe_without_db_restore",
+    "migration_checksum", "schema_from", "schema_to",
+    "estimated_lock_seconds", "estimated_temp_space_bytes",
+)
+metadata_keys_present = all(key in contract or key in release for key in required_contract_keys)
+non_nullable_values_present = all(
+    migration_contract.get(key) is not None
+    for key in (
+        "migration_required", "migration_strategy",
+        "backward_compatible_with_previous_app", "rollback_safe_without_db_restore",
+        "estimated_lock_seconds", "estimated_temp_space_bytes",
+    )
+)
+if migration_contract.get("migration_required") is True:
+    non_nullable_values_present = non_nullable_values_present and all(
+        migration_contract.get(key) is not None
+        for key in ("migration_checksum", "schema_from", "schema_to")
+    )
+migration_contract["metadata_complete"] = metadata_keys_present and non_nullable_values_present
 print(json.dumps({
     "archive_url": archive_url,
     "archive_sha256": archive_sha,
@@ -390,6 +477,7 @@ print(json.dumps({
     "bundle_url": bundle_url,
     "bundle_sha256": bundle_sha,
     "bundle_signature_url": bundle_sig,
+    "migration_contract": migration_contract,
 }, sort_keys=True, separators=(",", ":")))
 PY
   )"; then
@@ -402,6 +490,7 @@ PY
   CHANNEL_BUNDLE_URL="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["bundle_url"])' "${CHANNEL_METADATA_JSON}")"
   CHANNEL_BUNDLE_SHA256="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["bundle_sha256"])' "${CHANNEL_METADATA_JSON}")"
   CHANNEL_BUNDLE_SIGNATURE_URL="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["bundle_signature_url"])' "${CHANNEL_METADATA_JSON}")"
+  CHANNEL_RELEASE_METADATA_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1]).get("migration_contract") or {}, sort_keys=True, separators=(",", ":")))' "${CHANNEL_METADATA_JSON}")"
   validate_agent_url "${CHANNEL_ARCHIVE_URL}" || { agent_err "Signed archive URL is unsafe"; rm -rf "${tmpdir}"; return 1; }
   validate_agent_url "${CHANNEL_ARCHIVE_SIGNATURE_URL}" || { agent_err "Signed archive signature URL is unsafe"; rm -rf "${tmpdir}"; return 1; }
   if [[ -n "${CHANNEL_BUNDLE_URL}" ]]; then
@@ -440,7 +529,7 @@ process_upgrade_request() {
     rm -f "${trigger_file}"; return 1
   }
 
-  local bundle_path="" archive_path="" dl_dir=""
+  local bundle_path="" archive_path="" dl_dir="" release_metadata_path=""
   # Artifact URLs, hashes, and signatures come only from the verified channel
   # entry. Trigger JSON contains a target version and optional rollback auth;
   # it never selects a download or execution source.
@@ -461,6 +550,9 @@ process_upgrade_request() {
       write_agent_status DOWNLOAD_FAILED "${target_version}" 3
       rm -f "${trigger_file}"; return 1
     }
+    release_metadata_path="${dl_dir}/release-metadata.json"
+    printf '%s\n' "${CHANNEL_RELEASE_METADATA_JSON:-{}}" > "${release_metadata_path}"
+    chmod 600 "${release_metadata_path}"
   fi
 
   local rc=0
@@ -481,7 +573,7 @@ process_upgrade_request() {
     upgrade_cmd+=(--rollback-on-failure --rollback-auth "${rollback_auth}")
   fi
   if [[ "${RUNTIME_PRODUCT_CODE}" == "hotspot" ]]; then
-    run_hotspot_apply "${target_version}" "${archive_path}" "${rollback_auth}"
+    run_hotspot_apply "${target_version}" "${archive_path}" "${rollback_auth}" "${release_metadata_path}"
     rc=$?
   elif bash "${upgrade_cmd[@]}"; then
     rc=0
@@ -505,7 +597,7 @@ process_upgrade_request() {
 # --- Process rollback request ---
 process_rollback_request() {
   local trigger_file="$1"
-  local target_version backup_source auth_path rollback_nonce rollback_product rollback_channel rollback_edition
+  local target_version auth_path rollback_nonce rollback_product rollback_channel rollback_edition
 
   target_version=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1], encoding="utf-8")); print(d.get("target_version", d.get("rollback_to", "")))' "${trigger_file}" 2>/dev/null) || { agent_err "Parse rollback failed"; write_agent_status FAILED '' 1; rm -f "${trigger_file}"; return 1; }
 
@@ -516,7 +608,11 @@ process_rollback_request() {
     rm -f "${trigger_file}"; return 1
   fi
 
-  backup_source=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("backup_path", ""))' "${trigger_file}" 2>/dev/null || true)
+  if python3 -c 'import json,sys; raise SystemExit(0 if not json.load(open(sys.argv[1], encoding="utf-8")).get("backup_path") else 1)' "${trigger_file}" 2>/dev/null; then :; else
+    agent_err "Database backup/restore rollback metadata is unsupported"
+    write_agent_status ROLLBACK_REJECTED "${target_version}" 12
+    rm -f "${trigger_file}"; return 1
+  fi
   auth_path=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1], encoding="utf-8")); print(d.get("auth_path", d.get("authorization_path", "")))' "${trigger_file}" 2>/dev/null || true)
   rollback_nonce=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("nonce", ""))' "${trigger_file}" 2>/dev/null || true)
   rollback_product=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("product", ""))' "${trigger_file}" 2>/dev/null || true)
@@ -547,12 +643,11 @@ process_rollback_request() {
   export EXPECTED_ROLLBACK_CHANNEL="${rollback_channel:-${UPGRADE_RELEASE_CHANNEL:-}}"
   export EXPECTED_ROLLBACK_EDITION="${rollback_edition:-${NEOSECRA_EDITION_ID:-}}"
   export EXPECTED_ROLLBACK_NONCE="${rollback_nonce:-}"
-  local rollback_cmd=("${V1_ROOT}/upgrade/rollback.sh" "--to" "${target_version}" "--auth" "${auth_path}")
-  [[ -n "${backup_source}" ]] && rollback_cmd+=("--from-backup" "${backup_source}")
+  local rollback_cmd=("${V1_ROOT}/upgrade/rollback.sh" "--to" "${target_version}" "--auth" "${auth_path}" "--pointer-only")
 
   local rc=0
   if [[ "${RUNTIME_PRODUCT_CODE}" == "hotspot" ]]; then
-    run_hotspot_rollback "${target_version}" "${backup_source}" "${auth_path}"
+    run_hotspot_rollback "${target_version}" "${auth_path}"
     rc=$?
   elif bash "${rollback_cmd[@]}"; then
     rc=0

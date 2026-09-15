@@ -64,6 +64,19 @@ def _expected(name: str, aliases: tuple[str, ...] = ()) -> str:
     return ""
 
 
+def _trusted_public_keys(value: str) -> list[Path]:
+    path = Path(value)
+    if path.is_dir() and not path.is_symlink():
+        return sorted(
+            candidate
+            for candidate in path.glob("*.pub")
+            if candidate.is_file() and not candidate.is_symlink() and candidate.stat().st_size
+        )
+    if path.is_file() and not path.is_symlink() and path.stat().st_size:
+        return [path]
+    return []
+
+
 def _verify_signature(auth: dict[str, Any], auth_path: Path, v1_root: Path) -> None:
     signatures = auth.get("signatures")
     minisig = signatures.get("minisign_signature") if isinstance(signatures, dict) else None
@@ -71,12 +84,10 @@ def _verify_signature(auth: dict[str, Any], auth_path: Path, v1_root: Path) -> N
         ord(char) < 0x20 or ord(char) == 0x7F for char in minisig
     ):
         die("Unsigned rollback authorization.")
-    pubkey = Path(
-        _expected("NEOSECRA_SIGNATURE_PUBKEY")
-        or str(v1_root / "ca" / "update-neosecra-com.pub")
-    )
-    if not pubkey.is_file() or not pubkey.stat().st_size:
-        die(f"Trusted public key not found: {pubkey}")
+    pubkey_value = _expected("NEOSECRA_SIGNATURE_PUBKEY") or str(v1_root / "ca")
+    pubkeys = _trusted_public_keys(pubkey_value)
+    if not pubkeys:
+        die(f"Trusted public key/keyring not found or empty: {pubkey_value}")
     canonical = dict(auth)
     canonical.pop("signatures", None)
     canonical_json = json.dumps(canonical, separators=(",", ":"), sort_keys=True)
@@ -92,18 +103,21 @@ def _verify_signature(auth: dict[str, Any], auth_path: Path, v1_root: Path) -> N
                 + "\n",
                 encoding="utf-8",
             )
-            try:
-                result = subprocess.run(
-                    ["minisign", "-Vm", str(payload_path), "-p", str(pubkey), "-x", str(sig_path), "-q"],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-            except OSError as exc:
-                die(f"minisign is unavailable: {exc}")
-            if result.returncode != 0:
-                detail = (result.stderr or "").strip()
-                die(f"Invalid rollback authorization signature{': ' + detail if detail else ''}")
+            last_detail = ""
+            for pubkey in pubkeys:
+                try:
+                    result = subprocess.run(
+                        ["minisign", "-Vm", str(payload_path), "-p", str(pubkey), "-x", str(sig_path), "-q"],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                except OSError as exc:
+                    die(f"minisign is unavailable: {exc}")
+                if result.returncode == 0:
+                    return
+                last_detail = (result.stderr or "").strip()
+            die(f"Invalid rollback authorization signature{': ' + last_detail if last_detail else ''}")
     except OSError as exc:
         die(f"Rollback authorization verification failed: {exc}")
 
