@@ -551,7 +551,11 @@ process_upgrade_request() {
       rm -f "${trigger_file}"; return 1
     }
     release_metadata_path="${dl_dir}/release-metadata.json"
-    printf '%s\n' "${CHANNEL_RELEASE_METADATA_JSON:-{}}" > "${release_metadata_path}"
+    if [[ -n "${CHANNEL_RELEASE_METADATA_JSON:-}" ]]; then
+      printf '%s\n' "${CHANNEL_RELEASE_METADATA_JSON}" > "${release_metadata_path}"
+    else
+      printf '%s\n' '{}' > "${release_metadata_path}"
+    fi
     chmod 600 "${release_metadata_path}"
   fi
 

@@ -102,4 +102,7 @@ def test_hotspot_scripts_keep_monotonic_and_recovery_guards() -> None:
     assert "public_key_source_valid" in (ROOT / "deployment" / "v1" / "agent" / "update-agent.sh").read_text(encoding="utf-8")
     assert 'base="upgrade-progress.json"' in (ROOT / "deployment" / "v1" / "agent" / "update-agent.sh").read_text(encoding="utf-8")
     assert "release-metadata" in (ROOT / "deployment" / "v1" / "agent" / "update-agent.sh").read_text(encoding="utf-8")
+    assert '${CHANNEL_RELEASE_METADATA_JSON:-{}}' not in (
+        ROOT / "deployment" / "v1" / "agent" / "update-agent.sh"
+    ).read_text(encoding="utf-8")
     assert "get.docker.com" not in bootstrap
