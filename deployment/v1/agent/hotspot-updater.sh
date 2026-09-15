@@ -422,7 +422,7 @@ PY
       return 12
     }
     local available_bytes
-    available_bytes="$(df -Pk "${ROOT}" | awk 'NR==2 {print $4 * 1024; exit}')"
+    available_bytes="$(df -Pk "${ROOT}" | awk 'NR==2 {printf "%.0f\n", $4 * 1024; exit}')"
     [[ "${available_bytes}" =~ ^[0-9]+$ && "${available_bytes}" -ge "${MIGRATION_TEMP_SPACE}" ]] || {
       echo "Insufficient temporary disk space for migration" >&2
       return 12
