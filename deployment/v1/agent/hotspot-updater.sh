@@ -699,7 +699,8 @@ rollback_to() {
   run_compose "${old_tree}" "${old_env}" down --remove-orphans
   [[ -f "$(compose_env "${target_tree}")" && ! -L "$(compose_env "${target_tree}")" ]] || { echo "Rollback target environment missing" >&2; return 1; }
   run_compose "${target_tree}" "$(compose_env "${target_tree}")" up -d --remove-orphans
-  wait_api || { echo "Rollback health check failed" >&2; return 1; }
+  wait_api && wait_freeradius || { echo "Rollback health check failed" >&2; return 1; }
+  verify_compose_working_dir "${target_tree}" || return 1
   atomic_switch_current "${target_tree}"
   write_state "${TARGET}"
   write_journal "ROLLED_BACK" "${from}" "" "POINTER_ONLY_ROLLBACK"
@@ -721,13 +722,38 @@ restore_previous_stack() {
   # `down` on the staging tree would therefore remove the active stack too.
   # Rebuild the previous source tree and recreate only its application
   # services instead; persistent dependencies and volumes stay untouched.
-  run_compose "${old_tree}" "${old_env}" build api worker beat admin portal || return 1
+  run_compose "${old_tree}" "${old_env}" build api worker beat admin portal freeradius || return 1
+  run_compose "${old_tree}" "${old_env}" up -d postgres redis clickhouse minio createbuckets || return 1
   run_compose "${old_tree}" "${old_env}" up -d --no-deps api worker beat admin portal freeradius || return 1
-  wait_api
+  wait_api || return 1
+  wait_freeradius || return 1
+  verify_compose_working_dir "${old_tree}"
+}
+
+wait_freeradius() {
+  local attempt state
+  for attempt in $(seq 1 60); do
+    state="$(docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "${COMPOSE_PROJECT}-freeradius-1" 2>/dev/null || true)"
+    [[ "${state}" == "running healthy" ]] && return 0
+    sleep 2
+  done
+  echo "FreeRADIUS did not become healthy" >&2
+  return 1
+}
+
+verify_compose_working_dir() {
+  local expected_tree="$1" service actual
+  expected_tree="$(readlink -f "${expected_tree}")" || return 1
+  for service in api worker beat admin portal freeradius; do
+    actual="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "${COMPOSE_PROJECT}-${service}-1" 2>/dev/null || true)"
+    [[ -n "${actual}" ]] || return 1
+    actual="$(readlink -f "${actual}" 2>/dev/null || true)"
+    [[ "${actual}" == "${expected_tree}" ]] || return 1
+  done
 }
 
 fail_update() {
-  local old_tree="$1" old_env="$2" from="$3" backup_dir="$4" reason="$5" status="FAILED_SAFE" migration_required="false"
+  local old_tree="$1" old_env="$2" from="$3" backup_dir="$4" reason="$5" status="FAILED_SAFE" migration_required="false" restore_ok=1
   if [[ -f "${TRANSACTION_FILE}" && ! -L "${TRANSACTION_FILE}" ]]; then
     migration_required="$(python3 - "${TRANSACTION_FILE}" <<'PY'
 import json
@@ -744,16 +770,19 @@ PY
   fi
   if [[ "${STAGING_STARTED}" == "1" ]]; then
     if ! restore_previous_stack "${old_tree}" "${old_env}"; then
+      restore_ok=0
+      status="FAILED"
       reason="${reason}; PREVIOUS_STACK_RESTORE_FAILED"
     fi
   fi
   if [[ -n "${ROLLBACK_AUTH}" ]]; then
     if recover_previous "${old_tree}" "${old_env}" "${from}"; then
       status="ROLLED_BACK"
+      restore_ok=1
     else
       reason="${reason}; ROLLBACK_FAILED"
     fi
-  elif [[ "${migration_required}" != "true" ]]; then
+  elif [[ "${migration_required}" != "true" && "${restore_ok}" == "1" ]]; then
     # Application-only updates do not need a database rollback authorization.
     # The previous source tree and containers were restored above; recording
     # this explicitly prevents a failed update from leaving staging images
@@ -762,10 +791,10 @@ PY
   else
     reason="${reason}; SIGNED_ROLLBACK_AUTH_REQUIRED"
   fi
-  if [[ -n "${STAGING}" && -d "${STAGING}" ]]; then
+  if [[ "${restore_ok}" == "1" && -n "${STAGING}" && -d "${STAGING}" ]]; then
     rm -rf -- "${STAGING}"
   fi
-  clear_transaction
+  if [[ "${restore_ok}" == "1" ]]; then clear_transaction; fi
   write_progress "${PROGRESS_CURRENT_STAGE}" "fail" 10 "${reason}"
   write_journal "${status}" "${from}" "" "${reason}"
   return 1
@@ -793,7 +822,7 @@ PY
   TARGET="${target}"
   if [[ "${phase}" == "HEALTHY" || "${phase}" == "SWITCHED" ]] \
       && [[ "${current}" == "${RELEASES_DIR}/${target}" ]] \
-      && wait_api; then
+      && wait_api && wait_freeradius && verify_compose_working_dir "${current}"; then
     write_state "${target}"
     clear_transaction
     write_journal "COMPLETED_RECOVERED" "${old_tree##*/}" "" ""
@@ -849,6 +878,18 @@ apply_update() {
     fail_update "${old_tree}" "$(compose_env "${old_tree}")" "${from}" "" "MIGRATION_METADATA_INVALID"
     return 1
   fi
+  # Compose bind sources must use their permanent path from first creation.
+  # Moving a running source tree leaves stale .staging paths in Docker metadata.
+  [[ ! -e "${RELEASES_DIR}/${TARGET}" && ! -L "${RELEASES_DIR}/${TARGET}" ]] || {
+    fail_update "${old_tree}" "$(compose_env "${old_tree}")" "${from}" "" "TARGET_RELEASE_ALREADY_EXISTS"
+    return 1
+  }
+  # Persist the permanent candidate path before rename, including the crash
+  # window before the next phase is recorded. Recovery may remove it only
+  # after restoring the previous stack.
+  write_transaction "PREPARED" "${old_tree}" "" "${RELEASES_DIR}/${TARGET}" "${MIGRATION_REQUIRED}"
+  mv -- "${STAGING}" "${RELEASES_DIR}/${TARGET}"
+  STAGING="${RELEASES_DIR}/${TARGET}"
   migration="${MIGRATION_REQUIRED}"
   if [[ "${MIGRATION_REQUIRED}" == "1" ]]; then migration_status="REQUIRED"; else migration_status="SKIPPED_NO_MIGRATION"; fi
   write_progress "STAGING" "ok" 35 "Release staging ve metadata doğrulandı"
@@ -868,7 +909,7 @@ apply_update() {
     return 1
   fi
   if ! run_compose "${STAGING}" "$(compose_env "${STAGING}")" up -d postgres redis clickhouse minio createbuckets; then
-    fail_update "${old_tree}" "$(compose_env "${STAGING}")" "${from}" "" "DEPENDENCY_START_FAILED"
+    fail_update "${old_tree}" "$(compose_env "${old_tree}")" "${from}" "" "DEPENDENCY_START_FAILED"
     return 1
   fi
   # Release migration metadata describes the code delta, not whether the
@@ -876,12 +917,12 @@ apply_update() {
   # a clean/replaced PostgreSQL volume cannot start an apparently healthy API
   # with no tables. Alembic is idempotent when the schema is current.
   if ! run_compose "${STAGING}" "$(compose_env "${STAGING}")" run --rm migrate; then
-    fail_update "${old_tree}" "$(compose_env "${STAGING}")" "${from}" "" "MIGRATION_FAILED"
+    fail_update "${old_tree}" "$(compose_env "${old_tree}")" "${from}" "" "MIGRATION_FAILED"
     return 1
   fi
   start_args=(up -d --remove-orphans api worker beat admin portal freeradius)
   if ! run_compose "${STAGING}" "$(compose_env "${STAGING}")" "${start_args[@]}"; then
-    fail_update "${old_tree}" "$(compose_env "${STAGING}")" "${from}" "" "APPLICATION_START_FAILED"
+    fail_update "${old_tree}" "$(compose_env "${old_tree}")" "${from}" "" "APPLICATION_START_FAILED"
     return 1
   fi
   write_transaction "STARTED" "${old_tree}" "" "${STAGING}" "${migration}"
@@ -889,20 +930,15 @@ apply_update() {
   write_progress "ACTIVATING" "running" 65 "Yeni uygulama stack'i başlatılıyor"
   write_progress "ACTIVATING" "ok" 75 "Yeni uygulama stack'i başlatıldı"
   write_progress "VERIFYING" "running" 85 "Yeni release health kontrolü bekleniyor"
-  if ! wait_api; then
-    fail_update "${old_tree}" "$(compose_env "${STAGING}")" "${from}" "" "HEALTH_CHECK_FAILED"
+  if ! wait_api || ! wait_freeradius || ! verify_compose_working_dir "${STAGING}"; then
+    fail_update "${old_tree}" "$(compose_env "${old_tree}")" "${from}" "" "HEALTH_CHECK_FAILED"
     return 1
   fi
   write_progress "VERIFYING" "ok" 95 "API ve servis health kontrolü başarılı"
   write_transaction "HEALTHY" "${old_tree}" "" "${STAGING}" "${migration}"
-  [[ ! -e "${RELEASES_DIR}/${TARGET}" && ! -L "${RELEASES_DIR}/${TARGET}" ]] || {
-    fail_update "${old_tree}" "$(compose_env "${STAGING}")" "${from}" "" "TARGET_RELEASE_ALREADY_EXISTS"
-    return 1
-  }
-  mv -- "${STAGING}" "${RELEASES_DIR}/${TARGET}"
-  STAGING=""
   atomic_switch_current "${RELEASES_DIR}/${TARGET}"
   write_state "${TARGET}"
+  STAGING=""
   clear_transaction
   write_progress "VERIFYING" "ok" 100 "Güncelleme tamamlandı"
   write_journal "COMPLETED" "${from}" "" "" "${migration_status}"

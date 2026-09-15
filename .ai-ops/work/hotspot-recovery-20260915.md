@@ -1,0 +1,1 @@
+2026-09-15 K01: Hotspot updater restores old env, rebuilds/checks radius, starts from permanent path, retains failed recovery state. 14 focused tests + bash -n passed; GPT-5.6 review. No generic rollback edits. Live .71 acceptance next.
