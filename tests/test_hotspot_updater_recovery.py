@@ -1,9 +1,11 @@
 """Execute recovery gates without Docker or customer state."""
 import os
 from pathlib import Path
+import json
 import re
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -15,6 +17,11 @@ SOURCE = ROOT / "deployment/v1/agent/hotspot-updater.sh"
 def function(name):
     source = SOURCE.read_text(encoding="utf-8")
     return re.search(r"(?ms)^" + name + r"\(\) \{.*?^\}", source).group(0)
+
+
+def source_between(start, end):
+    source = SOURCE.read_text(encoding="utf-8")
+    return source[source.index(start):source.index(end)]
 
 
 def bash_run(tmp_path, script):
@@ -82,3 +89,61 @@ def test_failed_recovery_preserves_candidate_and_transaction(tmp_path):
     assert 'unexpected-clear' not in result.stdout
     assert 'PREVIOUS_STACK_RESTORE_FAILED' in result.stdout
     assert 'APP_STACK_RESTORED' not in result.stdout
+
+
+def test_off_migration_metadata_preserves_empty_fields_and_writes_journal(tmp_path):
+    staging = tmp_path / "staging"
+    old_tree = tmp_path / "old"
+    journal = tmp_path / "journal"
+    staging.mkdir()
+    old_tree.mkdir()
+    journal.mkdir()
+    metadata = tmp_path / "release-metadata.json"
+    metadata.write_text(json.dumps({
+        "migration_required": False,
+        "migration_strategy": "off",
+        "backward_compatible_with_previous_app": True,
+        "rollback_safe_without_db_restore": True,
+        "migration_checksum": None,
+        "schema_from": None,
+        "schema_to": None,
+        "estimated_lock_seconds": 0,
+        "estimated_temp_space_bytes": 0,
+    }), encoding="utf-8")
+    progress = tmp_path / "progress.json"
+    progress.write_text("{}", encoding="utf-8")
+
+    script = "\n".join([
+        "set -euo pipefail",
+        f"python3() {{ '{Path(sys.executable).as_posix()}' \"$@\"; }}",
+        f"ROOT='{tmp_path.as_posix()}'",
+        f"JOURNAL_DIR='{journal.as_posix()}'",
+        f"PROGRESS_FILE='{progress.as_posix()}'",
+        "TARGET='0.3.75'",
+        "NEOSECRA_EDITION_ID='standard'",
+        "MIGRATION_REQUIRED=0; MIGRATION_STRATEGY=off",
+        "MIGRATION_BACKWARD_COMPATIBLE=1; MIGRATION_ROLLBACK_SAFE=1",
+        "MIGRATION_CHECKSUM=''; MIGRATION_SCHEMA_FROM=''; MIGRATION_SCHEMA_TO=''",
+        "MIGRATION_LOCK_SECONDS=0; MIGRATION_TEMP_SPACE=0",
+        "export MIGRATION_REQUIRED MIGRATION_STRATEGY MIGRATION_BACKWARD_COMPATIBLE MIGRATION_ROLLBACK_SAFE",
+        "export MIGRATION_CHECKSUM MIGRATION_SCHEMA_FROM MIGRATION_SCHEMA_TO MIGRATION_LOCK_SECONDS MIGRATION_TEMP_SPACE",
+        "migration_required() { return 1; }",
+        "atomic_replace() { mv -- \"$1\" \"$2\"; }",
+        source_between("load_release_metadata()", "compose_file()"),
+        source_between("write_journal()", "write_transaction()"),
+        f"load_release_metadata '{metadata.as_posix()}' '{staging.as_posix()}' '{old_tree.as_posix()}'",
+        "test \"$MIGRATION_REQUIRED|$MIGRATION_STRATEGY|$MIGRATION_BACKWARD_COMPATIBLE|$MIGRATION_ROLLBACK_SAFE|$MIGRATION_CHECKSUM|$MIGRATION_SCHEMA_FROM|$MIGRATION_SCHEMA_TO|$MIGRATION_LOCK_SECONDS|$MIGRATION_TEMP_SPACE\" = '0|off|1|1||||0|0'",
+        "write_journal COMPLETED 0.3.74 '' '' SKIPPED_NO_MIGRATION",
+    ])
+    result = bash_run(tmp_path, script)
+    assert result.returncode == 0, result.stderr
+    records = list(journal.glob("upgrade-*.json"))
+    assert len(records) == 1
+    record = json.loads(records[0].read_text(encoding="utf-8"))
+    assert record["migration_required"] is False
+    assert record["migration_strategy"] == "off"
+    assert record["migration_checksum"] is None
+    assert record["schema_from"] is None
+    assert record["schema_to"] is None
+    assert record["estimated_lock_seconds"] == 0
+    assert record["estimated_temp_space_bytes"] == 0

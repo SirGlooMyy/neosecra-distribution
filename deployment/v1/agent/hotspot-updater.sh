@@ -381,6 +381,10 @@ if strategy not in {"off", "additive", "expand-contract", "offline"}:
 checksum = data["migration_checksum"]
 if checksum is not None and not re.fullmatch(r"[0-9a-fA-F]{64}", str(checksum)):
     raise SystemExit(5)
+for key in ("schema_from", "schema_to"):
+    value = data.get(key)
+    if value is not None and any(separator in str(value) for separator in ("\x1f", "\r", "\n")):
+        raise SystemExit(5)
 for key in ("estimated_lock_seconds", "estimated_temp_space_bytes"):
     value = data[key]
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -395,7 +399,7 @@ else:
         raise SystemExit(9)
     if not data["backward_compatible_with_previous_app"] or not data["rollback_safe_without_db_restore"]:
         raise SystemExit(10)
-print("\t".join([
+print("\x1f".join([
     "1" if data["migration_required"] else "0", strategy,
     "1" if data["backward_compatible_with_previous_app"] else "0",
     "1" if data["rollback_safe_without_db_restore"] else "0",
@@ -408,7 +412,7 @@ PY
     echo "Release migration compatibility metadata is invalid or unsafe" >&2
     return 12
   }
-  IFS=$'\t' read -r MIGRATION_REQUIRED MIGRATION_STRATEGY MIGRATION_BACKWARD_COMPATIBLE MIGRATION_ROLLBACK_SAFE MIGRATION_CHECKSUM MIGRATION_SCHEMA_FROM MIGRATION_SCHEMA_TO MIGRATION_LOCK_SECONDS MIGRATION_TEMP_SPACE <<< "${values}"
+  IFS=$'\x1f' read -r MIGRATION_REQUIRED MIGRATION_STRATEGY MIGRATION_BACKWARD_COMPATIBLE MIGRATION_ROLLBACK_SAFE MIGRATION_CHECKSUM MIGRATION_SCHEMA_FROM MIGRATION_SCHEMA_TO MIGRATION_LOCK_SECONDS MIGRATION_TEMP_SPACE <<< "${values}"
   local actual_required="0" actual_checksum
   if migration_required "${old_tree}" "${staging}"; then actual_required="1"; fi
   [[ "${actual_required}" == "${MIGRATION_REQUIRED}" ]] || {
