@@ -49,6 +49,7 @@ BACKUP_ROOT="${BACKUP_ROOT:-${ROOT}/backups}"
 STATE_BRIDGE="${ROOT}/state/upgrade-bridge"
 TRIGGER_DIR="${STATE_BRIDGE}/trigger"
 JOURNAL_DIR="${STATE_BRIDGE}/journal"
+HEARTBEAT_FILE="${STATE_BRIDGE}/agent-alive"
 AGENT_STATE="${ROOT}/state/update-agent"
 UNITS_DIR="/etc/systemd/system"
 ENV_FILE="/etc/neosecra/hotspot-update-agent.env"
@@ -71,8 +72,30 @@ done
 }
 install -d -m 0755 -o root -g root "$STATE_BRIDGE" "$JOURNAL_DIR"
 install -d -m 0770 -o "${BACKEND_UID%%:*}" -g "${BACKEND_UID##*:}" "$TRIGGER_DIR"
-touch "${STATE_BRIDGE}/agent-alive"
-chmod 0644 "${STATE_BRIDGE}/agent-alive"
+
+# A prior defective install may have created this heartbeat path as an empty
+# directory. `touch` reports success for directories, so repair only that
+# harmless legacy shape and fail closed for anything that could hide a file.
+if [[ -L "$HEARTBEAT_FILE" ]]; then
+  echo "Unsafe update-agent heartbeat symlink: $HEARTBEAT_FILE" >&2
+  exit 1
+fi
+if [[ -d "$HEARTBEAT_FILE" ]]; then
+  rmdir -- "$HEARTBEAT_FILE" || {
+    echo "Update-agent heartbeat directory is not empty: $HEARTBEAT_FILE" >&2
+    exit 1
+  }
+elif [[ -e "$HEARTBEAT_FILE" && ! -f "$HEARTBEAT_FILE" ]]; then
+  echo "Unsafe update-agent heartbeat path type: $HEARTBEAT_FILE" >&2
+  exit 1
+fi
+touch -- "$HEARTBEAT_FILE"
+chown root:root "$HEARTBEAT_FILE"
+chmod 0644 "$HEARTBEAT_FILE"
+[[ -f "$HEARTBEAT_FILE" && ! -L "$HEARTBEAT_FILE" ]] || {
+  echo "Update-agent heartbeat must be a regular file: $HEARTBEAT_FILE" >&2
+  exit 1
+}
 
 install -d -m 0755 /etc/neosecra
 cat > "$ENV_FILE" <<EOF
@@ -138,7 +161,9 @@ Description=NeoSecra Hotspot update-agent heartbeat
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/touch ${STATE_BRIDGE}/agent-alive
+ExecStartPre=/usr/bin/test -f ${HEARTBEAT_FILE}
+ExecStartPre=/usr/bin/test ! -L ${HEARTBEAT_FILE}
+ExecStart=/usr/bin/touch -- ${HEARTBEAT_FILE}
 EOF
 
 cat > "${UNITS_DIR}/neosecra-hotspot-update-agent-heartbeat.timer" <<'EOF'

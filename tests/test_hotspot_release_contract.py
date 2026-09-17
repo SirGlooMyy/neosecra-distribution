@@ -88,6 +88,13 @@ def test_hotspot_scripts_keep_monotonic_and_recovery_guards() -> None:
     assert "ARCHIVE_PROVIDER minio" in bootstrap
     assert "keyring" in updater.lower()
     assert 'AGENT_STATE="${ROOT}/state/update-agent"' in installer
+    assert 'HEARTBEAT_FILE="${STATE_BRIDGE}/agent-alive"' in installer
+    assert 'rmdir -- "$HEARTBEAT_FILE"' in installer
+    assert 'heartbeat directory is not empty' in installer
+    assert 'heartbeat symlink' in installer
+    assert 'ExecStartPre=/usr/bin/test -f ${HEARTBEAT_FILE}' in installer
+    assert 'ExecStartPre=/usr/bin/test ! -L ${HEARTBEAT_FILE}' in installer
+    assert 'ExecStart=/usr/bin/touch -- ${HEARTBEAT_FILE}' in installer
     assert "--backup-root" in installer
     assert "NEOSECRA_BACKUP_ROOT" in installer
     assert "Database backup/restore is unsupported" in updater
