@@ -481,7 +481,7 @@ with tarfile.open(archive, "r:gz") as bundle:
             if target.is_symlink() or (target.exists() and not target.is_dir()):
                 fail("archive directory collides with an existing path")
             target.mkdir(parents=True, exist_ok=True)
-            os.chmod(target, 0o700)
+            os.chmod(target, 0o755)
             continue
         parent = ensure_parent(relative)
         if target.exists() or target.is_symlink():
@@ -502,7 +502,7 @@ with tarfile.open(archive, "r:gz") as bundle:
                     output.write(chunk)
                 output.flush()
                 os.fsync(output.fileno())
-            os.chmod(target, 0o700 if (member.mode & 0o111) else 0o600)
+            os.chmod(target, 0o755 if (member.mode & 0o111) else 0o644)
         except OSError as exc:
             try:
                 target.unlink(missing_ok=True)
@@ -653,6 +653,9 @@ fi
 for data_dir in postgres clickhouse minio archives backups radius-runtime; do
   install -d -m 0750 "${DATA_ROOT}/${data_dir}"
 done
+# The digest-pinned MinIO image runs as UID 65532. Root-owned first-install
+# storage prevents its initial Object Lock bucket from being created.
+chown 65532:65532 "${DATA_ROOT}/minio"
 # Backend runs as UID/GID 1000 and needs only these two application mounts to
 # be writable. Database/object-store images retain their own entrypoint ACLs.
 chown 1000:1000 "${DATA_ROOT}/archives" "${DATA_ROOT}/backups" "${DATA_ROOT}/radius-runtime"

@@ -85,6 +85,9 @@ def test_ip_only_install_requires_explicit_valid_address() -> None:
     assert 'set_env RADIUS_LISTENER_HOST "$SERVER_IP"' in script
     assert 'set_env CORS_ORIGINS "http://${SERVER_IP}:35174,http://${SERVER_IP}:35175"' in script
     assert 'r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$"' in script
+    assert "os.chmod(target, 0o755)" in script
+    assert "0o755 if (member.mode & 0o111) else 0o644" in script
+    assert 'chown 65532:65532 "${DATA_ROOT}/minio"' in script
 
 
 @pytest.mark.parametrize(
