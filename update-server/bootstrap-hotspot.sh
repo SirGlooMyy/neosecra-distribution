@@ -16,6 +16,7 @@ API_PORT="${HOTSPOT_API_PORT:-38001}"
 BACKEND_UID="${HOTSPOT_BACKEND_UID:-1000:1000}"
 REINSTALL=0
 CUSTOMER_CONFIG=""
+SERVER_IP=""
 CHECK_CONFIG=0
 SINGLE_DISK=0
 
@@ -30,9 +31,10 @@ NeoSecra Hotspot signed channel bootstrap
 Usage:
   bootstrap-hotspot.sh [--reinstall] [--channel hotspot-stable|hotspot-candidate]
                        [--channel-url URL] [--install-root PATH]
-                       [--data-root PATH] [--single-disk] [--config FILE] [--check-config]
+                       [--data-root PATH] [--single-disk] [--server-ip IPv4]
+                       [--config FILE] [--check-config]
 
-New installs require --config FILE. --check-config validates it offline without installing.
+New installs need only --server-ip IPv4. --config FILE is optional for managed installs.
 
 The script resolves the newest hotspot-stable release, verifies the signed
 channel and archive, installs Docker/Compose if needed, starts the Compose
@@ -44,6 +46,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --reinstall) REINSTALL=1 ;;
     --config) shift; CUSTOMER_CONFIG="${1:-}" ;;
+    --server-ip) shift; SERVER_IP="${1:-}" ;;
     --check-config) CHECK_CONFIG=1 ;;
     --channel-url) shift; CHANNEL_URL="${1:-}" ;;
     --channel) shift; EXPECTED_CHANNEL="${1:-}" ;;
@@ -104,14 +107,12 @@ def require_https(key, *, required=True):
     except ValueError:
         errors.append(f"{key} must be a credential-free HTTPS URL")
 
-require_https("PORTAL_PUBLIC_BASE_URL")
+require_https("PORTAL_PUBLIC_BASE_URL", required=False)
 require_https("PORTAL_APP_BASE_URL", required=False)
 cors = values.get("CORS_ORIGINS", "")
-if not cors:
-    errors.append("Missing setting: CORS_ORIGINS")
-elif "*" in cors:
+if "*" in cors:
     errors.append("CORS_ORIGINS must not contain a wildcard")
-else:
+elif cors:
     for origin in cors.split(","):
         candidate = origin.strip()
         if not candidate:
@@ -133,7 +134,9 @@ requirements = {
     "relateddigital": [("RELATEDDIGITAL_API_KEY",), ("RELATEDDIGITAL_API_URL",)],
     "http": [("SMS_HTTP_URL",)],
 }
-if provider not in requirements:
+if provider in {"", "console", "log"}:
+    pass  # SMS delivery is disabled until the customer configures it in Admin.
+elif provider not in requirements:
     errors.append("SMS_PROVIDER must select a configured real gateway")
 else:
     for alternatives in requirements[provider]:
@@ -211,10 +214,21 @@ command -v python3 >/dev/null 2>&1 || die "python3 bulunamadi" 2
 command -v sha256sum >/dev/null 2>&1 || die "sha256sum bulunamadi" 2
 command -v minisign >/dev/null 2>&1 || die "minisign bulunamadi; imza dogrulama zorunludur" 2
 command -v findmnt >/dev/null 2>&1 || die "findmnt bulunamadi; veri diski mount kontrolu yapilamiyor" 2
+if [[ -n "$SERVER_IP" ]]; then
+  python3 - "$SERVER_IP" <<'PY' || die "--server-ip gecerli bir IPv4 adresi olmali" 2
+import ipaddress
+import sys
+try:
+    address = ipaddress.IPv4Address(sys.argv[1])
+    assert not address.is_unspecified and not address.is_loopback and not address.is_multicast
+except (ValueError, AssertionError):
+    raise SystemExit(1)
+PY
+fi
 if [[ -n "$CUSTOMER_CONFIG" ]]; then
   validate_customer_config "$CUSTOMER_CONFIG" || exit 2
-elif [[ $REINSTALL -eq 0 ]]; then
-  die "Yeni kurulum icin --config FILE gerekli; once --check-config ile dogrulayin" 2
+elif [[ $REINSTALL -eq 0 && -z "$SERVER_IP" ]]; then
+  die "Yeni kurulum icin --server-ip IPv4 veya --config FILE gerekli" 2
 fi
 
 # Prefer an already-mounted data filesystem. On a fresh host, a *single*
@@ -528,6 +542,8 @@ if [[ -f "$CURRENT_ENV" ]]; then
   cp -a "$CURRENT_ENV" "$ENV_FILE"
 elif [[ -n "$CUSTOMER_CONFIG" ]]; then
   cp -- "$CUSTOMER_CONFIG" "$ENV_FILE"
+elif [[ -n "$SERVER_IP" ]]; then
+  cp -- "$RELEASE_DIR/backend/.env.example" "$ENV_FILE"
 else
   die "Musteri ayar dosyasi bulunamadi" 2
 fi
@@ -628,6 +644,11 @@ set_env ARCHIVE_MINIO_SECRET_KEY "$MINIO_SECRET"
 set_env ARCHIVE_MINIO_BUCKET hotspot-5651
 set_env ARCHIVE_MINIO_SECURE false
 set_env BACKUP_PATH /data/backups
+if [[ -n "$SERVER_IP" ]]; then
+  set_env SERVER_HOST_IP "$SERVER_IP"
+  set_env RADIUS_LISTENER_HOST "$SERVER_IP"
+  set_env CORS_ORIGINS "http://${SERVER_IP}:35174,http://${SERVER_IP}:35175"
+fi
 
 for data_dir in postgres clickhouse minio archives backups radius-runtime; do
   install -d -m 0750 "${DATA_ROOT}/${data_dir}"

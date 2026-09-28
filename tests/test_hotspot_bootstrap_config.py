@@ -66,6 +66,26 @@ def test_candidate_channel_requires_explicit_allowlisted_identity(tmp_path: Path
     assert "Desteklenmeyen Hotspot kanali" in invalid.stderr
 
 
+def test_deferred_portal_and_sms_configuration_passes_preflight(tmp_path: Path) -> None:
+    content = _config(
+        PORTAL_PUBLIC_BASE_URL="",
+        PORTAL_APP_BASE_URL="",
+        CORS_ORIGINS="",
+        SMS_PROVIDER="console",
+        SMS_HTTP_URL="",
+    )
+    result = _check(tmp_path, content)
+    assert result.returncode == 0, result.stderr
+
+
+def test_ip_only_install_requires_explicit_valid_address() -> None:
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+    assert 'cp -- "$RELEASE_DIR/backend/.env.example" "$ENV_FILE"' in script
+    assert 'set_env SERVER_HOST_IP "$SERVER_IP"' in script
+    assert 'set_env RADIUS_LISTENER_HOST "$SERVER_IP"' in script
+    assert 'set_env CORS_ORIGINS "http://${SERVER_IP}:35174,http://${SERVER_IP}:35175"' in script
+
+
 @pytest.mark.parametrize(
     ("change", "message"),
     [
