@@ -34,11 +34,11 @@ def _config(**changes: str) -> str:
     return "".join(f"{key}={value}\n" for key, value in values.items())
 
 
-def _check(tmp_path: Path, content: str) -> subprocess.CompletedProcess[str]:
+def _check(tmp_path: Path, content: str, *extra_args: str) -> subprocess.CompletedProcess[str]:
     config = tmp_path / "customer.env"
     config.write_text(content, encoding="utf-8")
     return subprocess.run(
-        [str(BASH), str(BOOTSTRAP), "--config", str(config), "--check-config"],
+        [str(BASH), str(BOOTSTRAP), "--config", str(config), "--check-config", *extra_args],
         cwd=ROOT,
         env={
             **os.environ,
@@ -55,6 +55,15 @@ def test_valid_customer_config_passes_offline_even_with_host_override(tmp_path: 
     result = _check(tmp_path, _config())
     assert result.returncode == 0, result.stderr
     assert "PASS" in result.stdout
+
+
+def test_candidate_channel_requires_explicit_allowlisted_identity(tmp_path: Path) -> None:
+    candidate = _check(tmp_path, _config(), "--channel", "hotspot-candidate")
+    assert candidate.returncode == 0, candidate.stderr
+
+    invalid = _check(tmp_path, _config(), "--channel", "another-product")
+    assert invalid.returncode == 2
+    assert "Desteklenmeyen Hotspot kanali" in invalid.stderr
 
 
 @pytest.mark.parametrize(

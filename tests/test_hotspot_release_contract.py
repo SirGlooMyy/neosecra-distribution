@@ -83,6 +83,7 @@ def test_hotspot_scripts_keep_monotonic_and_recovery_guards() -> None:
     assert 'python3 "$TMP_DIR/hotspot.tar.gz"' not in bootstrap
     assert 'set_env VERSION "$VERSION"' in bootstrap
     assert "--data-root" in bootstrap
+    assert "--single-disk" in bootstrap
     assert "findmnt -T" in bootstrap
     assert "HOTSPOT_PGDATA_SOURCE" in bootstrap
     assert "ARCHIVE_PROVIDER minio" in bootstrap
@@ -113,3 +114,26 @@ def test_hotspot_scripts_keep_monotonic_and_recovery_guards() -> None:
         ROOT / "deployment" / "v1" / "agent" / "update-agent.sh"
     ).read_text(encoding="utf-8")
     assert "get.docker.com" not in bootstrap
+
+
+def test_hotspot_bootstrap_provisions_compose_v2_and_verifies_daemon() -> None:
+    bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
+    assert "apt-get install -y -qq ca-certificates curl python3 coreutils minisign util-linux e2fsprogs findutils gawk openssl tar" in bootstrap
+    assert "apt-get install -y -qq docker.io" in bootstrap
+    assert "apt-get install -y -qq docker-compose-v2" in bootstrap
+    assert "apt-get install -y -qq docker-compose-plugin" in bootstrap
+    assert "apt-get install -y -qq docker-compose\n" not in bootstrap
+    assert 'systemctl enable --now docker >/dev/null 2>&1 || die' in bootstrap
+    assert 'docker info >/dev/null 2>&1 || die' in bootstrap
+
+
+def test_storage_layout_prefers_blank_data_disk_then_bounds_single_disk() -> None:
+    bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
+    assert "SINGLE_DISK=0" in bootstrap
+    assert "blank_disks=()" in bootstrap
+    assert "${#blank_disks[@]} -le 1" in bootstrap
+    assert "wipefs -n" in bootstrap
+    assert "mkfs.ext4 -q" in bootstrap
+    assert "findmnt --fstab -M" in bootstrap
+    assert '[[ "$DATA_TOTAL_GB" -ge 900 && "$DATA_FREE_GB" -ge 700 ]]' in bootstrap
+    assert '[[ "$DATA_MOUNT_TARGET" == "$DATA_ROOT" ]]' in bootstrap

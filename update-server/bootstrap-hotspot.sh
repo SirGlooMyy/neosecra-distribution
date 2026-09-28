@@ -17,6 +17,7 @@ BACKEND_UID="${HOTSPOT_BACKEND_UID:-1000:1000}"
 REINSTALL=0
 CUSTOMER_CONFIG=""
 CHECK_CONFIG=0
+SINGLE_DISK=0
 
 RED=\033[31m; GREEN=\033[32m; RESET=\033[0m
 info() { printf '%s[neosecra-hotspot]%s %s\n' "${GREEN}" "${RESET}" "$@"; }
@@ -27,8 +28,9 @@ usage() {
 NeoSecra Hotspot signed channel bootstrap
 
 Usage:
-  bootstrap-hotspot.sh [--reinstall] [--channel-url URL] [--install-root PATH]
-                       [--data-root PATH] [--config FILE] [--check-config]
+  bootstrap-hotspot.sh [--reinstall] [--channel hotspot-stable|hotspot-candidate]
+                       [--channel-url URL] [--install-root PATH]
+                       [--data-root PATH] [--single-disk] [--config FILE] [--check-config]
 
 New installs require --config FILE. --check-config validates it offline without installing.
 
@@ -44,13 +46,17 @@ while [[ $# -gt 0 ]]; do
     --config) shift; CUSTOMER_CONFIG="${1:-}" ;;
     --check-config) CHECK_CONFIG=1 ;;
     --channel-url) shift; CHANNEL_URL="${1:-}" ;;
+    --channel) shift; EXPECTED_CHANNEL="${1:-}" ;;
     --install-root) shift; INSTALL_ROOT="${1:-}" ;;
     --data-root) shift; DATA_ROOT="${1:-}" ;;
+    --single-disk) SINGLE_DISK=1 ;;
     --help|-h) usage; exit 0 ;;
     *) die "Beklenmeyen arguman: $1" 2 ;;
   esac
   shift
 done
+[[ "$EXPECTED_CHANNEL" == hotspot-stable || "$EXPECTED_CHANNEL" == hotspot-candidate ]] || \
+  die "Desteklenmeyen Hotspot kanali" 2
 
 # Parse customer input as data, never source a file containing credentials.
 validate_customer_config() {
@@ -165,12 +171,26 @@ fi
 
 [[ $EUID -eq 0 ]] || die "Root yetkisi gerekli (sudo ile calistirin)" 1
 [[ "$INSTALL_ROOT" = /* && "$INSTALL_ROOT" != / && "$INSTALL_ROOT" != *$'\n'* && "$INSTALL_ROOT" != *$'\r'* ]] || die "Guvenli olmayan kurulum yolu" 2
-[[ "$DATA_ROOT" = /* && "$DATA_ROOT" != / && "$DATA_ROOT" != *$'\n'* && "$DATA_ROOT" != *$'\r'* && "$DATA_ROOT" != *'/../'* && "$DATA_ROOT" != */.. ]] || die "Guvenli olmayan veri yolu" 2
+[[ "$DATA_ROOT" = /* && "$DATA_ROOT" != / && "$DATA_ROOT" != *[[:space:]]* && "$DATA_ROOT" != *'/../'* && "$DATA_ROOT" != */.. ]] || die "Guvenli olmayan veri yolu" 2
 [[ "$BACKEND_UID" =~ ^[0-9]+:[0-9]+$ ]] || die "HOTSPOT_BACKEND_UID UID:GID olmali" 2
+APT_INDEX_REFRESHED=0
 missing_tools=()
-for command_name in curl python3 sha256sum minisign findmnt df awk; do
+for command_name in curl python3 sha256sum minisign findmnt df awk lsblk wipefs blkid mkfs.ext4 mount find; do
   command -v "$command_name" >/dev/null 2>&1 || missing_tools+=("$command_name")
 done
+if [[ ${#missing_tools[@]} -gt 0 ]]; then
+  command -v apt-get >/dev/null 2>&1 || \
+    die "Eksik host onkosullari: ${missing_tools[*]}; otomatik paket kurulumu desteklenmiyor" 2
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq || die "Paket indeksi yenilenemedi; host onkosullari kurulamadi" 4
+  APT_INDEX_REFRESHED=1
+  apt-get install -y -qq ca-certificates curl python3 coreutils minisign util-linux e2fsprogs findutils gawk openssl tar || \
+    die "Host onkosullari kurulamadi: ${missing_tools[*]}" 4
+  missing_tools=()
+  for command_name in curl python3 sha256sum minisign findmnt df awk lsblk wipefs blkid mkfs.ext4 mount find; do
+    command -v "$command_name" >/dev/null 2>&1 || missing_tools+=("$command_name")
+  done
+fi
 [[ ${#missing_tools[@]} -eq 0 ]] || die "Eksik host onkosullari: ${missing_tools[*]}; kuruluma devam etmeden once yukleyin" 2
 python3 - "$CHANNEL_URL" <<'PY' || die "Kanal URL yalnizca credential icermeyen guvenli HTTPS olabilir" 2
 import sys
@@ -197,16 +217,73 @@ elif [[ $REINSTALL -eq 0 ]]; then
   die "Yeni kurulum icin --config FILE gerekli; once --check-config ile dogrulayin" 2
 fi
 
-# Never silently place customer data on the OS filesystem. The installer
-# requires the explicitly supplied data root to be the mount target of a
-# separate filesystem before it creates any application state.
-[[ -d "$DATA_ROOT" ]] || die "Veri mount noktasi yok: ${DATA_ROOT}" 2
+# Prefer an already-mounted data filesystem. On a fresh host, a *single*
+# completely blank second disk may be provisioned; otherwise a sufficiently
+# large root filesystem is supported. Never guess among disks or hide data.
+[[ ! -L "$DATA_ROOT" ]] || die "Veri yolu symlink olamaz" 2
+install -d -m 0750 "$DATA_ROOT"
+[[ -d "$DATA_ROOT" && ! -L "$DATA_ROOT" ]] || die "Veri yolu guvenli degil: ${DATA_ROOT}" 2
+[[ "$(readlink -f -- "$DATA_ROOT")" == "$DATA_ROOT" ]] || die "Veri yolu symlink veya normalizasyon farki iceriyor" 2
 DATA_MOUNT_TARGET="$(findmnt -T "$DATA_ROOT" -no TARGET 2>/dev/null || true)"
-[[ "$DATA_MOUNT_TARGET" == "$DATA_ROOT" ]] || die "Veri diski ${DATA_ROOT} adresine ayri filesystem olarak mount edilmemis" 2
+if [[ "$DATA_MOUNT_TARGET" != "$DATA_ROOT" ]]; then
+  [[ "$DATA_MOUNT_TARGET" == / ]] || die "Veri yolu beklenmeyen bir mount altinda: ${DATA_MOUNT_TARGET}" 2
+  if findmnt --fstab -M "$DATA_ROOT" >/dev/null 2>&1; then
+    die "Veri diski fstab'da tanimli ama mount edilmemis; kok diske gecis yasak" 2
+  fi
+  if [[ $SINGLE_DISK -eq 0 ]]; then
+    # A candidate must be a whole disk with no partitions, filesystem,
+    # signatures or holders. A root/OS disk necessarily has children and is
+    # never eligible. More than one candidate is ambiguous and fails closed.
+    blank_disks=()
+    occupied_disks=()
+    disk_inventory="$(lsblk -dn -b -o PATH,TYPE,SIZE)" || die "Disk envanteri okunamadi" 2
+    while read -r disk_path disk_type disk_size; do
+      [[ "$disk_type" == disk && "$disk_size" =~ ^[0-9]+$ && "$disk_size" -ge 500000000000 ]] || continue
+      disk_topology="$(lsblk -nr -o TYPE "$disk_path")" || die "Disk topolojisi okunamadi" 2
+      [[ "$(printf '%s\n' "$disk_topology" | wc -l)" -eq 1 ]] || continue
+      disk_fstype="$(lsblk -dn -o FSTYPE "$disk_path")" || die "Disk dosya sistemi okunamadi" 2
+      disk_signatures="$(wipefs -n "$disk_path" 2>&1)" || die "Disk imzalari okunamadi" 2
+      if [[ -n "$disk_fstype" || -n "$disk_signatures" ]]; then
+        occupied_disks+=("$disk_path")
+        continue
+      fi
+      blank_disks+=("$disk_path")
+    done <<< "$disk_inventory"
+    [[ ${#occupied_disks[@]} -eq 0 ]] || \
+      die "Mount edilmemis veri diskinde mevcut dosya sistemi veya imza var; otomatik kurulum durduruldu" 2
+    [[ ${#blank_disks[@]} -le 1 ]] || die "Birden fazla bos veri diski var; hangisinin kullanilacagi belirsiz" 2
+    if [[ ${#blank_disks[@]} -eq 1 ]]; then
+      [[ -z "$(find "$DATA_ROOT" -mindepth 1 -maxdepth 1 -print -quit)" ]] || \
+        die "Veri yolu bos degil; disk mount edilirse mevcut dosyalar gizlenir" 2
+      disk_path="${blank_disks[0]}"
+      info "Tek bos veri diski saptandi; ext4 olarak hazirlaniyor: ${disk_path}"
+      mkfs.ext4 -q "$disk_path" || die "Veri diski bicimlendirilemedi" 4
+      mount "$disk_path" "$DATA_ROOT" || die "Veri diski mount edilemedi" 4
+      disk_uuid="$(blkid -s UUID -o value "$disk_path")"
+      [[ -n "$disk_uuid" ]] || die "Veri diski UUID okunamadi" 4
+      printf 'UUID=%s %s ext4 defaults 0 2\n' "$disk_uuid" "$DATA_ROOT" >> /etc/fstab || \
+        die "Veri diski kalici mount kaydi yazilamadi" 4
+      DATA_MOUNT_TARGET="$(findmnt -T "$DATA_ROOT" -no TARGET 2>/dev/null || true)"
+    fi
+  fi
+fi
+if [[ "$DATA_MOUNT_TARGET" == / ]]; then
+  info "Tek disk depolama duzeni kullaniliyor; kapasite kapisi uygulanacak"
+  SINGLE_DISK=1
+else
+  [[ "$DATA_MOUNT_TARGET" == "$DATA_ROOT" ]] || die "Veri diski dogrulanamadi" 2
+  SINGLE_DISK=0
+fi
 DATA_TOTAL_GB="$(df -BG --output=size "$DATA_ROOT" | awk 'NR==2 {gsub(/G/, "", $1); print $1}')"
 DATA_FREE_GB="$(df -BG --output=avail "$DATA_ROOT" | awk 'NR==2 {gsub(/G/, "", $1); print $1}')"
 [[ "$DATA_TOTAL_GB" =~ ^[0-9]+$ && "$DATA_FREE_GB" =~ ^[0-9]+$ ]] || die "Veri diski kapasitesi okunamadi" 2
-[[ "$DATA_TOTAL_GB" -ge 500 && "$DATA_FREE_GB" -ge 100 ]] || die "Veri diskinde en az 500 GB toplam ve 100 GB bos alan gerekli" 2
+if [[ $SINGLE_DISK -eq 1 ]]; then
+  [[ "$DATA_TOTAL_GB" -ge 900 && "$DATA_FREE_GB" -ge 700 ]] || \
+    die "Tek disk kurulumunda en az 900 GB toplam ve 700 GB bos alan gerekli" 2
+else
+  [[ "$DATA_TOTAL_GB" -ge 500 && "$DATA_FREE_GB" -ge 100 ]] || \
+    die "Veri diskinde en az 500 GB toplam ve 100 GB bos alan gerekli" 2
+fi
 
 CURL_OPTS=(--fail --silent --show-error --location --proto '=https' --proto-redir '=https' -H 'User-Agent: NeoSecra-Hotspot-Bootstrap/1.0')
 TMP_DIR="$(mktemp -d /tmp/neosecra-hotspot-bootstrap.XXXXXXXXXX)"
@@ -559,18 +636,28 @@ done
 # be writable. Database/object-store images retain their own entrypoint ACLs.
 chown 1000:1000 "${DATA_ROOT}/archives" "${DATA_ROOT}/backups" "${DATA_ROOT}/radius-runtime"
 
-if ! command -v docker >/dev/null 2>&1; then
-  if command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq
-    apt-get install -y -qq docker.io docker-compose-plugin || apt-get install -y -qq docker.io docker-compose
-  else
-    die "Docker bulunamadi; desteklenmeyen hostta uzaktan kurulum yapilmaz. Docker/Compose'u onceden kurun" 4
+if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
+  command -v apt-get >/dev/null 2>&1 || \
+    die "Docker/Compose eksik; bu host icin otomatik paket kurulumu desteklenmiyor" 4
+  export DEBIAN_FRONTEND=noninteractive
+  if [[ $APT_INDEX_REFRESHED -eq 0 ]]; then
+    apt-get update -qq || die "Paket indeksi yenilenemedi; Docker kurulumu durduruldu" 4
+  fi
+  if ! command -v docker >/dev/null 2>&1; then
+    apt-get install -y -qq docker.io || die "Docker Engine kurulumu basarisiz" 4
+  fi
+  if ! docker compose version >/dev/null 2>&1; then
+    # Ubuntu 26.04 publishes Compose v2 as docker-compose-v2; other supported
+    # apt repositories may publish the same plugin as docker-compose-plugin.
+    apt-get install -y -qq docker-compose-v2 || \
+      apt-get install -y -qq docker-compose-plugin || \
+      die "Docker Compose v2 plugin kurulumu basarisiz" 4
   fi
 fi
 command -v docker >/dev/null 2>&1 || die "Docker kurulumu dogrulanamadi" 4
 docker compose version >/dev/null 2>&1 || die "Docker Compose v2 gerekli" 4
-systemctl enable --now docker >/dev/null 2>&1 || true
+systemctl enable --now docker >/dev/null 2>&1 || die "Docker servisi baslatilamadi" 4
+docker info >/dev/null 2>&1 || die "Docker daemon erisimi dogrulanamadi" 4
 
 info "Host update-agent kuruluyor"
 bash "${RELEASE_DIR}/deployment/v1/agent/install-hotspot-agent.sh" \
