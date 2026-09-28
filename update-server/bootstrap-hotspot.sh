@@ -63,13 +63,14 @@ done
 
 # Parse customer input as data, never source a file containing credentials.
 validate_customer_config() {
-  python3 - "$1" <<'CUSTOMER_CONFIG_PY'
+  python3 - "$1" "$SERVER_IP" <<'CUSTOMER_CONFIG_PY'
 import re
 import sys
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 path = Path(sys.argv[1])
+server_ip = sys.argv[2]
 if not path.is_file() or path.is_symlink():
     sys.exit("Customer config must be a regular file")
 values = {}
@@ -117,6 +118,10 @@ elif cors:
         candidate = origin.strip()
         if not candidate:
             errors.append("CORS_ORIGINS contains an empty origin")
+            continue
+        if server_ip and candidate in {
+            f"http://{server_ip}:35174", f"http://{server_ip}:35175"
+        }:
             continue
         before = len(errors)
         values["__CORS_ORIGIN"] = candidate
@@ -714,7 +719,8 @@ atomic_switch() {
   mv -Tf "$tmp" "$CURRENT_LINK"
 }
 atomic_write() {
-  local destination="$1" content="$2" tmp="${destination}.tmp.$$"
+  local destination="$1" content="$2" tmp
+  tmp="${destination}.tmp.$$"
   printf '%s\n' "$content" > "$tmp"
   chmod 0600 "$tmp"
   mv -f "$tmp" "$destination"

@@ -78,6 +78,18 @@ def test_deferred_portal_and_sms_configuration_passes_preflight(tmp_path: Path) 
     assert result.returncode == 0, result.stderr
 
 
+def test_ip_only_generated_config_can_be_reused_for_recovery(tmp_path: Path) -> None:
+    content = _config(
+        PORTAL_PUBLIC_BASE_URL="",
+        PORTAL_APP_BASE_URL="",
+        CORS_ORIGINS="http://192.168.2.135:35174,http://192.168.2.135:35175",
+        SMS_PROVIDER="console",
+        SMS_HTTP_URL="",
+    )
+    result = _check(tmp_path, content, "--server-ip", "192.168.2.135")
+    assert result.returncode == 0, result.stderr
+
+
 def test_ip_only_install_requires_explicit_valid_address() -> None:
     script = BOOTSTRAP.read_text(encoding="utf-8")
     assert 'cp -- "$RELEASE_DIR/backend/.env.example" "$ENV_FILE"' in script
@@ -88,6 +100,7 @@ def test_ip_only_install_requires_explicit_valid_address() -> None:
     assert "os.chmod(target, 0o755)" in script
     assert "0o755 if (member.mode & 0o111) else 0o644" in script
     assert 'chown 65532:65532 "${DATA_ROOT}/minio"' in script
+    assert 'local destination="$1" content="$2" tmp' in script
 
 
 @pytest.mark.parametrize(
