@@ -84,6 +84,7 @@ def test_ip_only_install_requires_explicit_valid_address() -> None:
     assert 'set_env SERVER_HOST_IP "$SERVER_IP"' in script
     assert 'set_env RADIUS_LISTENER_HOST "$SERVER_IP"' in script
     assert 'set_env CORS_ORIGINS "http://${SERVER_IP}:35174,http://${SERVER_IP}:35175"' in script
+    assert 'r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$"' in script
 
 
 @pytest.mark.parametrize(

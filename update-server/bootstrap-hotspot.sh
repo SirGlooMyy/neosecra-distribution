@@ -422,7 +422,7 @@ root = Path(destination).resolve()
 max_members = 10000
 max_member_bytes = 2 * 1024 * 1024 * 1024
 max_total_bytes = 4 * 1024 * 1024 * 1024
-safe_component = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+safe_component = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$")
 
 def fail(message):
     raise SystemExit(message)
