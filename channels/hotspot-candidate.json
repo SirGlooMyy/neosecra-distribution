@@ -3,9 +3,9 @@
   "product": "hotspot",
   "product_code": "hotspot",
   "edition": "standard",
-  "current_version": "0.3.113",
+  "current_version": "0.3.114",
   "status": "available",
-  "updated": "2026-09-28T17:14:22Z",
+  "updated": "2026-09-28T17:39:12Z",
   "releases": [
     {
       "version": "0.3.109",
@@ -181,6 +181,44 @@
         "signature_url": "https://update.neosecra.com/releases/0.3.113/none"
       },
       "bundle_url": "https://update.neosecra.com/releases/0.3.113/none",
+      "migration_contract": {
+        "migration_required": false,
+        "migration_strategy": "off",
+        "backward_compatible_with_previous_app": true,
+        "rollback_safe_without_db_restore": true,
+        "migration_checksum": null,
+        "schema_from": null,
+        "schema_to": null,
+        "estimated_lock_seconds": 0,
+        "estimated_temp_space_bytes": 0,
+        "backup_required": false
+      },
+      "backup_required": false,
+      "migrations": false,
+      "rollback_supported": true
+    },
+    {
+      "version": "0.3.114",
+      "released_at": "2026-09-28T17:39:12Z",
+      "archive": {
+        "url": "https://update.neosecra.com/releases/0.3.114/hotspot-0.3.114.tar.gz",
+        "sha256": "feaaee0864c7d5118bb79ae75f9acda4c3b193d4394b21e66ff6b52f2a0dbba7",
+        "size_bytes": 3258614,
+        "signature_url": "https://update.neosecra.com/releases/0.3.114/hotspot-0.3.114.tar.gz.minisig"
+      },
+      "bootstrap": {
+        "url": "https://update.neosecra.com/releases/0.3.114/bootstrap.sh",
+        "sha256": "b49595150682567eee9b2db5f44182c53c86a8886387c867f46636b73d0da3ed",
+        "size_bytes": 33722,
+        "signature_url": "https://update.neosecra.com/releases/0.3.114/bootstrap.sh.minisig"
+      },
+      "docker_bundle": {
+        "url": "https://update.neosecra.com/releases/0.3.114/none",
+        "sha256": "0",
+        "size_bytes": 0,
+        "signature_url": "https://update.neosecra.com/releases/0.3.114/none"
+      },
+      "bundle_url": "https://update.neosecra.com/releases/0.3.114/none",
       "migration_contract": {
         "migration_required": false,
         "migration_strategy": "off",
