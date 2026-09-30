@@ -36,3 +36,21 @@ test-results/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Local scratch files and publication leftovers
+/patch_*.py
+/patch_*.sh
+/verify_debug.py
+/test_verify.sh
+/diff.patch
+/enforce.sh
+/;
+/COMMIT_PLAN.md
+/update-server/enforce.sh
+/update-server/.backup-*/
+/update-server/www.tar.gz
+/update-server/www/releases/.failed-*/
+/update-server/www/releases/*/hotspot-*.tar.gz*
+/update-server/www/releases/*/bootstrap*.sh*
+/.codex-python/
+/.codex-tmp/

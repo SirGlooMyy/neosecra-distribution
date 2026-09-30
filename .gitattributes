@@ -1,0 +1,11 @@
+# Signed artifacts must never go through line-ending conversion: a changed
+# byte invalidates the Minisign signature.
+channels/*.json -text
+channels/*.minisig -text
+update-server/www/channels/*.json -text
+update-server/www/channels/*.minisig -text
+*.minisig -text
+*.pub -text
+*.sh text eol=lf
+*.py text eol=lf
+Caddyfile text eol=lf
