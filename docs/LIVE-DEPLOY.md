@@ -155,6 +155,103 @@ ayrıcalıklı süreçlerin eşzamanlı dizin değiştirmesine karşı descripto
 yazılabilir olmamalıdır. Yedek manifesti checksum kanıtıdır, dijital imza değildir;
 yedek + manifesti birlikte değiştirebilen aktöre karşı güven çapası sayılmaz.
 
+## Canlıda öğrenilen sınırlar (30.09.2026, ilk gerçek dağıtımlar)
+
+Kaynak SHA'lar: araç `6225c5a` ile canlıya alındı; bu bölümün yazıldığı kaynak
+Distribution `origin/main` `b496e36`, Lisans `b793d21`. Canlı damga: distribution
+`6225c5a` (`b496e36` henüz dağıtılmadı), lisans `b793d21`. Aşağıdakiler araç
+sözleşmesinin **dışında** kalan, elle yapılması gereken adımlardır; her biri ayrı
+açık yetki ister (`CLAUDE.md` SSH kuralı: servis durdurma/başlatma, config
+değiştirme, migration apply, silme serbest değildir).
+
+1. **Silinen dosyalar hedeften kaldırılmaz.** Araç yalnız ekler/günceller.
+   Repoda silinen kaynak dosyalar canlıda kalır ve derlemeyi bozabilir (30.09.2026
+   dağıtımında 11 eski frontend sayfası canlıda kalmıştı ve elle silindi).
+   Her dağıtımdan sonra, yerel depoda ve dağıtımdan **önce** hedefte okunan eski
+   damgayla (`cat <hedef>/.deployed-commit`; yedeğin `PREVIOUS-STAMP` dosyasında da
+   bulunur):
+
+   ```bash
+   git diff --name-only --diff-filter=D <önceki-damga> <yeni-sha>
+   ```
+
+   Çıktı listelenir, kullanıcıya gösterilir, onaydan sonra hedefteki karşılıkları
+   kalıcı silme yerine tarihli bir yedek dizinine taşınır (`backups/` bileşeni aracın
+   sert-yasak listesindedir, araç ona dokunmaz). Kalıcı silme ayrı açık yetkidir.
+   Lisans frontend derlemesi bu adımdan sonra yapılır.
+2. **Caddyfile tek dosya bind-mount'tur** (`update-server/docker-compose.yml:25`
+   `${CADDYFILE:-./Caddyfile}:/etc/caddy/Caddyfile:ro`). Araç dosyayı `mv -T` ile
+   yeni inode olarak değiştirir; kapsayıcı eski inode'u görmeye devam ettiği için
+   `caddy reload` "config unchanged" der ve değişiklik uygulanmış görünür ama
+   uygulanmamıştır. `update-server/Caddyfile` (ya da `Caddyfile.public`) değiştiyse:
+   önce `caddy validate`, sonra `docker restart update-server-caddy-1` (ayrı onay;
+   kısa kesinti). Yeniden başlatma sonrası public kanal URL'leri ve registry
+   salt-okunur kuralı (yazma 403) yeniden doğrulanır.
+3. **Windows'tan çalıştırma kalıbı** (PowerShell; SSH ve `git fetch` etkileşimsiz
+   olmalı, Git Bash yolu kullanılır):
+
+   ```powershell
+   & "C:\Program Files\Git\bin\bash.exe" -c "export GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never; cd /e/projects/neosecra-distribution && bash scripts/deploy-live.sh --profile distribution --ref <sha> --target <user@host:/opt/neosecra/distribution> --identity <anahtar-yolu>"
+   # Lisans: --profile lisans --repo /e/projects/neosecra-lisans --ref <sha> --target <user@host:/opt/neosecra/lisans>
+   # Uygulamak için aynı komuta --apply eklenir (önce dry-run çıktısı onaylanır).
+   ```
+
+   Yerel blob-hash doğrulaması (arşiv SHA-256'sı ile `git cat-file blob` karşılaştırması)
+   Windows'ta birkaç dakika sürer; takılma değildir, kesilmez.
+4. **Lisans dağıtımı dosya aktarımıyla bitmez.** Kök `docker-compose.yml` araç
+   tarafından aktarılmaz ve reddedilir (geliştirme dosyasıdır). Canlıdaki kök
+   `docker-compose.yml`, `license-server/deployment/compose/docker-compose.prod.yml`
+   dosyasının kopyasıdır ve elle kopyalanır (ayrı onay; önce hedefte mevcut dosyanın
+   tarihli yedeği, sonra `diff`). Lisans hedef yolu `/opt/neosecra/lisans` biçimindedir
+   (yolun son bileşeni `lisans`); canlı hostun gerçek yolu DOĞRULANACAK.
+
+### Lisans dağıtımı sonrası sunucuda yapılacaklar (sıralı, her adım ayrı onay)
+
+Önkoşul: dağıtım yalnız temiz, push edilmiş commit'ten (`--apply`); DB yedeği ve izole
+restore kanıtı (migration varsa); `.env` değerleri rapora/loga yazılmaz. Gereken
+ortam değişkeni **adları** (`docker-compose.prod.yml:27-33,59-74,101-104,122`):
+`BACKEND_IMAGE`, `FRONTEND_IMAGE`, `SIGNER_IMAGE` (değişmez, digest'li referans:
+`ad@sha256:<64 hex>`; compose boşsa başlamaz), `MFA_ENCRYPTION_KEY`,
+`SIGNER_SHARED_SECRET` (en az 32 bayt), `SIGNING_PUBLIC_KEY_PIN` (opsiyonel; signer
+public key'inin base64'ü ya da SHA-256 parmak izi).
+
+1. Migration (yalnız backend imajı yeni koddan derlendikten sonra):
+
+   ```bash
+   docker compose run --rm --no-deps -e PYTHONPATH=/app backend alembic upgrade head
+   ```
+
+   Sonuç `alembic current` ile doğrulanır (canlı son kayıt: `009_ui_support`).
+   Migration apply ayrı açık yetkidir; geri dönüş için önceki imaj digest'i ve DB
+   yedeği kayıtlı olmalıdır (migration geri alınmaz).
+2. İmajlar sunucuda, dağıtılan ağaçtan derlenir (Dockerfile'lar):
+   `license-server/backend/Dockerfile.prod`, `license-server/signer/Dockerfile`,
+   `license-server/frontend/Dockerfile.prod` (`docker build -f <Dockerfile> <bağlam>`;
+   bağlam Dockerfile'ın `COPY` yollarına göre servis klasörüdür). Derleme sonrası
+   compose'un istediği digest'li referansın nasıl üretildiği/kaydedildiği
+   DOĞRULANACAK (yerel `docker build` tek başına registry digest'i üretmez).
+3. Servisler yeniden oluşturulur; **backend ve signer birlikte** (backend↔signer
+   istek kimliği HMAC protokolüdür, sürüm uyumsuzluğu imzalamayı bozar):
+
+   ```bash
+   docker compose up -d --force-recreate --no-deps backend signer frontend
+   ```
+
+   Postgres yeniden oluşturulmaz (`--no-deps`).
+4. Doğrulama: `docker compose ps` (dört servis sağlıklı), `alembic current`, frontend
+   derlemesi (eski dosyalar adım 1'deki gibi kaldırıldıktan sonra), imzalı CRL'in public
+   `LIC-*` kimliğiyle yayında olduğu ve `license-status` uç noktasının imzalı cevap
+   verdiği (secret basmadan) kaydı. Bu smoke kaydı, ürünlerin `block_updates`'i açması
+   için ön koşuldur (`shared-guides/PRODUCT-INTEGRATION-PROCEDURE.md` §4.8).
+
+### Distribution dağıtımı sonrası kısa liste
+
+Dry-run çıktısı onaylanır → `--apply` → silinenler (madde 1) → Caddy/compose/mailer
+değiştiyse madde 2 → `bash bin/validate-channels.sh` ve public kanal URL'leri +
+`minisign -Vm` doğrulaması (kanallar ve `www` bu araçla taşınmaz; publisher yazar) →
+publisher `--dry-run`. Bu araç yayın/kanal güncellemesi yapmaz; imzalı yayın yalnız
+`update-server/publish.sh` iledir.
+
 ## Yerel doğrulama
 
 ```powershell
