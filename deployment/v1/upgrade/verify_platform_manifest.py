@@ -83,6 +83,19 @@ def _read_state(path: Path) -> dict[str, Any] | None:
     return value
 
 
+def _trusted_public_keys(value: str) -> list[Path]:
+    path = Path(value)
+    if path.is_dir() and not path.is_symlink():
+        return sorted(
+            candidate
+            for candidate in path.glob("*.pub")
+            if candidate.is_file() and not candidate.is_symlink() and candidate.stat().st_size
+        )
+    if path.is_file() and not path.is_symlink() and path.stat().st_size:
+        return [path]
+    return []
+
+
 def _verify_signature(manifest: dict[str, Any], manifest_path: Path, v1_root: Path) -> None:
     signatures = manifest.get("signatures")
     if not isinstance(signatures, dict):
@@ -95,11 +108,11 @@ def _verify_signature(manifest: dict[str, Any], manifest_path: Path, v1_root: Pa
 
     pubkey_value = str(
         os.environ.get("NEOSECRA_SIGNATURE_PUBKEY")
-        or (v1_root / "ca" / "update-neosecra-com.pub")
+        or (v1_root / "ca")
     ).strip()
-    pubkey = Path(pubkey_value)
-    if not pubkey.is_file() or not pubkey.stat().st_size:
-        die(f"Trusted public key not found: {pubkey}")
+    pubkeys = _trusted_public_keys(pubkey_value)
+    if not pubkeys:
+        die(f"Trusted public key/keyring not found or empty: {pubkey_value}")
 
     canonical = dict(manifest)
     canonical.pop("signatures", None)
@@ -116,18 +129,21 @@ def _verify_signature(manifest: dict[str, Any], manifest_path: Path, v1_root: Pa
                 + "\n",
                 encoding="utf-8",
             )
-            try:
-                result = subprocess.run(
-                    ["minisign", "-Vm", str(canonical_path), "-p", str(pubkey), "-x", str(sig_path), "-q"],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-            except OSError as exc:
-                die(f"minisign is unavailable: {exc}")
-            if result.returncode != 0:
-                detail = (result.stderr or "").strip()
-                die(f"Invalid platform manifest signature{': ' + detail if detail else ''}")
+            last_detail = ""
+            for pubkey in pubkeys:
+                try:
+                    result = subprocess.run(
+                        ["minisign", "-Vm", str(canonical_path), "-p", str(pubkey), "-x", str(sig_path), "-q"],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                except OSError as exc:
+                    die(f"minisign is unavailable: {exc}")
+                if result.returncode == 0:
+                    return
+                last_detail = (result.stderr or "").strip()
+            die(f"Invalid platform manifest signature{': ' + last_detail if last_detail else ''}")
     except OSError as exc:
         die(f"Platform manifest signature verification failed: {exc}")
 

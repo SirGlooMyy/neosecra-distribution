@@ -49,6 +49,8 @@ upgrade:
 
 rollback:
   application_supported: true
+  # Product policy: backup_restore takes a pre-upgrade backup and restores it.
+  # Pointer-only products declare none and set upgrade.backup_required=false.
   database_strategy: backup_restore
   automatic_on_health_failure: true
 

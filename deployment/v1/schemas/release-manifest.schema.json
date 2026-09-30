@@ -8,11 +8,70 @@
     "product",
     "edition",
     "version",
-    "release_channel",
-    "git_commit",
-    "build_date",
-    "target_database_revision",
     "images"
+  ],
+  "anyOf": [
+    {
+      "required": ["release_channel", "git_commit", "build_date", "target_database_revision"],
+      "properties": { "images": { "type": "object" } }
+    },
+    {
+      "required": ["channel", "build_commit", "database_revision"],
+      "properties": { "images": { "type": "array" } }
+    }
+  ],
+  "allOf": [
+    {
+      "if": {
+        "required": ["rollback"],
+        "properties": {
+          "rollback": {
+            "required": ["database_strategy"],
+            "properties": { "database_strategy": { "const": "none" } }
+          }
+        }
+      },
+      "then": {
+        "required": ["upgrade"],
+        "properties": {
+          "upgrade": {
+            "required": [
+              "migration_strategy", "backward_compatible_with_previous_app",
+              "rollback_safe_without_db_restore", "migration_checksum",
+              "schema_from", "schema_to", "estimated_lock_seconds",
+              "estimated_temp_space_bytes"
+            ],
+            "properties": {
+              "backup_required": { "const": false },
+              "backward_compatible_with_previous_app": { "const": true },
+              "rollback_safe_without_db_restore": { "const": true }
+            },
+            "if": { "properties": { "migration_required": { "const": true } } },
+            "then": {
+              "properties": {
+                "migration_strategy": { "enum": ["additive", "expand-contract"] },
+                "migration_checksum": { "type": "string" },
+                "schema_from": { "type": "string", "minLength": 1 },
+                "schema_to": { "type": "string", "minLength": 1 }
+              }
+            },
+            "else": {
+              "properties": {
+                "migration_strategy": { "const": "off" },
+                "migration_checksum": { "type": "null" },
+                "schema_from": { "type": "null" },
+                "schema_to": { "type": "null" },
+                "estimated_lock_seconds": { "const": 0 },
+                "estimated_temp_space_bytes": { "const": 0 }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": { "upgrade": { "properties": { "backup_required": { "const": true } } } }
+      }
+    }
   ],
   "properties": {
     "product": {
@@ -40,6 +99,9 @@
       "pattern": "^[a-f0-9]{7,40}$",
       "description": "Full or short git commit SHA"
     },
+    "channel": { "$ref": "#/properties/release_channel" },
+    "build_commit": { "$ref": "#/properties/git_commit" },
+    "database_revision": { "$ref": "#/properties/target_database_revision" },
     "build_date": {
       "type": "string",
       "format": "date-time",
@@ -59,13 +121,30 @@
       "minimum": 1
     },
     "images": {
-      "type": "object",
-      "required": ["backend", "frontend"],
-      "properties": {
-        "backend": { "$ref": "#/definitions/imageRef" },
-        "frontend": { "$ref": "#/definitions/imageRef" },
-        "worker": { "$ref": "#/definitions/imageRef" }
-      }
+      "anyOf": [
+        {
+          "type": "object",
+          "required": ["backend", "frontend"],
+          "properties": {
+            "backend": { "$ref": "#/definitions/imageRef" },
+            "frontend": { "$ref": "#/definitions/imageRef" },
+            "worker": { "$ref": "#/definitions/imageRef" }
+          }
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["name", "ref"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "ref": { "type": "string", "minLength": 1 },
+              "digest": { "$ref": "#/definitions/imageRef/properties/digest" }
+            }
+          }
+        }
+      ]
     },
     "upgrade": {
       "type": "object",
@@ -73,6 +152,20 @@
       "properties": {
         "backup_required": { "type": "boolean" },
         "migration_required": { "type": "boolean" },
+        "migration_strategy": {
+          "type": "string",
+          "enum": ["off", "additive", "expand-contract", "offline"]
+        },
+        "backward_compatible_with_previous_app": { "type": "boolean" },
+        "rollback_safe_without_db_restore": { "type": "boolean" },
+        "migration_checksum": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "schema_from": { "type": ["string", "null"] },
+        "schema_to": { "type": ["string", "null"] },
+        "estimated_lock_seconds": { "type": "integer", "minimum": 0 },
+        "estimated_temp_space_bytes": { "type": "integer", "minimum": 0 },
         "maintenance_mode_required": { "type": "boolean" },
         "restart_required": { "type": "boolean" }
       }
@@ -83,7 +176,8 @@
         "application_supported": { "type": "boolean" },
         "database_strategy": {
           "type": "string",
-          "enum": ["backup_restore", "downgrade", "none"]
+          "enum": ["backup_restore", "none"],
+          "description": "Product policy: none requires pointer-only rollback; absent defaults to backup_restore"
         },
         "automatic_on_health_failure": { "type": "boolean" }
       }

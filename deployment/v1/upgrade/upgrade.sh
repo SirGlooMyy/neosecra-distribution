@@ -8,6 +8,9 @@ source "${V1_ROOT}/lib/common.sh"
 source "${V1_ROOT}/lib/manifest.sh"
 source "${V1_ROOT}/lib/docker.sh"
 source "${V1_ROOT}/lib/state.sh"
+ARTIFACT_VERIFIER="${NEOSECRA_ARTIFACT_VERIFIER:-${V1_ROOT}/agent/artifact-verifier.sh}"
+[[ -f "${ARTIFACT_VERIFIER}" && ! -L "${ARTIFACT_VERIFIER}" ]] || die "SECURITY VIOLATION: artifact-verifier.sh missing" 4
+source "${ARTIFACT_VERIFIER}"
 
 # Sourced libraries intentionally derive their own helper paths.  Keep the
 # canonical upgrade/recovery tree immutable when the runtime context later
@@ -146,7 +149,7 @@ fi
 CHANNEL_URL="${NEOSECRA_CHANNEL_URL:-${UPGRADE_CHANNEL_URL:-https://update.neosecra.com/channels/assessment-stable.json}}"
 BOOTSTRAP_URL="${NEOSECRA_BOOTSTRAP_URL:-https://raw.githubusercontent.com/SirGlooMyy/neosecra-distribution/fix/assessment-live-installer/bootstrap.sh}"
 ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-https://github.com/SirGlooMyy/neosecra-distribution/archive/refs/heads/fix/assessment-live-installer.tar.gz}"
-SIGNATURE_PUBKEY="${NEOSECRA_SIGNATURE_PUBKEY:-${V1_ROOT}/ca/update-neosecra-com.pub}"
+SIGNATURE_PUBKEY="${NEOSECRA_SIGNATURE_PUBKEY:-${V1_ROOT}/ca}"
 # Release signatures are mandatory; an environment override must not permit
 # an untrusted payload to reach the installation path.
 if [[ "${NEOSECRA_REQUIRE_SIGNATURE:-1}" != "1" ]]; then
@@ -268,7 +271,7 @@ if status not in {"available", "ready"}:
 releases = data.get("releases")
 if not isinstance(releases, list) or not releases:
     raise SystemExit(3)
-seen = {}
+seen = set()
 matches = []
 for release in releases:
     if not isinstance(release, dict):
@@ -310,6 +313,35 @@ current = data.get("current_version")
 if status in {"available", "ready"}:
     if not isinstance(current, str) or not semver.fullmatch(current.lstrip("vV")) or current.lstrip("vV") not in seen:
         raise SystemExit(11)
+contract = release.get("migration_contract")
+if not isinstance(contract, dict):
+    contract = release.get("upgrade") if isinstance(release.get("upgrade"), dict) else None
+def contract_value(*keys):
+    for key in keys:
+        if isinstance(contract, dict) and key in contract:
+            return contract.get(key)
+        if key in release:
+            return release.get(key)
+    return None
+migration_required = contract_value("migration_required", "migrations")
+migration_strategy = contract_value("migration_strategy")
+backward_compatible = contract_value("backward_compatible_with_previous_app")
+rollback_safe = contract_value("rollback_safe_without_db_restore")
+migration_checksum = contract_value("migration_checksum", "migration_identity")
+schema_from = contract_value("schema_from")
+schema_to = contract_value("schema_to")
+estimated_lock_seconds = contract_value("estimated_lock_seconds")
+estimated_temp_space_bytes = contract_value("estimated_temp_space_bytes")
+if migration_required is not None and not isinstance(migration_required, bool):
+    raise SystemExit(12)
+for value in (backward_compatible, rollback_safe):
+    if value is not None and not isinstance(value, bool):
+        raise SystemExit(12)
+for value in (estimated_lock_seconds, estimated_temp_space_bytes):
+    if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+        raise SystemExit(12)
+if migration_checksum is not None and not sha256.fullmatch(str(migration_checksum)):
+    raise SystemExit(12)
 result = {
     "channel": channel_name,
     "product": product,
@@ -323,6 +355,15 @@ result = {
     "bundle_sha256": bundle_sha,
     "bundle_signature_url": bundle_sig,
     "minimum_current_version": minimum,
+    "migration_required": migration_required,
+    "migration_strategy": migration_strategy,
+    "backward_compatible_with_previous_app": backward_compatible,
+    "rollback_safe_without_db_restore": rollback_safe,
+    "migration_checksum": migration_checksum,
+    "schema_from": schema_from,
+    "schema_to": schema_to,
+    "estimated_lock_seconds": estimated_lock_seconds,
+    "estimated_temp_space_bytes": estimated_temp_space_bytes,
 }
 print(json.dumps(result, sort_keys=True, separators=(",", ":")))
 PY
@@ -355,6 +396,40 @@ PY
 import json,sys; print(json.loads(sys.argv[1])["minimum_current_version"])
 PY
   )"
+  MIGRATION_REQUIRED_RAW="$(python3 - "$CHANNEL_RELEASE_JSON" <<'PY'
+import json,sys
+value = json.loads(sys.argv[1]).get("migration_required")
+print("" if value is None else ("1" if value else "0"))
+PY
+  )"
+  MIGRATION_STRATEGY="$(python3 - "$CHANNEL_RELEASE_JSON" <<'PY'
+import json,sys; print(json.loads(sys.argv[1]).get("migration_strategy") or "")
+PY
+  )"
+  MIGRATION_BACKWARD_COMPATIBLE="$(python3 - "$CHANNEL_RELEASE_JSON" <<'PY'
+import json,sys
+value = json.loads(sys.argv[1]).get("backward_compatible_with_previous_app")
+print("" if value is None else ("1" if value else "0"))
+PY
+  )"
+  MIGRATION_ROLLBACK_SAFE="$(python3 - "$CHANNEL_RELEASE_JSON" <<'PY'
+import json,sys
+value = json.loads(sys.argv[1]).get("rollback_safe_without_db_restore")
+print("" if value is None else ("1" if value else "0"))
+PY
+  )"
+  MIGRATION_CHECKSUM="$(python3 - "$CHANNEL_RELEASE_JSON" <<'PY'
+import json,sys; print(json.loads(sys.argv[1]).get("migration_checksum") or "")
+PY
+  )"
+  MIGRATION_SCHEMA_FROM="$(python3 - "$CHANNEL_RELEASE_JSON" <<'PY'
+import json,sys; print(json.loads(sys.argv[1]).get("schema_from") or "")
+PY
+  )"
+  MIGRATION_SCHEMA_TO="$(python3 - "$CHANNEL_RELEASE_JSON" <<'PY'
+import json,sys; print(json.loads(sys.argv[1]).get("schema_to") or "")
+PY
+  )"
   validate_fetch_url "$CHANNEL_ARCHIVE_URL"
   validate_fetch_url "$CHANNEL_ARCHIVE_SIGNATURE_URL"
   if [[ -n "$CHANNEL_BUNDLE_URL" ]]; then
@@ -381,17 +456,10 @@ verify_sha256() {
 verify_minisign() {
   local file="$1" sig_file="$2" pubkey="$3" label="${4:-artifact}"
   command -v minisign &>/dev/null || die "Minisign binary required for ${label} but not found" 4
-  [[ -f "$pubkey" ]] || die "Minisign public key not found: ${pubkey}" 4
+  [[ -f "$pubkey" || -d "$pubkey" ]] || die "Minisign public key/keyring not found: ${pubkey}" 4
   [[ -f "$sig_file" ]] || die "Minisign signature file not found: ${sig_file}" 4
-  # Prefer the key FILE form (-p): shipped .pub files carry an "untrusted
-  # comment" first line, which the -P string form cannot parse.
-  if ! minisign -Vm "$file" -p "$pubkey" -x "$sig_file" 2>/dev/null; then
-    local key_line
-    key_line="$(grep -m1 '^RW' "$pubkey" 2>/dev/null || true)"
-    if [[ -z "$key_line" ]] || ! minisign -Vm "$file" -P "$key_line" -x "$sig_file" 2>/dev/null; then
-      die "Minisign signature verification FAILED for ${label}" 4
-    fi
-  fi
+  verify_minisign_file "$file" "$sig_file" "$pubkey" ||
+    die "Minisign signature verification FAILED for ${label}" 4
   ok "Minisign signature verified for ${label}"
 }
 
@@ -746,20 +814,65 @@ RECOVERY_ROOT="${ORIGINAL_V1_ROOT}"
 [[ "${NEOSECRA_AGENT_LOCK_HELD:-0}" == "1" ]] || acquire_lock
 
 POST_BACKUP=0
+ROLLBACK_POLICY=""
 ROLLBACK_ATTEMPTED=0
+
+load_rollback_policy() {
+  local manifest="$1"
+  [[ -f "$manifest" && ! -L "$manifest" ]] || die "Release policy manifest is missing or unsafe" 12
+  python3 - "$manifest" <<'PY'
+import sys, yaml
+data = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+upgrade = data.get("upgrade") or {}
+rollback = data.get("rollback") or {}
+policy = rollback.get("database_strategy", "backup_restore")
+if policy not in {"none", "backup_restore"}:
+    raise SystemExit("Unsupported database rollback policy")
+if upgrade.get("backup_required", True) is not (policy == "backup_restore"):
+    raise SystemExit("Inconsistent backup/rollback policy")
+print(policy)
+PY
+}
+
+validate_backup_free_migration_contract() {
+  # A pointer-only update never creates a database/log/volume copy. The signed
+  # channel entry must explicitly prove that any schema step is additive (or
+  # expand/contract), backward compatible with the previous app, and safe to
+  # roll back by pointer without restoring PostgreSQL.
+  [[ -n "${MIGRATION_REQUIRED_RAW:-}" && -n "${MIGRATION_STRATEGY:-}" &&
+     -n "${MIGRATION_BACKWARD_COMPATIBLE:-}" && -n "${MIGRATION_ROLLBACK_SAFE:-}" ]] ||
+    die "Signed migration compatibility metadata is incomplete; refusing backup-free update" 12
+  if [[ "${MIGRATION_REQUIRED_RAW}" == "1" ]]; then
+    [[ "${MIGRATION_STRATEGY}" == "additive" || "${MIGRATION_STRATEGY}" == "expand-contract" ]] ||
+      die "Migration strategy is not safe for a backup-free update" 12
+    [[ "${MIGRATION_BACKWARD_COMPATIBLE}" == "1" && "${MIGRATION_ROLLBACK_SAFE}" == "1" ]] ||
+      die "Migration is not backward-compatible/rollback-safe without a database restore" 12
+    [[ "${MIGRATION_CHECKSUM:-}" =~ ^[0-9a-fA-F]{64}$ && -n "${MIGRATION_SCHEMA_FROM:-}" && -n "${MIGRATION_SCHEMA_TO:-}" ]] ||
+      die "Migration identity/schema bounds are missing" 12
+  else
+    [[ "${MIGRATION_REQUIRED_RAW}" == "0" && "${MIGRATION_STRATEGY}" == "off" &&
+       "${MIGRATION_BACKWARD_COMPATIBLE}" == "1" && "${MIGRATION_ROLLBACK_SAFE}" == "1" ]] ||
+      die "Migration-free release is not explicitly backup-free/rollback-safe" 12
+  fi
+}
 
 attempt_signed_rollback() {
   [[ "${ROLLBACK:-0}" -eq 1 ]] || return 0
   ROLLBACK_ATTEMPTED=1
-  [[ "${POST_BACKUP:-0}" -eq 1 && -n "${BACKUP_TARGET:-}" ]] || {
-    err "Signed rollback requested before a complete pre-upgrade backup existed"
+  local -a rollback_args
+  if [[ "${ROLLBACK_POLICY:-}" == "none" ]]; then
+    rollback_args=(--pointer-only)
+  elif [[ "${ROLLBACK_POLICY:-}" == "backup_restore" && "${POST_BACKUP:-0}" -eq 1 && -n "${BACKUP_TARGET:-}" ]]; then
+    rollback_args=(--from-backup "$BACKUP_TARGET")
+  else
+    err "Signed rollback requested before the release policy/required backup was validated"
     return 1
-  }
+  fi
   [[ -n "${ROLLBACK_AUTH:-}" && "$ROLLBACK_AUTH" == /* && "$ROLLBACK_AUTH" != *..* && -f "$ROLLBACK_AUTH" ]] || {
     err "Signed rollback was requested but its authorization file is missing or unsafe"
     return 1
   }
-  if ! bash "${RECOVERY_ROOT}/upgrade/rollback.sh" --to "$CURRENT" --auth "$ROLLBACK_AUTH" --from-backup "$BACKUP_TARGET"; then
+  if ! bash "${RECOVERY_ROOT}/upgrade/rollback.sh" --to "$CURRENT" --auth "$ROLLBACK_AUTH" "${rollback_args[@]}"; then
     err "Signed rollback attempt failed; manual intervention is required"
     return 1
   fi
@@ -768,14 +881,15 @@ attempt_signed_rollback() {
 
 # Always release the state lock, clean release staging, and remove a staged
 # channel marker on failure.  When --rollback-on-failure was explicitly
-# requested, failures after a durable backup automatically invoke the signed
-# rollback path exactly once.  The original exit status is preserved.
+# requested, failures invoke the selected signed rollback path once.  The
+# original exit status is preserved.
 on_upgrade_exit() {
   local ec=$?
   trap - EXIT
   if [[ "$ec" -ne 0 ]]; then
     python3 "${RECOVERY_ROOT}/upgrade/recovery.py" journal_step "${RECOVERY_ROOT}" "CRASH" "FAILED_SAFE" "${EXEC_ID:-none}" "$TARGET" || true
-    if [[ "${POST_BACKUP:-0}" -eq 1 && "${ROLLBACK:-0}" -eq 1 && "${ROLLBACK_ATTEMPTED:-0}" -eq 0 ]]; then
+    if [[ "${ROLLBACK:-0}" -eq 1 && "${ROLLBACK_ATTEMPTED:-0}" -eq 0 &&
+          ( "${ROLLBACK_POLICY:-}" == "none" || "${POST_BACKUP:-0}" -eq 1 ) ]]; then
       attempt_signed_rollback || true
     fi
     _clear_staged_channel_marker
@@ -799,16 +913,25 @@ python3 "${RECOVERY_ROOT}/upgrade/recovery.py" journal_step "${RECOVERY_ROOT}" "
 # failure aborts here with the current symlink and containers untouched.
 prepare_target_release "$TARGET"
 
-# --- Backup ---
-STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-BACKUP_TARGET="${BACKUP_ROOT}/${STAMP}-${CURRENT}"
-mkdir -p "$BACKUP_TARGET"
-bash "${V1_ROOT}/backup/backup.sh" --target "$BACKUP_TARGET"
-ok "Pre-upgrade backup: ${BACKUP_TARGET}"
-POST_BACKUP=1
+# --- Manifest-selected backup/migration policy ---
+TARGET_V1_ROOT="$(release_dir "$TARGET")"
+ROLLBACK_POLICY="$(load_rollback_policy "${TARGET_V1_ROOT}/release-manifest.yaml")" ||
+  die "Release rollback policy validation failed" 12
+if [[ "$ROLLBACK_POLICY" == "none" ]]; then
+  validate_backup_free_migration_contract
+  BACKUP_TARGET=""
+else
+  STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+  BACKUP_TARGET="${BACKUP_ROOT}/${STAMP}-${CURRENT}"
+  mkdir -p "$BACKUP_TARGET"
+  bash "${V1_ROOT}/backup/backup.sh" --target "$BACKUP_TARGET" ||
+    die "Pre-upgrade backup failed; refusing upgrade" 12
+  ok "Pre-upgrade backup: ${BACKUP_TARGET}"
+  POST_BACKUP=1
+fi
 
-# The target tree is now both downloaded and cryptographically verified, and
-# the current database/config snapshot is durable.  Switch every runtime path
+# The target tree is verified and its required backup/compatibility gate has
+# passed. Switch every runtime path
 # together only after those gates pass.  Recovery/journal/lock state remains
 # anchored to RECOVERY_ROOT, while Compose and release metadata use TARGET.
 TARGET_V1_ROOT="$(release_dir "$TARGET")"
