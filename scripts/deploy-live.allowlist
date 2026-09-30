@@ -1,0 +1,29 @@
+# neosecra-distribution icin deploy-live.sh izin listesi (repo koku ile goreli glob desenleri).
+# '*' = '/' disi, '**' = her sey. Bu listede olmayan hicbir dosya aktarilmaz.
+# channels/**, update-server/www/**, certs/keys/.env/secrets/state/backups burada yazsa bile
+# betik tarafindan sabit olarak reddedilir (hard deny).
+# --profile distribution zorunlu. Ciplak '*'/'**' satirlari kabul edilmez.
+# Public trust anchors istisnalari betikte sabittir; docs/LIVE-DEPLOY.md'ye bakin.
+update-server/publish.sh
+update-server/release.sh
+update-server/build-release.sh
+update-server/soc-bundle-lock.py
+update-server/lib/**
+update-server/src/**
+update-server/Caddyfile
+update-server/docker-compose.yml
+update-server/mailer/**
+update-server/README.md
+update-server/bootstrap-hotspot.sh
+bootstrap.sh
+products/**
+schemas/**
+ci/**
+bin/**
+scripts/**
+deployment/**
+public-keys/**
+docs/**
+tests/**
+README.md
+AGENTS.md

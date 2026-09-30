@@ -1,0 +1,20 @@
+# neosecra-lisans (lisans sunucusu) icin deploy-live.sh izin listesi.
+# Kullanim: deploy-live.sh --profile lisans --repo <neosecra-lisans yolu> ...
+#
+# DIKKAT: kokteki docker-compose.yml BILEREK listede YOK. Lisans canlisinda kok
+# docker-compose.yml URETIM dosyasidir; kaynaktaki kok docker-compose.yml ise GELISTIRME
+# dosyasidir. --profile lisans bu yolu, VERSION ve .env* dosyalarini allowlist'ten
+# bagimsiz reddeder. Bu dosyalar canlida yalniz elle/ayri onayla degistirilir.
+# node_modules ve create_user.py betikte hard-deny'dir (buraya yazilsa da aktarilmaz).
+license-server/backend/**
+license-server/frontend/**
+license-server/signer/**
+license-server/sdk/**
+license-server/deployment/**
+license-server/docs/**
+scripts/**
+docs/**
+README.md
+ARCHITECTURE.md
+SECURITY-BOUNDARY.md
+AGENTS.md
