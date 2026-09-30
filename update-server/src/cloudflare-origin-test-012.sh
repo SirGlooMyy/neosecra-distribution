@@ -6,8 +6,23 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-CERT="${CLOUDFLARE_ORIGIN_CERT:-${ROOT_DIR}/update-server/certs/neosecra-origin.crt}"
 CADDYFILE="${CLOUDFLARE_ORIGIN_CADDYFILE:-${ROOT_DIR}/update-server/Caddyfile}"
+# Resolve the configured pair within the matching top-level Caddy site block.
+tls_pair_for() {
+  awk -v site="$1" '
+    /^[^ \t#].*\{$/ {
+      active = 0
+      for (i = 1; i < NF; i++) { token = $i; sub(/,$/, "", token); if (token == site) active = 1 }
+    }
+    active && $1 == "tls" && NF == 3 { print $2 " " $3; found++ }
+    /^}$/ { active = 0 }
+    END { if (found != 1) exit 1 }
+  ' "$CADDYFILE"
+}
+ORIGIN_PAIR="$(tls_pair_for update.neosecra.com:9445)" || { printf 'FAIL: Cannot resolve configured Origin TLS pair\n' >&2; exit 1; }
+read -r CONFIGURED_CERT CONFIGURED_KEY <<< "$ORIGIN_PAIR"
+[[ "$CONFIGURED_CERT" == /etc/caddy/certs/*.crt && "$CONFIGURED_KEY" == /etc/caddy/certs/*.key ]] || { printf 'FAIL: Unsafe Origin TLS paths\n' >&2; exit 1; }
+CERT="${CLOUDFLARE_ORIGIN_CERT:-${ROOT_DIR}/update-server/certs/${CONFIGURED_CERT##*/}}"
 KEY="${CLOUDFLARE_ORIGIN_KEY:-}"
 CA_ROOT="${CLOUDFLARE_ORIGIN_CA_ROOT:-}"
 ORIGIN_IP="${CLOUDFLARE_ORIGIN_IP:-10.33.99.13}"
@@ -71,14 +86,14 @@ for path in \
   'registry.neosecra.com:9447'; do
   host="${path%:*}"
   port="${path##*:}"
-  pair="tls /etc/caddy/certs/neosecra-origin.crt /etc/caddy/certs/neosecra-origin.key"
-  if grep -Fq "$pair" "$CADDYFILE" && grep -Fq "$host:$port" "$CADDYFILE"; then
+  pair="$(tls_pair_for "$host:$port" || true)"
+  if [[ "$pair" == "$ORIGIN_PAIR" ]]; then
     pass "Caddy maps $host:$port to the Origin pair"
   else
     fail "Caddy maps $host:$port to the Origin pair"
   fi
 done
-if grep -Fq 'tls /etc/caddy/certs/neosecra-origin.crt /etc/caddy/certs/neosecra-origin.key' "$CADDYFILE"; then
+if [[ "$(tls_pair_for :443 || true)" == "$ORIGIN_PAIR" ]]; then
   pass "Caddy has a public listener Origin pair"
 else
   fail "Caddy has a public listener Origin pair"
@@ -122,36 +137,36 @@ if [[ "$LIVE" == 1 ]]; then
       '9445 update.neosecra.com' \
       '9446 license.neosecra.com' \
       '9447 registry.neosecra.com'; do
-      set -- $spec
-      if timeout 10 openssl s_client -connect "$ORIGIN_IP:$1" \
-          -servername "$2" -CAfile "$CA_ROOT" -verify_hostname "$2" \
+      read -r probe_port probe_host <<< "$spec"
+      if timeout 10 openssl s_client -connect "$ORIGIN_IP:$probe_port" \
+          -servername "$probe_host" -CAfile "$CA_ROOT" -verify_hostname "$probe_host" \
           -verify_return_error -brief </dev/null >/dev/null 2>&1; then
-        pass "Direct SNI $ORIGIN_IP:$1 for $2"
+        pass "Direct SNI $ORIGIN_IP:$probe_port for $probe_host"
       else
-        fail "Direct SNI $ORIGIN_IP:$1 for $2"
+        fail "Direct SNI $ORIGIN_IP:$probe_port for $probe_host"
       fi
     done
   fi
   for round in 1 2; do
-    if curl --fail --silent --show-error --location \
+    if curl --fail --proto '=https' --proto-redir '=https' --tlsv1.2 --silent --show-error --location \
         https://license.neosecra.com/health >/dev/null 2>&1; then
       pass "Public license health round $round"
     else
       fail "Public license health round $round"
     fi
-    if curl --fail --silent --show-error --location \
+    if curl --fail --proto '=https' --proto-redir '=https' --tlsv1.2 --silent --show-error --location \
         https://license.neosecra.com/api/v1/health >/dev/null 2>&1; then
       pass "Public license API round $round"
     else
       fail "Public license API round $round"
     fi
-    if curl --fail --silent --show-error --location \
+    if curl --fail --proto '=https' --proto-redir '=https' --tlsv1.2 --silent --show-error --location \
         https://update.neosecra.com/channels/assessment-stable.json >/dev/null 2>&1; then
       pass "Public update manifest round $round"
     else
       fail "Public update manifest round $round"
     fi
-    status="$(curl --silent --show-error --location --output /dev/null \
+    status="$(curl --fail --proto '=https' --proto-redir '=https' --tlsv1.2 --silent --show-error --location --output /dev/null \
       --write-out '%{http_code}' https://registry.neosecra.com/v2/ || true)"
     case "$status" in
       200|401) pass "Public registry /v2/ round $round ($status)" ;;

@@ -8,6 +8,7 @@
 #   - Port 80 + 443 inbound in firewall (LE HTTP-01 challenge uses port 80)
 
 update.neosecra.com {
+    header Strict-Transport-Security "max-age=31536000"
     root * /srv/update
     encode zstd gzip
 
@@ -28,6 +29,7 @@ update.neosecra.com {
 
 # License Server
 license.neosecra.com {
+    header Strict-Transport-Security "max-age=31536000"
     header {
         X-Content-Type-Options "nosniff"
         X-Frame-Options "DENY"
