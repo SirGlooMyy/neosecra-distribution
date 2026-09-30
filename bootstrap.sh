@@ -1,6 +1,32 @@
 #!/usr/bin/env bash
 # NeoSecra Assessment — tek komut kurulum
 set -Eeuo pipefail
+umask 077
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf -- "$TMP_DIR"' EXIT
+BASE="${NEOSECRA_INSTALL_ROOT:-/opt/neosecra/assessment}"
+err() { printf '[neosecra] %s\n' "$*" >&2; exit 1; }
+[[ "$EUID" -eq 0 ]] || err "Root required"
+for tool in curl python3 minisign sha256sum; do
+  command -v "$tool" >/dev/null 2>&1 || err "Install prerequisite $tool from your signed OS package repository"
+done
+PUBKEY_DIR="$TMP_DIR/keyring"
+mkdir -m 700 "$PUBKEY_DIR"
+cat > "$PUBKEY_DIR/update-neosecra-com.pub" <<'KEY'
+untrusted comment: minisign public key C55D6825451AD013
+RWQT0BpFJWhdxSQrTDsZBgPBOln9EFXrF6/Weuk16/l48T7XhMrBGYGK
+KEY
+cat > "$PUBKEY_DIR/update-neosecra-com-20260904.pub" <<'KEY'
+untrusted comment: minisign public key 581BE94E5FAEDD35
+RWQ13a5fTukbWMUED/CV1n92CQnY1qfHD2RXC8K4JZiTkYafcpDuux5Z
+KEY
+verify_minisign_keyring() {
+  local file="$1" signature="$2" key
+  for key in "$PUBKEY_DIR"/*.pub; do
+    minisign -Vm "$file" -p "$key" -x "$signature" -q >/dev/null 2>&1 && return 0
+  done
+  return 1
+}
 
 VERSION=""
 FRONTEND_IMAGE_VERSION=""
@@ -15,7 +41,7 @@ NEOSECRA_TLS_MODE="${NEOSECRA_TLS_MODE:-public}"
 # ---------------------------------------------------------------------------
 # Centralised curl options — carries User-Agent + optional --cacert
 # ---------------------------------------------------------------------------
-CURL_OPTS=("-fsSL" "-H" "User-Agent: NeoSecra-Bootstrap/1.0")
+CURL_OPTS=(--fail --silent --show-error --location --proto "=https" --proto-redir "=https" --tlsv1.2 -H "User-Agent: NeoSecra-Bootstrap/1.0")
 NEOSECRA_CA_CERT="${NEOSECRA_CA_CERT:-}"
 if [[ "${NEOSECRA_TLS_MODE}" == "internal" && -n "${NEOSECRA_CA_CERT}" && -f "${NEOSECRA_CA_CERT}" ]]; then
   CURL_OPTS+=("--cacert" "$NEOSECRA_CA_CERT")
@@ -34,7 +60,7 @@ install_update_server_ca() {
     return 0  # Already installed
   fi
   local tmp_ca
-  tmp_ca="$(mktemp)"
+  tmp_ca="$TMP_DIR/update-ca.crt"
   printf '%s\n' "$NEOSECRA_CA_B64" | openssl base64 -d -out "$tmp_ca" 2>/dev/null || {
     rm -f "$tmp_ca"
     return 1
@@ -64,109 +90,87 @@ fi
 # Channel / version resolution
 # ---------------------------------------------------------------------------
 CHANNEL_URL="${NEOSECRA_CHANNEL_URL:-https://update.neosecra.com/channels/assessment-stable.json}"
-if [[ -n "${LOCAL_MANIFEST:-}" && -f "${LOCAL_MANIFEST}" ]]; then
-  CHANNEL_JSON="$(cat "$LOCAL_MANIFEST")"
+if [[ -n "${LOCAL_MANIFEST:-}" ]]; then
+  cp -- "$LOCAL_MANIFEST" "$TMP_DIR/channel.json"
+  cp -- "${LOCAL_MANIFEST}.minisig" "$TMP_DIR/channel.json.minisig"
 else
-  CHANNEL_JSON="$(curl "${CURL_OPTS[@]}" "$CHANNEL_URL" 2>/dev/null || echo "")"
+  curl "${CURL_OPTS[@]}" -o "$TMP_DIR/channel.json" "$CHANNEL_URL"
+  curl "${CURL_OPTS[@]}" -o "$TMP_DIR/channel.json.minisig" "${CHANNEL_URL}.minisig"
 fi
+verify_minisign_keyring "$TMP_DIR/channel.json" "$TMP_DIR/channel.json.minisig" || err "Channel Minisign signature verification failed"
+python3 - "$TMP_DIR/channel.json" "$BASE" "${NEOSECRA_VERSION:-}" "$TMP_DIR/release-fields" "${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-}" <<'CHANNEL_PY'
+import json
+import re
+import sys
+from pathlib import Path
+from urllib.parse import urlsplit
 
-resolve_version_from_channel() {
-  local json="$1"
-  if [[ -z "$json" ]]; then
-    printf '%s\n' "${NEOSECRA_VERSION:-1.3.26}"
-    return 0
-  fi
-  if command -v python3 &>/dev/null; then
-    python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('current_version',''))" <<< "$json" 2>/dev/null
-  elif command -v jq &>/dev/null; then
-    jq -r '.current_version // empty' <<< "$json" 2>/dev/null
-  else
-    printf '%s\n' "$json" | sed -nE 's/.*"current_version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1
-  fi
-}
+source, base, requested, output, override_url = sys.argv[1:]
+pattern = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$")
+def version_key(value):
+    if not isinstance(value, str) or not pattern.fullmatch(value):
+        raise SystemExit("Invalid version string")
+    major, minor, patch, suffix = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)(.*)", value).groups()
+    tokens = tuple((0, int(x)) if x.isdigit() else (1, x) for x in re.split(r"[.-]", suffix)[1:])
+    rank = 0 if suffix.startswith("-") else 2 if suffix.startswith(".") else 1
+    return int(major), int(minor), int(patch), rank, tokens
+channel = json.loads(Path(source).read_text(encoding="utf-8"))
+if (not isinstance(channel, dict) or channel.get("channel") != "assessment-stable"
+        or channel.get("product") != "assessment"
+        or channel.get("product_code", "assessment") != "assessment"):
+    raise SystemExit("Channel identity mismatch")
+version = channel.get("current_version")
+target = version_key(version)
+if requested and requested != version:
+    raise SystemExit("Version override must match signed current_version")
+base = Path(base)
+for marker in (base / "state/installed-version", base / "state/active-release",
+               base / "current/VERSION", base / "current/v1/VERSION"):
+    if (marker.exists() or marker.is_symlink()) and version_key(marker.read_text(encoding="utf-8").strip()) > target:
+        raise SystemExit("Anti-rollback: target is older than installed version")
+current = base / "current"
+if current.exists() and not current.is_symlink() and not any(
+        p.exists() for p in (base / "state/installed-version", base / "state/active-release",
+                            current / "VERSION", current / "v1/VERSION")):
+    raise SystemExit("Installed version state missing")
+if current.is_symlink():
+    if not current.exists():
+        raise SystemExit("Installed current pointer is dangling")
+    if version_key(current.resolve().name) > target:
+        raise SystemExit("Anti-rollback: target is older than current release")
+releases = channel.get("releases")
+if not isinstance(releases, list):
+    raise SystemExit("Signed releases missing")
+matches = [r for r in releases if isinstance(r, dict) and r.get("version") == version]
+if len(matches) != 1:
+    raise SystemExit("Signed release is missing or duplicated")
+release = matches[0]
+archive = release.get("archive")
+if isinstance(archive, dict):
+    url, digest = archive.get("url"), archive.get("sha256")
+else:
+    url, digest = archive or release.get("url"), release.get("sha256")
+if not isinstance(url, str) or any(c.isspace() or c == "\\" for c in url):
+    raise SystemExit("Invalid signed archive URL")
+parsed = urlsplit(url)
+if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+        or parsed.query or parsed.fragment):
+    raise SystemExit("Signed archive URL must be credential-free HTTPS")
+if override_url and override_url != url:
+    raise SystemExit("Archive override must match signed URL")
+if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+    raise SystemExit("Signed archive SHA-256 missing or invalid")
+Path(output).write_bytes(("\n".join((version, url, digest.lower())) + "\n").encode("utf-8"))
 
-VERSION="$(resolve_version_from_channel "$CHANNEL_JSON")"
-VERSION="${NEOSECRA_VERSION:-${VERSION:-1.3.26}}"
+CHANNEL_PY
+mapfile -t RELEASE_FIELDS < "$TMP_DIR/release-fields"
+VERSION="${RELEASE_FIELDS[0]}"
+DISTRIBUTION_ARCHIVE_URL="${RELEASE_FIELDS[1]}"
+EXPECTED_SHA256="${RELEASE_FIELDS[2]}"
 FRONTEND_IMAGE_VERSION="$VERSION"
-
-# ---------------------------------------------------------------------------
-# T5 FIX: Backward-compatible archive URL parser (nested + flat schema)
-# ---------------------------------------------------------------------------
-resolve_archive_url_from_channel() {
-  local json="$1" version="$2"
-  if [[ -z "$json" ]]; then return 1; fi
-  if command -v python3 &>/dev/null; then
-    python3 -c "
-import json,sys
-d=json.loads(sys.stdin.read())
-for r in d.get('releases',[]):
-    if r.get('version')==sys.argv[1]:
-        a = r.get('archive',{})
-        if isinstance(a, dict):
-            print(a.get('url','') or '')
-        else:
-            print(a or r.get('url','') or '')
-        break
-" "$version" <<< "$json" 2>/dev/null
-  elif command -v jq &>/dev/null; then
-    jq -r --arg v "$version" '.releases[] | select(.version==$v) | ((.archive | if type=="object" then .url else . end) // .url // empty)' <<< "$json" 2>/dev/null
-  else
-    local url version_block
-    version_block=$(printf '%s\n' "$json" | grep -A10 "\"version\":[[:space:]]*\"$version\"" 2>/dev/null)
-    if [[ -n "$version_block" ]]; then
-      url=$(printf '%s\n' "$version_block" | grep -A6 '"archive":[[:space:]]*{' | grep '"url"' | sed -nE 's/.*"url"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)
-    fi
-    if [[ -z "$url" ]]; then
-      url=$(printf '%s\n' "$json" | grep -A5 "\"version\":[[:space:]]*\"$version\"" | sed -nE 's/.*"(archive|url)"[[:space:]]*:[[:space:]]*"([^"]+)".*/\2/p' | head -n1)
-    fi
-    printf '%s' "$url"
-  fi
-}
-
-resolve_archive_sha256_from_channel() {
-  local json="$1" version="$2"
-  if [[ -z "$json" ]]; then return 1; fi
-  if command -v python3 &>/dev/null; then
-    python3 -c "
-import json,sys
-d=json.loads(sys.stdin.read())
-for r in d.get('releases',[]):
-    if r.get('version')==sys.argv[1]:
-        a = r.get('archive',{})
-        if isinstance(a, dict):
-            print(a.get('sha256','') or '')
-        else:
-            print(r.get('sha256','') or '')
-        break
-" "$version" <<< "$json" 2>/dev/null
-  elif command -v jq &>/dev/null; then
-    jq -r --arg v "$version" '.releases[] | select(.version==$v) | ((.archive | if type=="object" then .sha256 else empty end) // .sha256 // empty)' <<< "$json" 2>/dev/null
-  else
-    local sha version_block
-    version_block=$(printf '%s\n' "$json" | grep -A10 "\"version\":[[:space:]]*\"$version\"" 2>/dev/null)
-    if [[ -n "$version_block" ]]; then
-      sha=$(printf '%s\n' "$version_block" | grep -A6 '"archive":[[:space:]]*{' | grep '"sha256"' | sed -nE 's/.*"sha256"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)
-    fi
-    if [[ -z "$sha" ]]; then
-      sha=$(printf '%s\n' "$json" | grep -A8 "\"version\":[[:space:]]*\"$version\"" | sed -nE 's/.*"sha256"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)
-    fi
-    printf '%s' "$sha"
-  fi
-}
-
-DISTRIBUTION_ARCHIVE_URL="${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-}"
-if [[ -z "$DISTRIBUTION_ARCHIVE_URL" ]]; then
-  DISTRIBUTION_ARCHIVE_URL="$(resolve_archive_url_from_channel "$CHANNEL_JSON" "$VERSION")"
-fi
-if [[ -z "$DISTRIBUTION_ARCHIVE_URL" ]]; then
-  DISTRIBUTION_ARCHIVE_URL="https://update.neosecra.com/releases/${VERSION}/distribution.tar.gz"
-fi
-
-EXPECTED_SHA256="$(resolve_archive_sha256_from_channel "$CHANNEL_JSON" "$VERSION" || true)"
-SIGNATURE_PUBKEY="${NEOSECRA_SIGNATURE_PUBKEY:-}"
 RED='\033[31m'; GRN='\033[32m'; RST='\033[0m'
 info() { echo -e "${GRN}[neosecra]${RST} $*"; }
-err()  { echo -e "${RED}[neosecra]${RST} $*"; exit 1; }
+err()  { echo -e "${RED}[neosecra]${RST} $*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || err "Root required"
 
 # Release signatures are mandatory; an environment override must not permit
@@ -200,7 +204,7 @@ registry_reachable() {
     return 0
   fi
   # TLS-protected registry: try the unauthenticated /v2/ ping (honours custom CA)
-  local curl_args=(-fsS --max-time 10 -H "User-Agent: NeoSecra-Bootstrap/1.0")
+  local curl_args=("${CURL_OPTS[@]}" --max-time 10)
   if [[ -n "${CURL_CA_BUNDLE:-}" && -f "${CURL_CA_BUNDLE:-}" ]]; then
     curl_args+=(--cacert "$CURL_CA_BUNDLE")
   fi
@@ -229,27 +233,17 @@ install_docker() {
     os_id="$(. /etc/os-release && echo "${ID:-}")"
   fi
 
-  if command -v apt-get &>/dev/null && [[ "$os_id" =~ ^(debian|ubuntu)$ ]]; then
-    export DEBIAN_FRONTEND=noninteractive
-    info "Docker.io Debian/Ubuntu paket deposundan kuruluyor..."
-    apt-get update -qq || { err "apt-get update başarısız — Docker kurulamadı"; }
-    if ! apt-get install -y -qq docker.io; then
-      info "[warn] docker.io paketi bulunamadı — resmi get.docker.com script'ine düşülüyor"
-      curl "${CURL_OPTS[@]}" https://get.docker.com | sh || err "Docker kurulumu başarısız oldu (get.docker.com)"
-    fi
-    if ! docker compose version &>/dev/null; then
-      info "Docker Compose v2 plugin kuruluyor..."
-      apt-get install -y -qq docker-compose-v2 2>/dev/null \
-        || apt-get install -y -qq docker-compose-plugin 2>/dev/null \
-        || apt-get install -y -qq docker-compose 2>/dev/null \
-        || true
-    fi
-  else
-    info "Resmi get.docker.com script'i kullanılıyor..."
-    curl "${CURL_OPTS[@]}" https://get.docker.com | sh || err "Docker kurulumu başarısız oldu (get.docker.com)"
+  command -v apt-get >/dev/null 2>&1 && [[ "$os_id" =~ ^(debian|ubuntu)$ ]] || \
+    err "Install Docker/Compose using your distribution's signed package repository first"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq || err "Signed apt index update failed"
+  apt-get install -y -qq docker.io || err "Docker Engine install failed"
+  if ! docker compose version >/dev/null 2>&1; then
+    apt-get install -y -qq docker-compose-v2 || \
+      apt-get install -y -qq docker-compose-plugin || err "Docker Compose v2 install failed"
   fi
+  systemctl enable --now docker >/dev/null 2>&1 || err "Docker service start failed"
 
-  systemctl enable --now docker >/dev/null 2>&1 || systemctl start docker >/dev/null 2>&1 || true
   docker --version >/dev/null 2>&1 || err "Docker kurulumu doğrulanamadı — 'docker --version' çalışmıyor"
   docker compose version >/dev/null 2>&1 || err "Docker Compose v2 plugin doğrulanamadı — 'docker compose version' çalışmıyor"
   info "Docker hazır: $(docker --version 2>/dev/null) / $(docker compose version 2>/dev/null)"
@@ -282,7 +276,7 @@ env_value_from() {
 
 random_admin_password() {
   local candidate lower
-  for _ in $(seq 1 30); do
+  for ((attempt = 0; attempt < 30; attempt++)); do
     candidate="Ns1!$(random_hex 24)"
     lower="${candidate,,}"
     case "$lower" in
@@ -297,7 +291,6 @@ random_admin_password() {
 # --- Script'leri kalıcı dizine kopyala ---
 # NEOSECRA_INSTALL_ROOT yalnızca bootstrap'in kendi base dizinini ezmek içindir
 # (sandbox/staging testleri). Varsayılan canlı hedef /opt/neosecra/assessment.
-BASE="${NEOSECRA_INSTALL_ROOT:-/opt/neosecra/assessment}"
 RELEASE_DIR="${BASE}/releases/${VERSION}"
 CURRENT_RELEASE_DIR=""
 if [[ -L "${BASE}/current" ]]; then
@@ -362,50 +355,108 @@ if [[ -f "${BASE}/state/installed-version" ]]; then
   INSTALLED_VERSION="$(cat "${BASE}/state/installed-version" 2>/dev/null || true)"
 fi
 
-TMP_DIR=$(mktemp -d)
-cd "$TMP_DIR"
-info "Kurulum paketi indiriliyor: ${DISTRIBUTION_ARCHIVE_URL}"
-curl "${CURL_OPTS[@]}" -o dist.tar.gz "$DISTRIBUTION_ARCHIVE_URL"
+info "Downloading signed archive: ${DISTRIBUTION_ARCHIVE_URL}"
+curl "${CURL_OPTS[@]}" -o "$TMP_DIR/dist.tar.gz" "$DISTRIBUTION_ARCHIVE_URL"
+curl "${CURL_OPTS[@]}" -o "$TMP_DIR/dist.tar.gz.sha256" "${DISTRIBUTION_ARCHIVE_URL}.sha256"
+curl "${CURL_OPTS[@]}" -o "$TMP_DIR/dist.tar.gz.minisig" "${DISTRIBUTION_ARCHIVE_URL}.minisig"
+# Never use an untrusted sidecar filename as a local hashing target.
+SIDECAR_SHA256="$(python3 - "$TMP_DIR/dist.tar.gz.sha256" <<'HASH_PY'
+import re
+import sys
+from pathlib import Path
+value = Path(sys.argv[1]).read_text(encoding="ascii").strip()
+match = re.fullmatch(r"([0-9a-fA-F]{64})(?:[ \t]+\*?[^\r\n]+)?", value)
+if not match:
+    raise SystemExit("Invalid SHA-256 sidecar")
+print(match[1].lower())
+HASH_PY
+)"
+ACTUAL_SHA256="$(sha256sum "$TMP_DIR/dist.tar.gz" | cut -d' ' -f1)"
+[[ "$ACTUAL_SHA256" == "$EXPECTED_SHA256" && "$ACTUAL_SHA256" == "$SIDECAR_SHA256" ]] || err "Archive SHA-256 mismatch"
+verify_minisign_keyring "$TMP_DIR/dist.tar.gz" "$TMP_DIR/dist.tar.gz.minisig" || err "Archive Minisign signature verification failed"
 
-info "Kurulum paketi doğrulanıyor..."
-if [[ -n "$EXPECTED_SHA256" ]]; then
-  actual=$(sha256sum dist.tar.gz | cut -d' ' -f1)
-  if [[ "$actual" != "$EXPECTED_SHA256" ]]; then
-    err "SHA-256 uyuşmazlığı: beklenen ${EXPECTED_SHA256}, alınan ${actual}"
-  fi
-  info "SHA-256 doğrulandı (channel JSON)"
-else
-  if curl "${CURL_OPTS[@]}" -o dist.tar.gz.sha256 "${DISTRIBUTION_ARCHIVE_URL}.sha256" 2>/dev/null; then
-    (cd "$TMP_DIR" && sha256sum -c dist.tar.gz.sha256) || \
-      err "SHA-256 doğrulaması başarısız (dist.tar.gz.sha256)"
-    info "SHA-256 doğrulandı (.sha256 sidecar)"
-  else
-    err "SHA-256 hash dosyası bulunamadı — doğrulanmamış arşiv reddedildi"
-  fi
-fi
+# The packaged extractor is not available yet. Validate the entire tar index
+# and version declaration before any extraction; never execute archive helpers.
+EXTRACT_ROOT="$TMP_DIR/extract"
+python3 - "$TMP_DIR/dist.tar.gz" "$EXTRACT_ROOT" "$VERSION" <<'EXTRACT_PY'
+import os
+import re
+import shutil
+import sys
+import tarfile
+from pathlib import Path
 
-if curl "${CURL_OPTS[@]}" -o dist.tar.gz.minisig "${DISTRIBUTION_ARCHIVE_URL}.minisig" 2>/dev/null; then
-  command -v minisign &>/dev/null || err "Minisign gerekli ama bulunamadı"
-  PUBKEY_PATH="${SIGNATURE_PUBKEY}"
-  if [[ -z "$PUBKEY_PATH" ]]; then
-    PUBKEY_PATH="$(dirname "${BASH_SOURCE[0]}")/deployment/ca/update-neosecra-com.pub"
-  fi
-  if [[ ! -f "$PUBKEY_PATH" ]]; then
-    err "Minisign public key bulunamadı: ${PUBKEY_PATH}"
-  fi
-  minisign -Vm dist.tar.gz -p "$PUBKEY_PATH" -x dist.tar.gz.minisig 2>/dev/null || \
-    err "Minisign imza doğrulaması BAŞARISIZ"
-  info "Minisign imza doğrulandı"
-else
-  err "Minisign imza dosyası bulunamadı (${DISTRIBUTION_ARCHIVE_URL}.minisig) — unsigned release reddedildi"
-fi
-
-tar xzf dist.tar.gz
-DIST_DIR="$(find . -mindepth 1 -maxdepth 1 -type d -name 'neosecra-distribution-*' | head -n1)"
-[[ -n "$DIST_DIR" && -d "$DIST_DIR" ]] || err "Kurulum paketi açılırken dağıtım dizini bulunamadı"
+archive, destination, version = sys.argv[1:]
+def fail(message):
+    raise SystemExit("SECURITY VIOLATION: " + message)
+if Path(archive).stat().st_size > 2 * 1024**3:
+    fail("compressed archive exceeds size limit")
+root = Path(destination)
+with tarfile.open(archive, "r:gz") as bundle:
+    members = []
+    names = set()
+    roots = set()
+    total = 0
+    for index, member in enumerate(bundle, 1):
+        if index > 10000:
+            fail("too many archive members")
+        if member.isdir() and member.name in {".", "./"}:
+            continue
+        parts = member.name.split("/")
+        if (member.name.startswith("/") or "\\" in member.name
+                or any(not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,127}", part) for part in parts)
+                or any(part in {"", ".", ".."} for part in parts)):
+            fail("unsafe archive member path")
+        if member.name in names:
+            fail("duplicate archive member")
+        names.add(member.name)
+        roots.add(parts[0])
+        if not (member.isfile() or member.isdir()):
+            fail("archive links/devices/FIFOs are forbidden")
+        if member.size < 0 or member.size > 2 * 1024**3:
+            fail("archive member exceeds size limit")
+        total += member.size
+        if total > 4 * 1024**3:
+            fail("archive exceeds total size limit")
+        members.append(member)
+    if len(roots) != 1:
+        fail("archive requires a single root")
+    archive_root = next(iter(roots))
+    expected = "neosecra-distribution-" + version
+    if archive_root != expected and not archive_root.startswith(expected + "-"):
+        fail("archive root version mismatch")
+    files = {m.name for m in members if m.isfile()}
+    for name in names:
+        parts = name.split("/")
+        if any("/".join(parts[:i]) in files for i in range(1, len(parts))):
+            fail("archive parent is a regular file")
+    marker = archive_root + "/deployment/VERSION"
+    found = [m for m in members if m.name == marker and m.isfile()]
+    if len(found) != 1 or found[0].size > 256:
+        fail("archive VERSION declaration missing or oversized")
+    if bundle.extractfile(found[0]).read().decode("utf-8").strip() != version:
+        fail("archive VERSION does not match signed channel")
+    root.mkdir(mode=0o700)
+    print("Archive preflight passed; extracting verified payload", flush=True)
+    for member in members:
+        target = root.joinpath(*member.name.split("/"))
+        if member.isdir():
+            target.mkdir(parents=True, exist_ok=True, mode=0o700)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        with os.fdopen(os.open(target, flags, 0o600), "wb") as output:
+            source = bundle.extractfile(member)
+            if source is None:
+                fail("regular member has no data")
+            with source:
+                shutil.copyfileobj(source, output, 1024 * 1024)
+        os.chmod(target, 0o600 | (member.mode & 0o555))
+EXTRACT_PY
+DIST_DIR="$(find "$EXTRACT_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'neosecra-distribution-*' -print -quit)"
+[[ -n "$DIST_DIR" && -d "$DIST_DIR" ]] || err "Distribution directory missing"
 cd "$DIST_DIR"
 
-# Kalıcı dizine kopyala
 if [[ -d "$RELEASE_DIR" ]]; then
   BACKUP_DIR="${BASE}/backups/preinstall-${VERSION}-$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "$BACKUP_DIR"
@@ -438,7 +489,7 @@ if [[ -f "${RELEASE_DIR}/release-manifest.yaml" ]]; then
     fi
 fi
 
-info "Temporary distribution archive left for audit: ${TMP_DIR}"
+info "Verified temporary distribution will be removed on exit"
 
 cd "$RELEASE_DIR"
 

@@ -44,7 +44,8 @@ Docker yüklü değilse:
 
 ```bash
 # Ubuntu
-curl -fsSL https://get.docker.com | sudo bash
+sudo apt-get update
+sudo apt-get install -y docker.io docker-compose-v2 ca-certificates curl python3 minisign
 
 # RHEL 9
 sudo dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
@@ -84,10 +85,27 @@ sudo ufw allow 23300/tcp
 > ⚠️ **Yayın öncesi notu:** Aşağıdaki komut, bootstrap.sh'in `update.neosecra.com`
 > üzerinde yayınlanması sonrası geçerlidir. Şu an için manuel kurulum adımlarını izleyin.
 
+Güven kökü: `public-keys/update-neosecra-com.pub`, Minisign anahtar kimliği
+**C55D6825451AD013**. Aşağıdaki anahtar belgeye sabitlenmiştir; sunucudan
+indirilen bir anahtarla değiştirmeyin. `minisign`, `python3` ve `curl` önkoşuldur;
+bunları dağıtımın imzalı paket deposundan kurun. İmza başarısızsa durun.
+
 ```bash
-curl -fsSL https://update.neosecra.com/bootstrap.sh 
-  | sudo NEOSECRA_TLS_MODE=public 
-    bash
+(
+  set -euo pipefail
+  umask 077
+  workdir="$(mktemp -d)"
+  trap 'rm -rf -- "$workdir"' EXIT
+  cd "$workdir"
+  cat > update-neosecra-com.pub <<'KEY'
+untrusted comment: minisign public key C55D6825451AD013
+RWQT0BpFJWhdxSQrTDsZBgPBOln9EFXrF6/Weuk16/l48T7XhMrBGYGK
+KEY
+  curl --fail --proto '=https' --proto-redir '=https' --tlsv1.2 --silent --show-error --location -o bootstrap.sh https://update.neosecra.com/bootstrap.sh
+  curl --fail --proto '=https' --proto-redir '=https' --tlsv1.2 --silent --show-error --location -o bootstrap.sh.minisig https://update.neosecra.com/bootstrap.sh.minisig
+  minisign -V -m bootstrap.sh -p update-neosecra-com.pub -x bootstrap.sh.minisig
+  sudo NEOSECRA_TLS_MODE=public bash ./bootstrap.sh
+)
 ```
 
 > **Kimlik doğrulama:** NeoSecra image'ları `registry.neosecra.com`'dadır ve
@@ -104,18 +122,11 @@ curl -fsSL https://update.neosecra.com/bootstrap.sh
 Güvenlik bilinçli müşteriler için bootstrap betiğini inceleme imkanı sunan
 alternatif kurulum yöntemi.
 
-### 3.1 Bootstrap Betiğini İndir ve İncele
+### 3.1 Bootstrap Betiğini İndir ve Doğrula
 
-```bash
-# Betiği indir
-curl -fsSL -o bootstrap.sh https://update.neosecra.com/bootstrap.sh
-
-# SHA256 sağlama kontrolü (opsiyonel — imzalı kanaldan alınan manifest'e bakın)
-sha256sum bootstrap.sh
-
-# İncele (isteğe bağlı — güvenlik kontrolü)
-less bootstrap.sh
-```
+Bölüm 2'deki komutları kullanın: imza doğrulaması zorunludur. İncelemek için
+`minisign -V` başarılı olduktan sonra, aynı geçici dizinde `less bootstrap.sh`
+çalıştırın. Yalnızca doğrulanan kopyayı çalıştırın.
 
 ### 3.2 Image Registry Erişimi
 
@@ -126,22 +137,26 @@ geriye dönük uyumluluk için kabul edilir ama artık kullanılmaz.)
 
 ```bash
 # Registry erişilebilirliğini doğrula (custom CA kullanılmıyorsa --cacert gerekmez)
-curl -fsS https://registry.neosecra.com/v2/ >/dev/null && echo "registry OK"
+curl --fail --proto '=https' --tlsv1.2 --silent --show-error https://registry.neosecra.com/v2/ >/dev/null && echo "registry OK"
 ```
 
 ### 3.3 Kurulumu Başlat
 
 ```bash
-sudo NEOSECRA_TLS_MODE=public \
-  bash bootstrap.sh
+# Bölüm 2: indir + Minisign doğrula + doğrulanan kopyayı çalıştır
 ```
 
 Kurulum sırasında:
 
-1. Docker kontrolü yapılır
-2. Update server'dan channel metadata indirilir
-3. Dağıtım paketi (`distribution.tar.gz`) indirilir ve `/opt/neosecra/assessment/`
-   altına açılır
+1. Kanal JSON ve `.minisig` indirilir; gömülü pinlenmiş keyring ile doğrulanır.
+2. Ürün/kanal kimliği ve katı sürüm deseni kontrol edilir; kurulu sürümden
+   eski hedef reddedilir. `--reinstall` bu kontrolü atlamaz; downgrade seçeneği yoktur.
+3. Docker gerekirse dağıtımın imzalı apt deposundan kurulur. Arşiv, `.sha256`
+   ve `.minisig` indirilir; kanal hash'i, sidecar hash'i ve imza doğrulanır.
+   Tüm tar üyeleri yazmadan önce denetlenir: tek kök, en çok 10.000 üye,
+   üye başına 2 GiB ve toplam 4 GiB; mutlak yol, traversal, link, cihaz ve FIFO
+   reddedilir. `deployment/VERSION` kanal sürümüyle eşleşirse özel staging'e
+   açılır, ardından `/opt/neosecra/assessment/releases/<sürüm>/` altına kopyalanır.
 4. Rastgele parolalar üretilir ve `.env.v1` dosyasına yazılır
 5. Docker image'ları çekilir: NeoSecra image'ları `registry.neosecra.com`'dan
    (backend/worker/frontend); kamusal image'lar Docker Hub'dan
@@ -351,10 +366,9 @@ aws s3 sync /opt/neosecra/backups/ s3://neosecra-backups/musteri-adi/
 # 2. Bundle'ı hedef sunucuda aç
 sudo tar --zstd -xf docker-bundle-1.x.x.tar.zst -C /opt/neosecra/
 
-# 3. Internal TLS modunda kurulum
-sudo NEOSECRA_TLS_MODE=internal \
-  NEOSECRA_CHANNEL_URL=file:///opt/neosecra/bundle/channel.json \
-  bash bootstrap.sh
+# 3. Offline kurulum bu bootstrap yolunda desteklenmez.
+# Imzali offline paket icin onayli air-gap runbook kullanilmalidir.
+
 ```
 
 Detaylı air-gap prosedürü için: [CUSTOM-CA.md](CUSTOM-CA.md) ve

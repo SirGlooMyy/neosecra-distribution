@@ -1,7 +1,26 @@
 #!/usr/bin/env bash
-# NeoSecra Assessment — standalone customer backup
-# pg_dump custom format + .env + secrets + upgrade journal
+# NeoSecra Assessment — standalone customer backup (encrypted)
+# pg_dump custom format + .env + secrets + upgrade journal, packed as
+#   neosecra-backup-<stamp>.tar.gz.age  (+ .sha256)
+#
+# Security model (P5):
+#   * The archive is encrypted with `age` for a PUBLIC recipient; the backup
+#     host never holds the private identity. Secrets/.env only exist inside
+#     the encrypted archive.
+#   * The DB dump is encrypted while streaming (pg_dump | age); a plaintext
+#     dump is never written to disk. The staging dir (0700, same filesystem)
+#     holds the encrypted dump plus small config copies and is removed on exit.
+#   * Everything is written as *.partial and renamed only after success.
+#   * umask 077; backup dir 0700; files 0600.
+#
+# Encryption env (fail-closed; one is required):
+#   BACKUP_AGE_RECIPIENT        single age recipient string
+#   BACKUP_AGE_RECIPIENTS_FILE  path to a recipients file
+#   BACKUP_ALLOW_PLAINTEXT=1    explicit exception when no recipient is set:
+#                               UNENCRYPTED backup, loud warning, name contains
+#                               .PLAINTEXT
 set -Eeuo pipefail
+umask 077
 
 # --- Configurables ---
 NEOSECRA_HOME="${NEOSECRA_HOME:-/opt/neosecra/assessment}"
@@ -10,11 +29,18 @@ BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 COMPOSE_DIR="${NEOSECRA_HOME}/current/deployment"
 COMPOSE_FILE="${COMPOSE_DIR}/docker-compose.v1.yml"
 ENV_FILE="${COMPOSE_DIR}/.env.v1"
-SECRETS_DIR="/opt/neosecra/secrets"
+SECRETS_DIR="${NEOSECRA_SECRETS_DIR:-/opt/neosecra/secrets}"
 JOURNAL_DIR="${NEOSECRA_HOME}/upgrade-journal"
 COMPOSE_PROJECT="neosecra-assessment"
-LOCK_FILE="/tmp/neosecra-backup.lock"
-MIN_DISK_MB=1024
+LOCK_FILE="${NEOSECRA_BACKUP_LOCK:-/tmp/neosecra-backup.lock}"
+MIN_DISK_MB="${NEOSECRA_BACKUP_MIN_DISK_MB:-1024}"
+BACKUP_AGE_RECIPIENT="${BACKUP_AGE_RECIPIENT:-}"
+BACKUP_AGE_RECIPIENTS_FILE="${BACKUP_AGE_RECIPIENTS_FILE:-}"
+BACKUP_ALLOW_PLAINTEXT="${BACKUP_ALLOW_PLAINTEXT:-0}"
+
+TEMP_DIR=""
+PARTIAL_FILE=""
+SHA_PARTIAL=""
 
 # --- Logging (stderr) ---
 if [[ -t 2 ]]; then
@@ -28,15 +54,27 @@ warn() { printf '%s[warn]%s  %s\n'  "$_CY" "$_CN" "$*" >&2; }
 err()  { printf '%s[error]%s %s\n'  "$_CR" "$_CN" "$*" >&2; }
 die()  { err "$1"; exit "${2:-1}"; }
 
+# --- Cleanup: staging dir, partial files, lock ---
+cleanup() {
+  [[ -n "${TEMP_DIR:-}" ]] && rm -rf -- "$TEMP_DIR" 2>/dev/null
+  [[ -n "${PARTIAL_FILE:-}" ]] && rm -f -- "$PARTIAL_FILE" 2>/dev/null
+  [[ -n "${SHA_PARTIAL:-}" ]] && rm -f -- "$SHA_PARTIAL" 2>/dev/null
+  release_lock
+  return 0
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+
 # --- Lock ---
+LOCK_HELD=0
 acquire_lock() {
   if ! mkdir "$LOCK_FILE" 2>/dev/null; then
     die "Another backup is already running (lock: ${LOCK_FILE})" 5
   fi
-  trap cleanup EXIT
+  LOCK_HELD=1
 }
-release_lock() { rmdir "$LOCK_FILE" 2>/dev/null || true; }
-cleanup() { rm -rf "${TEMP_DIR:-}" 2>/dev/null || true; release_lock; }
+release_lock() { [[ "$LOCK_HELD" -eq 1 ]] && rmdir "$LOCK_FILE" 2>/dev/null; LOCK_HELD=0; return 0; }
 
 # --- Prerequisites ---
 check_disk_space() {
@@ -50,6 +88,17 @@ check_disk_space() {
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1" 2
+}
+
+file_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null || echo "?"; }
+
+# stdin -> stdout; fails (status 1) when the stream is empty.
+require_nonempty_stream() {
+  local hex
+  hex="$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+  [[ -n "$hex" ]] || return 1
+  printf "\\x${hex}"
+  cat
 }
 
 compose_cmd() {
@@ -67,17 +116,65 @@ postgres_is_running() {
   compose_cmd ps --status running -q postgres 2>/dev/null | grep -q .
 }
 
+# --- Encryption mode (decided before anything is created) ---
+AGE_ARGS=()
+ENCRYPT=0
+setup_encryption() {
+  if [[ -n "$BACKUP_AGE_RECIPIENT" ]]; then
+    AGE_ARGS+=(-r "$BACKUP_AGE_RECIPIENT")
+  fi
+  if [[ -n "$BACKUP_AGE_RECIPIENTS_FILE" ]]; then
+    [[ -f "$BACKUP_AGE_RECIPIENTS_FILE" && -s "$BACKUP_AGE_RECIPIENTS_FILE" ]] \
+      || die "BACKUP_AGE_RECIPIENTS_FILE is not a readable, non-empty file: ${BACKUP_AGE_RECIPIENTS_FILE}" 3
+    AGE_ARGS+=(-R "$BACKUP_AGE_RECIPIENTS_FILE")
+  fi
+  if [[ "${#AGE_ARGS[@]}" -gt 0 ]]; then
+    ENCRYPT=1
+    command -v age >/dev/null 2>&1 \
+      || die "age is not installed but a recipient is configured; refusing to write an unencrypted backup (install package 'age')" 3
+  elif [[ "$BACKUP_ALLOW_PLAINTEXT" == "1" ]]; then
+    ENCRYPT=0
+    warn "BACKUP_ALLOW_PLAINTEXT=1 -> this backup is NOT ENCRYPTED. Anyone who can read the file obtains .env, secrets and the database. Configure BACKUP_AGE_RECIPIENT."
+  else
+    die "No age recipient configured (set BACKUP_AGE_RECIPIENT or BACKUP_AGE_RECIPIENTS_FILE); refusing to create a backup. Explicit exception: BACKUP_ALLOW_PLAINTEXT=1" 3
+  fi
+}
+
+# Encrypt stdin -> stdout (identity when ENCRYPT=0)
+encrypt_stream() {
+  if [[ "$ENCRYPT" -eq 1 ]]; then age "${AGE_ARGS[@]}"; else cat; fi
+}
+
+harden_backup_base() {
+  local mode
+  if [[ -d "$BACKUP_BASE" ]]; then
+    mode="$(file_mode "$BACKUP_BASE")"
+    [[ "$mode" == "700" ]] || warn "Backup directory ${BACKUP_BASE} had mode ${mode}; tightening to 0700"
+  else
+    mkdir -p "$BACKUP_BASE"
+  fi
+  chmod 0700 "$BACKUP_BASE"
+  local loose=0 f m
+  while IFS= read -r -d '' f; do
+    m="$(file_mode "$f")"
+    if [[ "$m" != "600" ]]; then chmod 0600 "$f" && loose=$((loose + 1)); fi
+  done < <(find "$BACKUP_BASE" -maxdepth 1 -type f -name 'neosecra-backup-*' -print0)
+  [[ "$loose" -eq 0 ]] || warn "${loose} existing backup file(s) had loose permissions; tightened to 0600"
+}
+
 run_pg_dump() {
   local output="$1"
   local pguser pgdb
   pguser="$(env_value POSTGRES_USER neosecra)"
   pgdb="$(env_value POSTGRES_DB neosecra_assessment)"
 
-  log "pg_dump (custom format): ${pgdb} as ${pguser}..."
-  compose_cmd exec -T postgres pg_dump -Fc -U "$pguser" -d "$pgdb" > "$output" 2>/dev/null || {
-    err "pg_dump failed — refusing to create an incomplete backup"
+  log "pg_dump (custom format, streamed$([[ $ENCRYPT -eq 1 ]] && echo ', age-encrypted')): ${pgdb} as ${pguser}..."
+  if ! compose_cmd exec -T postgres pg_dump -Fc -U "$pguser" -d "$pgdb" 2>/dev/null \
+      | require_nonempty_stream | encrypt_stream > "$output"; then
+    err "pg_dump/encrypt pipeline failed or produced empty output — refusing to create an incomplete backup"
+    rm -f -- "$output"
     return 1
-  }
+  fi
   if [[ ! -s "$output" ]]; then
     err "pg_dump produced empty file — refusing to create an incomplete backup"
     return 1
@@ -90,7 +187,7 @@ retention_cleanup() {
   local backups=()
   while IFS= read -r -d '' f; do
     backups+=("$f")
-  done < <(find "$BACKUP_BASE" -maxdepth 1 -name 'neosecra-backup-*.tar.gz' -print0 | sort -z)
+  done < <(find "$BACKUP_BASE" -maxdepth 1 \( -name 'neosecra-backup-*.tar.gz.age' -o -name 'neosecra-backup-*.tar.gz' \) -print0 | sort -z)
   local total="${#backups[@]}"
   [[ "$total" -eq 0 ]] && return 0
 
@@ -109,7 +206,9 @@ retention_cleanup() {
       removed=$((removed + 1))
     fi
   done
-  log "Retention: ${remaining} backup(s) retained"
+  log "Retention: $((total - removed)) backup(s) retained"
+  # abandoned partial files of crashed runs
+  find "$BACKUP_BASE" -maxdepth 1 -name 'neosecra-backup-*.partial' -type f -mtime +0 -delete 2>/dev/null || true
 }
 
 # --- Main ---
@@ -119,19 +218,32 @@ if [[ -f "${COMPOSE_DIR}/VERSION" ]]; then
   VERSION=$(tr -d '[:space:]' < "${COMPOSE_DIR}/VERSION")
 fi
 
-BACKUP_FILE="${BACKUP_BASE}/neosecra-backup-${STAMP}.tar.gz"
+if [[ "${BACKUP_ALLOW_PLAINTEXT}" == "1" && -z "$BACKUP_AGE_RECIPIENT" && -z "$BACKUP_AGE_RECIPIENTS_FILE" ]]; then
+  BACKUP_FILE="${BACKUP_BASE}/neosecra-backup-${STAMP}.PLAINTEXT.tar.gz"
+else
+  BACKUP_FILE="${BACKUP_BASE}/neosecra-backup-${STAMP}.tar.gz.age"
+fi
 SHA256_FILE="${BACKUP_FILE}.sha256"
 
 require_cmd docker
 require_cmd sha256sum
-mkdir -p "$BACKUP_BASE"
+require_cmd tar
+require_cmd gzip
+setup_encryption
+harden_backup_base
 acquire_lock
 check_disk_space
 
-TEMP_DIR=$(mktemp -d)
+# Staging dir: same filesystem as the backups, 0700, removed by the EXIT trap.
+TEMP_DIR="$(mktemp -d "${BACKUP_BASE}/.staging.XXXXXX")"
+chmod 0700 "$TEMP_DIR"
 
-# --- Database dump ---
-DUMP_FILE="${TEMP_DIR}/neosecra-db-${STAMP}.dump"
+# --- Database dump (encrypted while streaming; never plaintext on disk) ---
+if [[ "$ENCRYPT" -eq 1 ]]; then
+  DUMP_FILE="${TEMP_DIR}/neosecra-db-${STAMP}.dump.age"
+else
+  DUMP_FILE="${TEMP_DIR}/neosecra-db-${STAMP}.dump"
+fi
 if postgres_is_running; then
   run_pg_dump "$DUMP_FILE" || die "Database backup failed" 12
 else
@@ -172,6 +284,7 @@ echo "$VERSION" > "${TEMP_DIR}/VERSION.txt"
   echo "stamp: ${STAMP}"
   echo "created_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "version: ${VERSION}"
+  echo "encrypted: $([[ $ENCRYPT -eq 1 ]] && echo age || echo NO)"
   echo "files:"
   find "${TEMP_DIR}" -mindepth 1 -maxdepth 1 -printf '%f\0' 2>/dev/null | while IFS= read -r -d '' entry; do
     [[ -f "${TEMP_DIR}/${entry}" ]] || continue
@@ -180,12 +293,24 @@ echo "$VERSION" > "${TEMP_DIR}/VERSION.txt"
 } > "${TEMP_DIR}/BACKUP-MANIFEST"
 ok "BACKUP-MANIFEST written"
 
-# --- Package ---
-tar -czf "$BACKUP_FILE" -C "$TEMP_DIR" .
-ok "Archive: ${BACKUP_FILE} ($(du -h "$BACKUP_FILE" | cut -f1))"
+# --- Package: tar | gzip | age -> .partial -> rename ---
+PARTIAL_FILE="${BACKUP_FILE}.partial"
+: > "$PARTIAL_FILE"
+chmod 0600 "$PARTIAL_FILE"
+if ! tar -cf - -C "$TEMP_DIR" . | gzip -c | encrypt_stream > "$PARTIAL_FILE"; then
+  die "Archive pipeline (tar/gzip/age) failed — partial backup removed" 12
+fi
+[[ -s "$PARTIAL_FILE" ]] || die "Archive is empty — partial backup removed" 12
 
-# --- SHA256 ---
-sha256sum "$BACKUP_FILE" | awk '{print $1}' > "$SHA256_FILE"
+# --- SHA256 of the (encrypted) artifact, standard "hash  name" format ---
+SHA_PARTIAL="${SHA256_FILE}.partial"
+printf '%s  %s\n' "$(sha256sum "$PARTIAL_FILE" | cut -d' ' -f1)" "$(basename "$BACKUP_FILE")" > "$SHA_PARTIAL"
+chmod 0600 "$SHA_PARTIAL"
+mv -f "$PARTIAL_FILE" "$BACKUP_FILE"
+mv -f "$SHA_PARTIAL" "$SHA256_FILE"
+PARTIAL_FILE=""; SHA_PARTIAL=""
+chmod 0600 "$BACKUP_FILE" "$SHA256_FILE"
+ok "Archive: ${BACKUP_FILE} ($(du -h "$BACKUP_FILE" | cut -f1))"
 ok "SHA256: ${SHA256_FILE}"
 
 # --- Retention ---

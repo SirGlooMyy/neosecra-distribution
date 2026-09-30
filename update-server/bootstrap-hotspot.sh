@@ -5,6 +5,7 @@
 # bootstrap installs Assessment; using it for hotspot would select the wrong
 # channel and root directory.
 set -Eeuo pipefail
+umask 077
 
 CHANNEL_URL="${NEOSECRA_CHANNEL_URL:-https://update.neosecra.com/channels/hotspot-stable.json}"
 INSTALL_ROOT="${NEOSECRA_INSTALL_ROOT:-/opt/neosecra/hotspot}"
@@ -304,7 +305,7 @@ else
     die "Veri diskinde en az 500 GB toplam ve 100 GB bos alan gerekli" 2
 fi
 
-CURL_OPTS=(--fail --silent --show-error --location --proto '=https' --proto-redir '=https' -H 'User-Agent: NeoSecra-Hotspot-Bootstrap/1.0')
+CURL_OPTS=(--fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 -H 'User-Agent: NeoSecra-Hotspot-Bootstrap/1.0')
 TMP_DIR="$(mktemp -d /tmp/neosecra-hotspot-bootstrap.XXXXXXXXXX)"
 trap 'rm -rf -- "$TMP_DIR"' EXIT
 PUBKEY_DIR="$TMP_DIR/update-neosecra-com-keyring"
@@ -335,15 +336,15 @@ fetch "$CHANNEL_URL.minisig" "$TMP_DIR/channel.json.minisig" || die "Kanal imzas
 verify_minisign_keyring "$TMP_DIR/channel.json" "$TMP_DIR/channel.json.minisig" || die "Kanal Minisign imzasi gecersiz" 4
 
 RELEASE_JSON="$TMP_DIR/release.json"
-python3 - "$TMP_DIR/channel.json" "$RELEASE_JSON" "$EXPECTED_CHANNEL" "$EXPECTED_PRODUCT" "$EXPECTED_EDITION" "${NEOSECRA_VERSION:-}" <<'PY'
+python3 - "$TMP_DIR/channel.json" "$RELEASE_JSON" "$EXPECTED_CHANNEL" "$EXPECTED_PRODUCT" "$EXPECTED_EDITION" "${NEOSECRA_VERSION:-}" "$INSTALL_ROOT" <<'PY'
 import json
 import re
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
-source, destination, expected_channel, expected_product, expected_edition, requested_version = sys.argv[1:]
-semver = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+source, destination, expected_channel, expected_product, expected_edition, requested_version, install_root = sys.argv[1:]
+semver = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$")
 sha256 = re.compile(r"^[0-9a-f]{64}$")
 channel = json.loads(Path(source).read_text(encoding="utf-8"))
 if not isinstance(channel, dict):
@@ -354,19 +355,41 @@ if (str(channel.get("channel") or "").strip().lower() != expected_channel
     raise SystemExit("channel identity mismatch")
 if str(channel.get("status") or "").strip().lower() not in {"available", "ready"}:
     raise SystemExit("channel is not available")
-current_version = str(channel.get("current_version") or "").strip().lstrip("vV")
+current_version = str(channel.get("current_version") or "")
 releases = channel.get("releases")
 if not semver.fullmatch(current_version) or not isinstance(releases, list) or not releases:
     raise SystemExit("channel version or releases are invalid")
-version = requested_version.strip().lstrip("vV") if requested_version.strip() else current_version
+version = requested_version if requested_version else current_version
 if not semver.fullmatch(version):
     raise SystemExit("requested version is invalid")
+def version_key(value):
+    if not isinstance(value, str) or not semver.fullmatch(value):
+        raise SystemExit("Invalid version string")
+    major, minor, patch, suffix = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)(.*)", value).groups()
+    tokens = tuple((0, int(x)) if x.isdigit() else (1, x) for x in re.split(r"[.-]", suffix)[1:])
+    rank = 0 if suffix.startswith("-") else 2 if suffix.startswith(".") else 1
+    return int(major), int(minor), int(patch), rank, tokens
+base = Path(install_root)
+for marker in (base / "state/installed-version", base / "state/active-release",
+               base / "current/VERSION", base / "current/v1/VERSION"):
+    if (marker.exists() or marker.is_symlink()) and version_key(marker.read_text(encoding="utf-8").strip()) > version_key(version):
+        raise SystemExit("Anti-rollback: target is older than installed version")
+current = base / "current"
+if current.exists() and not current.is_symlink() and not any(
+        p.exists() for p in (base / "state/installed-version", base / "state/active-release",
+                            current / "VERSION", current / "v1/VERSION")):
+    raise SystemExit("Installed version state missing")
+if current.is_symlink():
+    if not current.exists():
+        raise SystemExit("Installed current pointer is dangling")
+    if version_key(current.resolve().name) > version_key(version):
+        raise SystemExit("Anti-rollback: target is older than current release")
 matches = []
 seen = set()
 for item in releases:
     if not isinstance(item, dict):
         raise SystemExit("release entry is invalid")
-    item_version = str(item.get("version") or "").strip().lstrip("vV")
+    item_version = str(item.get("version") or "")
     if not semver.fullmatch(item_version) or item_version in seen:
         raise SystemExit("release version list is invalid")
     seen.add(item_version)
@@ -408,9 +431,21 @@ fi
 
 info "Hotspot v${VERSION} arsivi indiriliyor"
 fetch "$ARCHIVE_URL" "$TMP_DIR/hotspot.tar.gz" || die "Hotspot arsivi indirilemedi" 4
+fetch "${ARCHIVE_URL}.sha256" "$TMP_DIR/hotspot.tar.gz.sha256" || die "Hotspot SHA-256 sidecar indirilemedi" 4
 fetch "$ARCHIVE_SIG_URL" "$TMP_DIR/hotspot.tar.gz.minisig" || die "Hotspot arsiv imzasi indirilemedi" 4
+SIDECAR_SHA256="$(python3 - "$TMP_DIR/hotspot.tar.gz.sha256" <<'HASH_PY'
+import re
+import sys
+from pathlib import Path
+value = Path(sys.argv[1]).read_text(encoding="ascii").strip()
+match = re.fullmatch(r"([0-9a-fA-F]{64})(?:[ \t]+\*?[^\r\n]+)?", value)
+if not match:
+    raise SystemExit("Invalid SHA-256 sidecar")
+print(match[1].lower())
+HASH_PY
+)"
 ACTUAL_SHA256="$(sha256sum "$TMP_DIR/hotspot.tar.gz" | awk '{print tolower($1)}')"
-[[ "$ACTUAL_SHA256" == "$EXPECTED_SHA256" ]] || die "Hotspot arsiv SHA-256 uyusmuyor" 4
+[[ "$ACTUAL_SHA256" == "$EXPECTED_SHA256" && "$ACTUAL_SHA256" == "$SIDECAR_SHA256" ]] || die "Hotspot arsiv SHA-256 uyusmuyor" 4
 verify_minisign_keyring "$TMP_DIR/hotspot.tar.gz" "$TMP_DIR/hotspot.tar.gz.minisig" || die "Hotspot arsiv Minisign imzasi gecersiz" 4
 
 EXTRACT_ROOT="$TMP_DIR/extract"
@@ -458,7 +493,11 @@ def ensure_parent(relative):
             fail("archive extraction encountered an unsafe parent")
     return parent
 
+if Path(archive).stat().st_size > 2 * 1024**3:
+    fail("compressed archive exceeds size limit")
+
 with tarfile.open(archive, "r:gz") as bundle:
+    members = []
     seen = set()
     top_levels = set()
     total_bytes = 0
@@ -480,6 +519,27 @@ with tarfile.open(archive, "r:gz") as bundle:
             fail("archive expands beyond the bounded extraction limit")
         if member.issym() or member.islnk() or member.isdev() or member.isfifo() or not (member.isfile() or member.isdir()):
             fail("archive member type is not permitted")
+        members.append(member)
+    if len(top_levels) != 1:
+        fail("Hotspot archive must contain exactly one top-level root")
+    archive_root = next(iter(top_levels))
+    expected_prefix = f"neosecra-hotspot-{target_version}"
+    if archive_root != expected_prefix and not archive_root.startswith(expected_prefix + "-"):
+        fail("Hotspot archive root does not match the signed target")
+    files = {m.name for m in members if m.isfile()}
+    for name in seen:
+        parts = name.split("/")
+        if any("/".join(parts[:i]) in files for i in range(1, len(parts))):
+            fail("archive parent is a regular file")
+    # New POC packages must declare their version inside the signed payload.
+    markers = [m for m in members if m.name == archive_root + "/VERSION" and m.isfile()]
+    if len(markers) != 1 or markers[0].size > 256:
+        fail("Hotspot archive VERSION declaration missing or oversized")
+    if bundle.extractfile(markers[0]).read().decode("utf-8").strip() != target_version:
+        fail("Hotspot archive VERSION does not match signed channel")
+    print("Archive preflight passed; extracting verified payload", flush=True)
+    for member in members:
+        parts = safe_name(member.name)
         relative = Path(*parts)
         target = root.joinpath(*parts)
         if member.isdir():
@@ -707,7 +767,25 @@ info "Hotspot Compose stack baslatiliyor"
 HEALTH_URL="http://127.0.0.1:${API_PORT}/health"
 healthy=0
 for _ in $(seq 1 90); do
-  if curl -fsS --max-time 10 "$HEALTH_URL" >/dev/null 2>&1; then healthy=1; break; fi
+  # This is a loopback readiness check, never an artifact download or redirect.
+  if python3 - "$HEALTH_URL" <<'HEALTH_PY'
+import http.client
+import sys
+from urllib.parse import urlsplit
+
+url = urlsplit(sys.argv[1])
+if url.scheme != "http" or url.hostname != "127.0.0.1" or url.username or url.password:
+    raise SystemExit("Health probe must use loopback HTTP")
+connection = http.client.HTTPConnection("127.0.0.1", url.port, timeout=10)
+try:
+    connection.request("GET", url.path)
+    raise SystemExit(0 if 200 <= connection.getresponse().status < 400 else 1)
+except OSError:
+    raise SystemExit(1)
+finally:
+    connection.close()
+HEALTH_PY
+  then healthy=1; break; fi
   sleep 2
 done
 [[ $healthy -eq 1 ]] || die "Hotspot health kontrolu basarisiz: ${HEALTH_URL}"
