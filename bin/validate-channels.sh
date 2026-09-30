@@ -16,25 +16,47 @@ else
   PUBLIC_KEYS="$ROOT/public-keys"
   if [[ ! -e "$PUBLIC_KEYS" ]]; then PUBLIC_KEYS="$SCRIPT_ROOT/public-keys"; fi
 fi
-python3 - "$ROOT" "$WWW_ROOT" "$PUBLIC_KEYS" "$REGISTRY_ROOT" "$SCRIPT_ROOT" <<'PY'
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys' >/dev/null 2>&1; then
+  PYTHON_BIN=python3
+elif command -v python >/dev/null 2>&1 && python -c 'import sys' >/dev/null 2>&1; then
+  PYTHON_BIN=python
+else
+  echo "python3 or python is required to validate channels" >&2; exit 1
+fi
+# Do not pass an empty positional argument: native Windows Python can drop it.
+PYTHON_ARGS=("$ROOT" "$PUBLIC_KEYS" "$REGISTRY_ROOT" "$SCRIPT_ROOT")
+if [[ -n "$WWW_ROOT" ]]; then PYTHON_ARGS+=("$WWW_ROOT"); fi
+"$PYTHON_BIN" - "${PYTHON_ARGS[@]}" <<'PY'
 import sys
 from pathlib import Path
-sys.path.insert(0,sys.argv[5]+'/update-server/lib')
-from registry import load_registry,read_json,validate_channel
+root_text,public_keys,registry_text,script_text,*www_args=sys.argv[1:]
+sys.path.insert(0,script_text+'/update-server/lib')
+from registry import load_registry,read_json,repo_file,validate_channel,validate_empty_channel
 from verify import signature
-root=Path(sys.argv[1]);www=Path(sys.argv[2]) if sys.argv[2] else None
-registry_root=Path(sys.argv[4]);count=0
+root=Path(root_text);www=Path(www_args[0]) if www_args else None
+registry_root=Path(registry_text);count=0
 for path in sorted((registry_root/'products').glob('*.json')):
     reg=load_registry(registry_root,path.stem)
     for channel in reg['channels']:
         name=reg['code']+'-'+channel
-        source=root/'channels'/(name+'.json')
-        signature(source,sys.argv[3])
-        validate_channel(read_json(source),reg,name)
+        source=repo_file(root,'channels/'+name+'.json')
+        source_sig=Path(str(source)+'.minisig')
+        unsigned=not source_sig.exists() and not source_sig.is_symlink()
+        if unsigned:
+            validate_empty_channel(read_json(source),reg,name)
+        else:
+            signature(source,public_keys)
+            validate_channel(read_json(source),reg,name)
         if www:
-            copy=www/'channels'/source.name
-            if source.read_bytes()!=copy.read_bytes() or Path(str(source)+'.minisig').read_bytes()!=Path(str(copy)+'.minisig').read_bytes():
+            copy=repo_file(www,'channels/'+source.name)
+            if source.read_bytes()!=copy.read_bytes():
                 raise SystemExit('channel source-of-truth drift')
+            if unsigned:
+                copy_sig=Path(str(copy)+'.minisig')
+                if copy_sig.exists() or copy_sig.is_symlink():
+                    raise SystemExit('channel signature source-of-truth drift')
+            elif source_sig.read_bytes()!=repo_file(www,'channels/'+source.name+'.minisig').read_bytes():
+                raise SystemExit('channel signature source-of-truth drift')
         count+=1
 if not count: raise SystemExit('no registered channels')
 print(f'validated {count} registered channels')

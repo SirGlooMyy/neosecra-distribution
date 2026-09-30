@@ -16,6 +16,17 @@ from channel import spans
 
 def success(result): assert result.returncode==0,result.stdout+result.stderr
 
+def test_unsigned_assessment_reservation_cannot_be_published(tmp_path):
+    p=Publisher(tmp_path,stub_gates=True)
+    source=p.seed('assessment','beta')
+    source.write_bytes((ROOT/'channels/assessment-beta.json').read_bytes())
+    Path(str(source)+'.minisig').unlink()
+    before=p.snapshot()
+    result=p.run(product='assessment',channel='beta')
+    assert result.returncode!=0 and 'Unsafe channel pair' in result.stderr
+    assert p.snapshot()==before
+
+
 def soc_inputs(tmp):
     lock=tmp/'images.lock';_lock(lock)
     archive=tmp/'soc-1.0.1.tar.gz';_write_package(archive,lock)

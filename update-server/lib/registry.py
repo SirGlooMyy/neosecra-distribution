@@ -84,6 +84,7 @@ def load_registry(root, code):
     return reg
 
 def validate_channel(data, reg, name):
+    if name.removeprefix(reg['code']+'-') not in reg['channels']: fail('channel is not registered for product')
     if data.get('channel') != name: fail('channel name mismatch')
     if data.get('product') not in [reg['code']]+reg['aliases']: fail('channel product mismatch')
     if data.get('product_code',reg['code']) != reg['code']: fail('channel product_code mismatch')
@@ -105,8 +106,15 @@ def validate_channel(data, reg, name):
         if current not in seen: fail('current_version is not present in releases')
         if not next(r for r in releases if r['version']==current).get('archive'): fail('current release is not artifact-backed')
     if data.get('status')=='available' and not current:
-        if releases or name.removeprefix(reg['code']+'-') not in reg.get('legacy_empty_channels',[]):
-            fail('available channel has no current release')
+        fail('available channel has no current release')
+    return data
+
+def validate_empty_channel(data, reg, name):
+    validate_channel(data,reg,name)
+    if name.removeprefix(reg['code']+'-') not in reg.get('legacy_empty_channels',[]):
+        fail('unsigned channel is not registered as legacy empty')
+    if 'current_version' not in data or data['current_version'] is not None or data['releases'] != [] or data.get('status') not in ['reserved','unavailable']:
+        fail('unsigned channel must be empty and unpublished')
     return data
 
 def monotonic(data, version, digest):

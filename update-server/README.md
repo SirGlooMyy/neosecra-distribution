@@ -205,8 +205,20 @@ paths. New products can reuse these steps in any declared order.
 Bootstrap `null` publishes no bootstrap file; its release field is `null`.
 Hotspot retains the historical `/none` bundle sentinel when no bundle is supplied,
 including `docker_bundle` and the compatibility `bundle_url` field.
-Assessment beta's historical `security-health` edition and available empty
-channel are explicitly recorded read-compatibility exceptions.
+Assessment beta's historical `security-health` edition is an explicit
+read-compatibility exception. Its never-published channel remains registered
+under `legacy_empty_channels` with `status: reserved`.
+
+`bash bin/validate-channels.sh [SOURCE_ROOT [WWW_ROOT]]` validates all registered
+channels (seven in the canonical registry), using `python3` or falling back to
+`python`. An omitted or empty WWW root disables source/WWW comparison. Only a
+channel explicitly listed in `legacy_empty_channels` may lack a signature, and
+only with an empty `releases` array, explicit `current_version: null`, and status
+`reserved` or `unavailable`. Existing signatures are always verified; a published
+channel requires a valid signature even while listed in `legacy_empty_channels`.
+When a WWW root is supplied, unsigned reservations must match JSON bytes and
+have no signature there either. This validation exception does not authorize
+unsigned publication or activation; the publisher still requires signed pairs.
 
 ### Publication and trust
 
