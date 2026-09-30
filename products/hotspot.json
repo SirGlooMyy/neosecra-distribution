@@ -1,0 +1,45 @@
+{
+  "code": "hotspot",
+  "aliases": [
+    "neosecra-hotspot"
+  ],
+  "channels": [
+    "candidate",
+    "stable"
+  ],
+  "archive_pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*\\.(tar\\.gz|tgz|tar\\.xz|txz|tar\\.bz2|tbz2|tar\\.zst|tzst|tar)$",
+  "trust_policy": "minisign-package-v1",
+  "bundle": {
+    "requirement": "optional",
+    "format": "docker-save-tar"
+  },
+  "images_lock": {
+    "requirement": "none",
+    "format": "none",
+    "services": [],
+    "shared_services": []
+  },
+  "bootstrap": "update-server/bootstrap-hotspot.sh",
+  "gate": {
+    "script": "ci/prerelease-gate-hotspot.sh",
+    "channels": [
+      "stable"
+    ],
+    "inputs": [
+      "archive",
+      "version"
+    ]
+  },
+  "migration_metadata": "required",
+  "rollback_policy": "pointer-only",
+  "release_layout": "product-version",
+  "steps": [
+    "migration-contract"
+  ],
+  "channel_defaults": {
+    "edition": "standard",
+    "status": "available"
+  },
+  "secret_allowlist": [],
+  "legacy_empty_bundle": true
+}

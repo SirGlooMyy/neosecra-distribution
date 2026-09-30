@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'ssh' >> "$TRANSFER_LOG"
+printf '\t%s' "$@" >> "$TRANSFER_LOG"
+printf '\n' >> "$TRANSFER_LOG"
+[[ "${FAIL_TRANSFER:-}" != 1 ]]

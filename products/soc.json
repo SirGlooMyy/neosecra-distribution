@@ -1,0 +1,64 @@
+{
+  "code": "soc",
+  "aliases": [
+    "neosecra-soc"
+  ],
+  "channels": [
+    "beta",
+    "stable"
+  ],
+  "archive_pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*\\.(tar\\.gz|tgz|tar\\.xz|txz|tar\\.bz2|tbz2|tar\\.zst|tzst|tar)$",
+  "trust_policy": "minisign-package-v1",
+  "bundle": {
+    "requirement": "required",
+    "format": "docker-save-tar"
+  },
+  "images_lock": {
+    "requirement": "required",
+    "format": "name-ref-sha256-v1",
+    "services": [
+      "postgres",
+      "redis",
+      "backend",
+      "worker",
+      "beat",
+      "frontend",
+      "soc-ai-agent",
+      "nginx",
+      "caddy"
+    ],
+    "shared_services": [
+      [
+        "backend",
+        "worker",
+        "beat"
+      ]
+    ]
+  },
+  "bootstrap": null,
+  "gate": {
+    "script": "ci/prerelease-gate-soc.sh",
+    "channels": [
+      "stable"
+    ],
+    "inputs": [
+      "archive",
+      "version",
+      "bundle",
+      "images-lock",
+      "trust-policy"
+    ]
+  },
+  "migration_metadata": "none",
+  "rollback_policy": "backup-restore",
+  "release_layout": "product-version",
+  "steps": [
+    "bundle-lock"
+  ],
+  "channel_defaults": {
+    "edition": "standard",
+    "status": "available"
+  },
+  "secret_allowlist": [],
+  "normalize_identity": true
+}

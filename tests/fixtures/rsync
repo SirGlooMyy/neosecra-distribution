@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "$@"; do [[ "$arg" != --delete* ]] || exit 9; done
+printf 'rsync' >> "$TRANSFER_LOG"
+printf '\t%s' "$@" >> "$TRANSFER_LOG"
+printf '\n' >> "$TRANSFER_LOG"
+[[ "${FAIL_TRANSFER:-}" != 1 ]]

@@ -1,0 +1,245 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "code",
+    "aliases",
+    "channels",
+    "archive_pattern",
+    "trust_policy",
+    "bundle",
+    "images_lock",
+    "bootstrap",
+    "gate",
+    "migration_metadata",
+    "rollback_policy",
+    "release_layout",
+    "steps",
+    "channel_defaults",
+    "secret_allowlist"
+  ],
+  "properties": {
+    "code": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "aliases": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      }
+    },
+    "channels": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      },
+      "minItems": 1
+    },
+    "archive_pattern": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trust_policy": {
+      "enum": [
+        "minisign-package-v1",
+        "cosign-spdx-v1"
+      ]
+    },
+    "bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirement",
+        "format"
+      ],
+      "properties": {
+        "requirement": {
+          "enum": [
+            "none",
+            "optional",
+            "required"
+          ]
+        },
+        "format": {
+          "enum": [
+            "none",
+            "docker-save-tar"
+          ]
+        }
+      }
+    },
+    "images_lock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirement",
+        "format",
+        "services",
+        "shared_services"
+      ],
+      "properties": {
+        "requirement": {
+          "enum": [
+            "none",
+            "optional",
+            "required"
+          ]
+        },
+        "format": {
+          "enum": [
+            "none",
+            "name-ref-sha256-v1"
+          ]
+        },
+        "services": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          }
+        },
+        "shared_services": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]*$"
+            },
+            "minItems": 2
+          }
+        }
+      }
+    },
+    "bootstrap": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(update-server/)?[a-z0-9._-]+\\.sh$"
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "script",
+        "channels",
+        "inputs"
+      ],
+      "properties": {
+        "script": {
+          "type": "string",
+          "pattern": "^ci/prerelease-gate(?:-[a-z0-9_-]+)?\\.sh$"
+        },
+        "channels": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          }
+        },
+        "inputs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "archive",
+              "version",
+              "bundle",
+              "images-lock",
+              "trust-policy",
+              "registry"
+            ]
+          }
+        }
+      }
+    },
+    "migration_metadata": {
+      "enum": [
+        "none",
+        "optional",
+        "required"
+      ]
+    },
+    "rollback_policy": {
+      "enum": [
+        "pointer-only",
+        "backup-restore"
+      ]
+    },
+    "release_layout": {
+      "enum": [
+        "product-version",
+        "version"
+      ]
+    },
+    "steps": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*$"
+      }
+    },
+    "channel_defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "edition",
+        "status"
+      ],
+      "properties": {
+        "edition": {
+          "enum": [
+            "standard",
+            "enterprise"
+          ]
+        },
+        "status": {
+          "enum": [
+            "available"
+          ]
+        }
+      }
+    },
+    "secret_allowlist": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^tests/[a-zA-Z0-9/._-]+$"
+      }
+    },
+    "normalize_identity": {
+      "type": "boolean"
+    },
+    "legacy_empty_bundle": {
+      "type": "boolean"
+    },
+    "legacy_editions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      }
+    },
+    "legacy_empty_channels": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      }
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

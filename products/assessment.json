@@ -1,0 +1,50 @@
+{
+  "code": "assessment",
+  "aliases": [
+    "neosecra-security-health"
+  ],
+  "channels": [
+    "beta",
+    "stable"
+  ],
+  "archive_pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*\\.(tar\\.gz|tgz|tar\\.xz|txz|tar\\.bz2|tbz2|tar\\.zst|tzst|tar)$",
+  "trust_policy": "cosign-spdx-v1",
+  "bundle": {
+    "requirement": "optional",
+    "format": "docker-save-tar"
+  },
+  "images_lock": {
+    "requirement": "none",
+    "format": "none",
+    "services": [],
+    "shared_services": []
+  },
+  "bootstrap": "bootstrap.sh",
+  "gate": {
+    "script": "ci/prerelease-gate.sh",
+    "channels": [
+      "stable"
+    ],
+    "inputs": [
+      "archive",
+      "version",
+      "trust-policy",
+      "registry"
+    ]
+  },
+  "migration_metadata": "none",
+  "rollback_policy": "backup-restore",
+  "release_layout": "version",
+  "steps": [],
+  "channel_defaults": {
+    "edition": "standard",
+    "status": "available"
+  },
+  "secret_allowlist": [],
+  "legacy_editions": [
+    "security-health"
+  ],
+  "legacy_empty_channels": [
+    "beta"
+  ]
+}

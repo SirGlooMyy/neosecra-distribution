@@ -71,17 +71,38 @@ if rg -q 'artifact-verifier\.sh' "${INSTALLER}" && rg -q 'artifact-verifier\.sh'
 else
   fail "both installers provision the artifact verifier helper"
 fi
+HOTSPOT_BOOTSTRAP="${ROOT}/update-server/bootstrap-hotspot.sh"
+HOTSPOT_GATE="${ROOT}/ci/prerelease-gate-hotspot.sh"
+if [[ -f "${HOTSPOT_BOOTSTRAP}" && -x "${HOTSPOT_BOOTSTRAP}" ]] \
+  && bash -n "${HOTSPOT_BOOTSTRAP}" \
+  && ! rg -q '\$En|\$r|\.\$\$\$' "${HOTSPOT_BOOTSTRAP}"; then
+  pass "Hotspot bootstrap syntax and path/atomic placeholders are valid"
+else
+  fail "Hotspot bootstrap syntax and path/atomic placeholders are valid"
+fi
+if rg -q 'bootstrap-hotspot\.sh' "${ROOT}/products/hotspot.json" \
+  && [[ -f "${HOTSPOT_GATE}" && -x "${HOTSPOT_GATE}" ]] \
+  && bash -n "${HOTSPOT_GATE}"; then
+  pass "Hotspot publisher selects its product gate and bootstrap"
+else
+  fail "Hotspot publisher selects its product gate and bootstrap"
+fi
 if [[ -x "${INSTALLER}" && -x "${HOTSPOT_INSTALLER}" ]]; then
   pass "both installers are executable"
 else
   fail "both installers are executable"
 fi
-if rg -q 'UPGRADE_CHANNEL_URL not set; refusing unsigned channel metadata' "${AGENT}"; then
+if rg -q 'UPGRADE_CHANNEL_URL is (not set|not configured); refusing unsigned channel metadata' "${AGENT}"; then
   pass "missing channel URL fails closed"
 else
   fail "missing channel URL fails closed"
 fi
-if rg -q 'HEALTH_CHECK_FAILED' "${HOTSPOT}" && rg -q 'ROLLED_BACK' "${HOTSPOT}" && rg -q 'run_compose.*migrate' "${HOTSPOT}"; then
+if rg -q 'HEALTH_CHECK_FAILED' "${HOTSPOT}" \
+  && rg -q 'ROLLED_BACK' "${HOTSPOT}" \
+  && rg -q 'run_compose.*migrate' "${HOTSPOT}" \
+  && rg -q 'Hotspot downgrade is not permitted' "${HOTSPOT}" \
+  && rg -q 'hotspot-upgrade.transaction.json' "${HOTSPOT}" \
+  && rg -q 'immutable release violation' "${ROOT}/update-server/lib/registry.py"; then
   pass "Hotspot migration/health failure and rollback journal paths are present"
 else
   fail "Hotspot migration/health failure and rollback journal paths are present"

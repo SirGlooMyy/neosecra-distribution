@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+mode="" file="" sig=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -S) mode=sign; shift ;; -V|-Vm) mode=verify; shift ;;
+    -m) file="$2"; shift 2 ;; -x) sig="$2"; shift 2 ;;
+    -s) [[ "$2" == /dev/fd/3 ]] || exit 2; shift 2 ;;
+    -p|-t) shift 2 ;; -q) shift ;; *) echo 'Unexpected Minisign option' >&2; exit 2 ;;
+  esac
+done
+[[ -n "$file" ]] || exit 2
+if [[ "$mode" == sign ]]; then
+  if [[ "${FAIL_SIGN:-}" == channel && "$file" == *.json ]]; then exit 9; fi
+  if [[ "${FAIL_SIGN:-}" == artifact && "$file" != *.json ]]; then exit 9; fi
+  sha256sum "$file" | cut -d' ' -f1 > "$file.minisig"
+else
+  if [[ "${FAIL_VERIFY:-}" == channel && "$file" == *.json && "$file" == *'.publish.'* ]]; then exit 9; fi
+  [[ -f "$sig" && "$(cat "$sig")" == "$(sha256sum "$file" | cut -d' ' -f1)" ]] || exit 9
+fi
