@@ -1,4 +1,92 @@
+## 2026-09-15 Hotspot OFF metadata fix
+
+- Sourcec4d4642 pushed; recovery8 tests/bash-n/diff-check PASS; independent review clear. Verified updater installed with backup, signed POC0.3.76 exit0 and terminal journal OFF/null/zero PASS. Evidence work/no-migration-metadata-20260915.md. Existing unrelated dirty work preserved; this mixed log remains outside scoped commit.
+
 # neosecra-distribution — Operational Checkpoint
+
+## 2026-09-05 — Central update/signing host consolidation
+- `100.117.210.76` is the canonical Update/License/Web host; Caddy, registry,
+  License containers, release tree and signing workspace are present.
+- `/home/neosecra/.local/bin/minisign` **0.12** and the existing signer key
+  remain user-owned (`600`); no new key was generated or exposed.
+- Signed Hotspot `0.3.30` channel/archive/bootstrap verify successfully;
+  public `https://update.neosecra.com` serves `0.3.30` and 16 releases.
+- Fixed publisher Minisign discovery for user-local installs and atomically
+  reconciled source/WWW `hotspot-stable` metadata after a dated backup.
+- Checks: remote `bash -n`, default-PATH publisher dry-run, channel/archive
+  Minisign verification and public HTTPS read-back **passed**. Commit/push **not run**.
+- Hotspot 5651 data/volumes were not touched; the main-screen historical-log
+  visibility issue is a separate UI filter concern and remains open.
+
+## 2026-09-04 — Hotspot live agent reinstall and port map
+- **2026-09-05 — Hotspot installer contract smoke**
+  - Bootstrap heredoc Python blokları `python3 -` biçimine düzeltildi; zorunlu
+    `CLICKHOUSE_PASSWORD` ilk kurulumda üretilip reinstall'da korunuyor.
+  - `tests/test_hotspot_release_contract.py`: **3 geçti**; Git Bash ile
+    bootstrap/install-agent/updater `bash -n`: **başarılı**.
+  - Canlı deploy/kanal/signature değişmedi; müşteri SSH preflight bekliyor.
+
+- Keyring-aware Hotspot installer was updated to provision state-local
+  `HOME`, `XDG_CONFIG_HOME`, `DOCKER_CONFIG` and `BUILDX_CONFIG` paths so
+  Docker Compose builds work under `ProtectHome=true`/`ProtectSystem=full`.
+  Remote `bash -n` passed and the installer was re-run on `100.95.2.21`.
+- Signed Hotspot `0.3.26` retry completed after the first sandbox failure;
+  current/installed/active state is `0.3.26`, health is HTTP 200 with
+  DB/Redis/Celery `ok`, and persistent services remained in place. The updater
+  now writes both `installed-version` and legacy `active-release` atomically.
+- Current reverse-proxy origin map: `assessment.neosecra.com -> 9443`,
+  `license.neosecra.com -> 9446`, `update.neosecra.com -> 9445`,
+  `registry.neosecra.com -> 9447`, `pish.neosecra.com -> 8443`,
+  `soc.neosecra.com -> 9442`, `neosecra.com -> 7443`; `www.update` duplicates
+  update and `www.neosecra` duplicates www. Public update access is standard
+  HTTPS 443; direct public `:9445` is origin-only and timed out.
+- Commit/push: **NOT_RUN**. Next: preserve this installer behavior in the
+  next signed Distribution artifact and use the 443 URL in customer bootstrap.
+
+## 2026-09-04 — Signing workstation setup
+- Installed official `jedisct1.minisign` `0.12` on the current Windows
+  development PC; pinned public key ID `C55D6825451AD013` successfully verified
+  the checked-in Hotspot channel signature.
+- Existing production Minisign private key is still unavailable. No new key,
+  channel, artifact, update host or runtime mutation was created; `0.3.26`
+  promotion remains `BLOCKED/NOT_RUN`.
+- Next: provision the existing signing key through the approved secret path,
+  then run the Hotspot prerelease/publish/agent/health gate.
+
+## 2026-09-04 — Hotspot 0.3.26 promotion preflight
+- Candidate archive is present with SHA-256
+  `3e4d34ff7978dfee408ffa4c8f183da1b436324e826b345a3cb6dd82acb99ea5`;
+  public/remote `hotspot-stable` read-back is signed `0.3.25`.
+- Read-only SSH confirmed update host `100.117.210.76` has no `minisign` binary
+  or approved signing key; Hotspot `100.95.2.21` active pointer remains
+  `/opt/neosecra/hotspot/releases/0.3.25`.
+- Promotion/deploy **BLOCKED/NOT_RUN**. No channel, runtime, volume or data
+  mutation was performed. Next: provision the existing signing key, then run
+  prerelease → sign → publish → agent trigger → health/pointer/journal smoke.
+
+## 2026-09-04 — Unified update operations plan
+- Master plan added at `docs/UNIFIED-UPDATE-OPERATIONS-PLAN.md`; it defines the
+  Distribution-owned install/update/rollback/signing/test/live-pilot contract
+  for Assessment, SOC, PISH, Hotspot, License and Distribution.
+- Document records current evidence separately from target state, including
+  public/remote Hotspot `0.3.25`, unsigned `0.3.26` candidate, SOC attestation
+  blocker, PISH unavailable channel and Assessment channel/runtime drift.
+- Source HEAD: `c29fae4`; documentation-only verification passed with
+  `git diff --check` and nine local Markdown reference checks. No channel,
+  artifact, signature or live runtime changed; commit/push/deploy **NOT_RUN**.
+- Next action: provision the existing Minisign signing key through the approved
+  secret process, then execute the release gate before any promotion.
+
+## 2026-09-04 — Hotspot version metadata forward-fix
+- Bootstrap now writes legacy `VERSION` alongside canonical `PRODUCT_VERSION` so retained installations cannot advertise stale health metadata.
+- Remote `100.117.210.76` bootstrap was updated with a dedicated backup; remote `bash -n` and SHA read-back passed. No channel or signature was changed.
+- Candidate `0.3.26` archive SHA-256 is `3e4d34ff7978dfee408ffa4c8f183da1b436324e826b345a3cb6dd82acb99ea5`; Hotspot gate **PASS**, contract test **3 passed**. Signing private key remains unavailable; publish/deploy **NOT_RUN**.
+
+## 2026-09-04 — Hotspot update contract hardening
+- Bootstrap now performs bounded single-root/version-bound extraction, preserves existing reinstall secrets and refuses unverified Docker installer piping.
+- Hotspot updater rejects downgrades and persists a transaction marker with startup reconciliation for crash recovery. Publisher rejects non-monotonic targets and immutable-version hash replacement.
+- Remote update host `100.117.210.76` received patched publisher/bootstrap/updater/extractor sources after `.live-backup-20260904T-livefix`; source channel was reconciled to the signed WWW channel (`hotspot-stable` `0.3.25`).
+- Verification: Hotspot gate **PASS**, Distribution Hotspot contract **3 passed**, Bash syntax/hash checks **PASS**, monotonic publish negative **PASS**. Broader agent contract **12 passed / 1 failed** on the pre-existing invalid SOC channel signature. Real Minisign signing key is absent; 0.3.26 remains unsigned and unpublished.
 
 ## 2026-09-03 — SOC immutable channel publisher
 
@@ -86,3 +174,22 @@
 - Origin certificate is tracked as `update-server/certs/neosecra-origin.crt`; Caddy and the static test use the matching operator-supplied `neosecra-origin.key` name (private key remains untracked).
 - Full local verification: pytest 58 passed; focused promotion/recovery/trust tests 31 passed; real negative E2E passed; TLS static 12 passed/0 failed/3 skipped; release dry-run `rc=0`; all shell syntax checks passed. `ci/prerelease-gate.sh` correctly failed closed because local `cosign` is unavailable; `shellcheck` is unavailable. Live `.13` status remains `BLOCKED/NOT_RUN` and was not retried.
 - Scoped commit/push: `4adedccf7a46661ccb9b7bfda1702122ddcc73b6` is published on `origin/main`; unrelated scratch/debug/backup files remain untracked and untouched.
+2026-09-15 K01: Hotspot updater restores old env, rebuilds/checks radius, starts from permanent path, retains failed recovery state. 14 focused tests + bash -n passed; GPT-5.6 review. No generic rollback edits. Live .71 acceptance next.
+## 2026-09-28 15:40 +03:00 — Hotspot fresh-host bootstrap candidate
+
+- Source HEAD `898a9a7` plus preserved pre-existing dirty work. `update-server/bootstrap-hotspot.sh` now installs missing signed apt host prerequisites, Docker Engine and Ubuntu 26.04 `docker-compose-v2` (or compatible `docker-compose-plugin`) and verifies daemon access instead of ignoring a failed service start. No channel, publisher or signer was changed.
+- `bash -n` and focused Hotspot bootstrap/release contract tests **11 passed**; initial Windows test run failed only because `python3` resolved to the Windows Store alias, then passed with a temporary local executable shim. `git diff --check` passed. On the clean Ubuntu 26.04 host the required `minisign` and Compose v2 packages were available from apt; Docker/Compose were installed and a staging Hotspot stack started separately.
+- Candidate is **not published** to the update server. User clarified that storage layout must be automatic: the local bootstrap prefers an existing data mount, otherwise can format/mount exactly one signature-free blank disk of at least 500 GB, otherwise uses a root filesystem only if it has at least 900 GB total and 700 GB free. Ambiguous or previously used disks fail closed. `bash -n` and 12 focused tests passed; physical blank-disk formatting has **not** been tested on a disposable dual-disk VM. A signed Hotspot release and independent backup/restore acceptance remain open; the update server's active script has not been replaced.
+## 2026-09-28 16:38 +03:00 — Hotspot automatic storage selection
+
+- Source HEAD `898a9a7` plus preserved dirty work. Bootstrap now auto-selects an existing mounted data volume, one provably blank >=500 GB disk, or a >=900 GB root with >=700 GB free. Customers need not select `sda`/`sdb` or layout.
+- An unmounted disk carrying a filesystem/signature, multiple blank candidates, missing expected mount, or undersized root stops the install before formatting. Focused bootstrap tests `19 passed`; Bash syntax and diff check passed. No disk on the new host was formatted by this change.
+- Source is uncommitted and unpublished. Disposable dual-disk acceptance, signed channel release, external backup UI/full restore and customer install remain open.
+status: `HOTSPOT_SIGNED_CANDIDATE_0.3.113_INSTALLED`
+verified_at: `2026-09-28 20:20 +03:00`
+source_head: `0d952c93513cdb13bd854854dc528a418c218f29`
+
+- Candidate archive SHA-256 `f5ec058a41815d2dcb35244747558cd9846dfc7d7f8bad9a713e2e57dfcbf164`, migration off; channel/archive/bootstrap Minisign verified and source/WWW channel synchronized. `hotspot-candidate` is 0.3.113; `hotspot-stable` remains 0.3.108. Installed pointer on `192.168.2.135` is 0.3.113 with healthy dependencies and Admin/Portal HTTP 200.
+- IP-only bootstrap and recovery fixes: `da02a77`, `b19a6df`, `9b6025f`, `58a61c6`; signed channel record `0d952c9`. Installer focused tests 22 passed for IP-only contract and 11 passed after final recovery fix; archive gate and Bash syntax passed. Unrelated pre-existing dirty Distribution files were not staged.
+- Remaining: authenticated onboarding, backup/restore, real portal FQDN/ACME, SMS delivery and physical NAS acceptance. No stable promotion or old POC mutation.
+
