@@ -1129,6 +1129,39 @@ PY
     fi
   fi
 
+  # Resolve policy from the canonical registry, or the already authenticated
+  # package manifest on installed trees that do not carry the registry.
+  # Missing, unknown or conflicting policies never authorize a fallback.
+  local trust_policy manifest_policy registry_file
+  manifest_policy="$(manifest_field trust_policy "${MANIFEST_FILE}")"
+  registry_file="${UPGRADE_SCRIPT_DIR}/../../../products/${expected_product}.json"
+  if [[ -e "$registry_file" || -L "$registry_file" ]]; then
+    [[ -f "$registry_file" && ! -L "$registry_file" ]] || die "SECURITY VIOLATION: Unsafe product trust policy" 4
+    trust_policy="$(python3 - "$registry_file" "$expected_product" <<'PY'
+import json, sys
+def unique(pairs):
+    data = {}
+    for key, value in pairs:
+        if key in data:
+            raise ValueError("Duplicate product registry field")
+        data[key] = value
+    return data
+with open(sys.argv[1], encoding="utf-8") as stream:
+    registry = json.load(stream, object_pairs_hook=unique)
+if registry.get("code") != sys.argv[2]:
+    raise SystemExit("Product registry identity mismatch")
+print(registry["trust_policy"])
+PY
+    )" || die "SECURITY VIOLATION: Invalid product trust policy" 4
+    [[ -z "$manifest_policy" || "$manifest_policy" == "$trust_policy" ]] || die "SECURITY VIOLATION: Manifest/registry trust policy mismatch" 4
+  else
+    trust_policy="$manifest_policy"
+  fi
+  case "$trust_policy" in
+    minisign-package-v1|cosign-spdx-v1) ;;
+    *) die "SECURITY VIOLATION: Missing or unsupported product trust policy" 4 ;;
+  esac
+
   # Backup env file for atomic rollback if verification fails mid-way
   cp -a "$ENV_FILE" "${ENV_FILE}.bak"
 
@@ -1139,17 +1172,19 @@ PY
          log "$action $arg1 $arg2 $arg3 $arg4 $arg5"
      elif [[ "$action" == "ENFORCE" ]]; then
          local service="$arg1" image_ref="$arg2" expected_digest="$arg3"
-         if [[ ! -f "$pubkey" && ! -d "$pubkey" ]]; then
-           success=0; break
-         fi
-         if ! command -v cosign >/dev/null 2>&1; then
-           success=0; break
-         fi
-         if ! verify_image_signature "$image_ref" "$expected_digest" "$pubkey"; then
+         if [[ "$trust_policy" == "cosign-spdx-v1" ]]; then
+           if [[ ! -f "$pubkey" && ! -d "$pubkey" ]]; then
              success=0; break
-         fi
-         if ! verify_image_attestation "$image_ref" "$expected_digest" "$pubkey"; then
+           fi
+           if ! command -v cosign >/dev/null 2>&1; then
              success=0; break
+           fi
+           if ! verify_image_signature "$image_ref" "$expected_digest" "$pubkey"; then
+               success=0; break
+           fi
+           if ! verify_image_attestation "$image_ref" "$expected_digest" "$pubkey"; then
+               success=0; break
+           fi
          fi
          
          # local digest check
@@ -1168,17 +1203,19 @@ PY
          
      elif [[ "$action" == "DEPENDENCY" ]]; then
          local service="$arg1" image_ref="$arg2" expected_digest="$arg3"
-         if [[ ! -f "$pubkey" && ! -d "$pubkey" ]]; then
-           success=0; break
-         fi
-         if ! command -v cosign >/dev/null 2>&1; then
-           success=0; break
-         fi
-         if ! verify_image_signature "$image_ref" "$expected_digest" "$pubkey"; then
+         if [[ "$trust_policy" == "cosign-spdx-v1" ]]; then
+           if [[ ! -f "$pubkey" && ! -d "$pubkey" ]]; then
              success=0; break
-         fi
-         if ! verify_image_attestation "$image_ref" "$expected_digest" "$pubkey"; then
+           fi
+           if ! command -v cosign >/dev/null 2>&1; then
              success=0; break
+           fi
+           if ! verify_image_signature "$image_ref" "$expected_digest" "$pubkey"; then
+               success=0; break
+           fi
+           if ! verify_image_attestation "$image_ref" "$expected_digest" "$pubkey"; then
+               success=0; break
+           fi
          fi
          local local_digest
          if [[ "$require_local_digest" == "1" ]]; then

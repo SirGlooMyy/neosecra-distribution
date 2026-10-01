@@ -8,7 +8,7 @@
     "stable"
   ],
   "archive_pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*\\.(tar\\.gz|tgz|tar\\.xz|txz|tar\\.bz2|tbz2|tar\\.zst|tzst|tar)$",
-  "trust_policy": "cosign-spdx-v1",
+  "trust_policy": "minisign-package-v1",
   "bundle": {
     "requirement": "optional",
     "format": "docker-save-tar"

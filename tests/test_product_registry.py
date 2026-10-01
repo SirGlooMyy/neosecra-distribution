@@ -15,6 +15,14 @@ def test_canonical_records_match_schema(product):
     data=read_json(ROOT/'products'/(product+'.json'))
     jsonschema.validate(data,schema)
     assert load_registry(ROOT,product)==data
+    assert data['trust_policy']=='minisign-package-v1'
+
+@pytest.mark.parametrize('product',['assessment','pish'])
+def test_minisign_policy_preserves_existing_package_contract(product):
+    data=load_registry(ROOT,product)
+    assert data['bundle']=={'requirement':'optional','format':'docker-save-tar'}
+    assert data['images_lock']=={'requirement':'none','format':'none','services':[],'shared_services':[]}
+    assert data['channel_defaults']['status']=='available'
 
 def test_existing_channels_pass_unchanged():
     for path in (ROOT/'channels').glob('*.json'):
@@ -47,6 +55,7 @@ def test_unknown_step_and_free_command_rejected(tmp_path):
 
 def test_fixture_product_needs_only_registration(tmp_path):
     p=Publisher(tmp_path);p.register_fixture();before=p.snapshot()
+    (p.bin/'cosign').unlink()
     result=p.run(dry=True,remote=True)
     assert result.returncode==0,result.stdout+result.stderr
     assert p.snapshot()==before
@@ -56,6 +65,7 @@ def test_fixture_product_needs_only_registration(tmp_path):
     assert data['current_version']=='1.0.1'
     assert data['releases'][0]['bootstrap'] is None
     assert (p.www/'releases/fixtureprod/1.0.1/fixtureprod-1.0.1.tar.gz').is_file()
+    assert (p.www/'channels/fixtureprod-stable.json.minisig').is_file()
 
 def test_registry_channel_list_is_dynamic(tmp_path):
     p=Publisher(tmp_path);p.register_fixture()

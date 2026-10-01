@@ -8,7 +8,7 @@ set -Eeuo pipefail
 umask 077
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-ARCHIVE="" VERSION="" TRUST_POLICY="cosign-spdx-v1" REGISTRY=""
+ARCHIVE="" VERSION="" TRUST_POLICY="minisign-package-v1" REGISTRY=""
 while [[ $# -gt 0 ]]; do
   [[ $# -ge 2 ]] || { echo "Gate option requires a value" >&2; exit 2; }
   case "$1" in
@@ -17,15 +17,18 @@ while [[ $# -gt 0 ]]; do
   esac
   shift 2
 done
+[[ "$TRUST_POLICY" == "cosign-spdx-v1" || "$TRUST_POLICY" == "minisign-package-v1" ]] || { echo "Unsupported trust policy" >&2; exit 2; }
 if [[ -n "$ARCHIVE" || -n "$VERSION" ]]; then
   [[ -f "$ARCHIVE" && ! -L "$ARCHIVE" && "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid gate artifact/version" >&2; exit 2; }
-  [[ "$TRUST_POLICY" == "cosign-spdx-v1" || "$TRUST_POLICY" == "minisign-package-v1" ]] || { echo "Unsupported trust policy" >&2; exit 2; }
-  python3 - "$ROOT" "$ARCHIVE" "$REGISTRY" <<'PY'
+  python3 - "$ROOT" "$ARCHIVE" "$REGISTRY" "$TRUST_POLICY" <<'PY'
 import sys
 sys.path.insert(0,sys.argv[1]+'/update-server/lib')
 from archive import inspect
 from registry import read_json
-allowlist=read_json(sys.argv[3])["secret_allowlist"] if sys.argv[3] else []
+reg=read_json(sys.argv[3]) if sys.argv[3] else None
+if reg is not None and reg['trust_policy'] != sys.argv[4]:
+    raise SystemExit('Gate trust policy differs from registry')
+allowlist=reg["secret_allowlist"] if reg is not None else []
 inspect(sys.argv[2],allowlist)
 PY
 fi
@@ -38,7 +41,7 @@ echo "============================================================"
 echo "[GATE] Checking mandatory security and build tools..."
 MISSING_TOOLS=0
 GATE_TOOLS=(python3 pytest minisign docker)
-if [[ -z "$ARCHIVE" || "$TRUST_POLICY" == "cosign-spdx-v1" ]]; then GATE_TOOLS+=(cosign); fi
+if [[ "$TRUST_POLICY" == "cosign-spdx-v1" ]]; then GATE_TOOLS+=(cosign); fi
 for tool in "${GATE_TOOLS[@]}"; do
   if [[ "$tool" == minisign && -n "${MINISIGN_BIN:-}" && -x "$MINISIGN_BIN" ]]; then continue; fi
   if ! command -v "$tool" >/dev/null 2>&1; then

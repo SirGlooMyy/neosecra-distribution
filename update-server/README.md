@@ -222,6 +222,11 @@ unsigned publication or activation; the publisher still requires signed pairs.
 
 ### Publication and trust
 
+All four canonical product records (Assessment, PISH, SOC and Hotspot) use
+`minisign-package-v1`. Minisign is the active trust path; neither Cosign nor
+Syft is a prerequisite for this policy. Product-specific bundle, images-lock,
+migration and attestation requirements remain unchanged.
+
 The publisher takes exclusive source/WWW locks, snapshots and verifies existing
 channel pairs, stages original filenames in an owner-only directory, inspects
 archives, executes declared transformations, and passes the final archive to the
@@ -229,8 +234,11 @@ registered gate on its declared promotion channels. A gate cannot mutate the
 release inputs. The generic gate accepts `--archive`, `--version` and
 `--trust-policy` and optional `--registry` while retaining its parameterless repository-test mode. Its
 artifact mode inspects the supplied archive and still requires repository tests;
-product-specific artifact/attestation gates retain their existing checks. In
-Cosign/SPDX artifact mode, the actual package must contain a version/product-bound
+product-specific artifact/attestation gates retain their existing checks. The
+parameterless generic gate defaults to Minisign; an explicit policy must match
+the supplied registry. Cosign/SPDX is an **optional future upgrade**, retained
+in the implementation and negative tests but selected by no canonical record.
+In that artifact mode, the actual package must contain a version/product-bound
 release manifest, immutable images (or an exact packaged lock) and SPDX-2.3 SBOMs.
 Every image signature and the existing customer attestation predicate are verified
 with the root-owned, non-writable public trust root `/etc/neosecra/certs/cosign.pub`.
@@ -245,6 +253,18 @@ method must exactly match the registry. A receipt must bind the **final** archiv
 bundle and images lock. `soc-bundle-lock.py` retains its standalone CLI for
 preparing that final archive before the root-pinned preflight. Gzip transformation
 is deterministic; an already correct bundle lock/checksum package is retained.
+
+The generic upgrade image-enforcement step resolves `trust_policy` from the
+canonical `products/<product>.json` next to the original Distribution source
+tree. Installed trees without that registry must carry an explicit top-level
+`trust_policy: minisign-package-v1` in the authenticated package's
+`release-manifest.yaml`. Missing, unsupported or conflicting policies fail
+closed. Both policies retain signed channel/package verification, exact Compose
+service/dependency mapping, local image digest checks and immutable pinning.
+Only `cosign-spdx-v1` additionally requires per-image Cosign signatures and
+attestations. Existing installers or package producers that omit both the
+registry and manifest policy must supply that metadata before generic apply;
+publisher dry-run alone does not establish installability.
 
 The POSIX signer receives the existing private key through an inherited read-only
 file descriptor (`/dev/fd/3`), scoped to the signing subprocess. No key pathname,

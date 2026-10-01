@@ -3,11 +3,12 @@ import importlib
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 import sys
 import tarfile
 import pytest
-from fixtures.publisher import ROOT, Publisher, package, migration_off, fake_signature
+from fixtures.publisher import ROOT, Publisher, package, migration_off, fake_signature, posix
 from test_soc_publish_contract import _lock, _write_bundle, _write_package
 
 sys.path.insert(0,str(ROOT/'update-server/lib'))
@@ -171,9 +172,122 @@ def test_anti_rollback_and_immutable_version_are_preserved(tmp_path,version):
 
 def test_required_trust_tool_has_no_fallback(tmp_path):
     p=Publisher(tmp_path,stub_gates=True)
+    path=p.root/'products/pish.json';reg=json.loads(path.read_text())
+    reg['trust_policy']='cosign-spdx-v1';path.write_text(json.dumps(reg))
     (p.bin/'cosign').unlink()
     result=p.run(product='pish')
     assert result.returncode!=0 and 'cosign is required' in result.stderr
+
+
+def without_image_trust_tools(p):
+    (p.bin/'cosign').unlink()
+    probe=p.tmp/'no-image-trust-tools.sh'
+    probe.write_text('#!/usr/bin/env bash\n! command -v cosign && ! command -v syft\n',encoding='utf-8')
+    success(p.shell([posix(probe)]))
+
+
+@pytest.mark.parametrize('product',['assessment','pish'])
+@pytest.mark.parametrize('dry',[True,False])
+def test_minisign_publisher_needs_no_cosign_or_syft(tmp_path,product,dry):
+    p=Publisher(tmp_path);without_image_trust_tools(p);before=p.snapshot()
+    # Exercise the actual generic gate with only its repository pytest runner stubbed.
+    result=p.run(product=product,dry=dry);success(result)
+    if dry:
+        assert 'trust=minisign-package-v1' in result.stdout
+        assert p.snapshot()==before
+    else:
+        channel=p.www/'channels'/(product+'-stable.json')
+        archive=p.www/'releases'/('1.0.1' if product=='assessment' else 'pish/1.0.1')/(product+'-1.0.1.tar.gz')
+        for path in (channel,archive):
+            assert Path(str(path)+'.minisig').read_text().strip()==hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize('policy,expected',[(None,0),('minisign-package-v1',0),('cosign-spdx-v1',1),('unknown',2)])
+def test_generic_gate_tools_follow_policy_without_archive(tmp_path,policy,expected):
+    p=Publisher(tmp_path);without_image_trust_tools(p)
+    args=[posix(p.root/'ci/prerelease-gate.sh')]
+    if policy: args+=['--trust-policy',policy]
+    result=p.shell(args)
+    assert result.returncode==expected,result.stdout+result.stderr
+    if policy=='cosign-spdx-v1': assert 'Missing mandatory tool: cosign' in result.stdout
+
+
+def test_generic_gate_rejects_policy_registry_disagreement(tmp_path):
+    p=Publisher(tmp_path);without_image_trust_tools(p)
+    archive=package(tmp_path/'pish-1.0.1.tar.gz')
+    result=p.shell([posix(p.root/'ci/prerelease-gate.sh'),'--archive',posix(archive),'--version','1.0.1',
+                    '--registry',posix(p.root/'products/pish.json'),'--trust-policy','cosign-spdx-v1'])
+    assert result.returncode!=0 and 'Gate trust policy differs from registry' in result.stderr
+
+
+@pytest.mark.parametrize('product',['assessment','pish'])
+@pytest.mark.parametrize('failure',[None,'manifest-only','registry-only','digest','dependency-digest','mapping','channel-signature','archive-signature','missing-policy','unknown-policy','cosign','policy-conflict'])
+def test_generic_apply_minisign_keeps_signature_mapping_and_digest_checks(tmp_path,product,failure):
+    p=Publisher(tmp_path);without_image_trust_tools(p)
+    (p.root/'deployment/v1/upgrade').mkdir(parents=True)
+    runtime=tmp_path/'runtime'
+    for relative in ('agent/artifact-verifier.sh','upgrade/verify_mapping.py'):
+        target=runtime/relative;target.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(ROOT/'deployment/v1'/relative,target)
+    digest='sha256:'+'a'*64;dependency_digest='sha256:'+'b'*64
+    images={'backend':{'reference':'reg/backend:1.0.1','digest':digest}}
+    dependencies={'redis':{'reference':'reg/redis:1.0.1','digest':dependency_digest}}
+    channel={'channel':product+'-stable','product':product,'product_code':product,'edition':'standard',
+             'status':'available','updated':'2026-09-30T00:00:00Z','current_version':'1.0.1',
+             'releases':[{'version':'1.0.1','images':images,'dependencies':dependencies}]}
+    compose={'services':{name:{'image':meta['reference']+'@'+meta['digest']} for name,meta in {**images,**dependencies}.items()}}
+    if failure=='mapping': compose['services']['backend']['image']='reg/wrong@'+digest
+    manifest=runtime/'release-manifest.yaml'
+    policy='cosign-spdx-v1' if failure in ('cosign','policy-conflict') else 'unknown' if failure=='unknown-policy' else 'minisign-package-v1'
+    manifest.write_text('product: '+product+'\nversion: 1.0.1\n'+('' if failure in ('missing-policy','registry-only') else 'trust_policy: '+policy+'\n'),encoding='utf-8',newline='\n')
+    archive=package(tmp_path/'release.tar.gz',{'release-manifest.yaml':manifest.read_bytes()});fake_signature(archive)
+    channel['releases'][0]['archive']={'sha256':hashlib.sha256(archive.read_bytes()).hexdigest()}
+    signed_channel=tmp_path/'channel.json';signed_channel.write_text(json.dumps(channel),encoding='utf-8');fake_signature(signed_channel)
+    if failure in ('channel-signature','archive-signature'):
+        Path(str(signed_channel if failure=='channel-signature' else archive)+'.minisig').write_text('invalid\n',encoding='utf-8')
+    if failure not in (None,'registry-only','digest','dependency-digest','mapping','channel-signature','archive-signature','policy-conflict'):
+        (p.root/'products'/(product+'.json')).unlink()
+    state=tmp_path/'pin-state.txt';state.write_text('original\n',encoding='utf-8')
+    docker=p.bin/'docker'
+    docker.write_text('#!/usr/bin/env bash\n[[ "$1" == inspect ]] || exit 1\nif [[ "${@: -1}" == reg/redis:* ]]; then echo "$DEPENDENCY_DIGEST"; else echo "$LOCAL_DIGEST"; fi\n',encoding='utf-8',newline='\n')
+    upgrade=(ROOT/'deployment/v1/upgrade/upgrade.sh').read_text(encoding='utf-8')
+    function='enforce_image_security() {'+upgrade.split('enforce_image_security() {',1)[1].split('\n}\n',1)[0]+'\n}\n'
+    script=tmp_path/'apply.sh'
+    # Match Linux line-oriented helper output when the real interpreter is Windows Python.
+    python_output='python3() { command python3 "$@" | tr -d "\\r"; }\n' if os.name=='nt' else ''
+    script.write_text('''#!/usr/bin/env bash
+set -Eeuo pipefail
+source "$MANIFEST_LIB"
+source "$V1_ROOT/agent/artifact-verifier.sh"
+die() { echo "$1" >&2; exit "${2:-4}"; }
+log() { :; }
+ok() { echo "$*"; }
+run_compose() { printf '%s\\n' "$COMPOSE_JSON"; }
+upsert_env_value_atomic() { printf '%s=%s\\n' "$1" "$2" >> "$ENV_FILE"; }
+verify_minisign_file "$TEST_CHANNEL" "$TEST_CHANNEL.minisig" "$TEST_PUBLIC_KEY" || die 'Channel signature failure' 4
+verify_minisign_file "$TEST_ARCHIVE" "$TEST_ARCHIVE.minisig" "$TEST_PUBLIC_KEY" || die 'Archive signature failure' 4
+'''+python_output+function+'enforce_image_security 1\n',encoding='utf-8',newline='\n')
+    result=p.shell([posix(script)],V1_ROOT=posix(runtime),UPGRADE_SCRIPT_DIR=posix(p.root/'deployment/v1/upgrade'),
+                   RECOVERY_ROOT=posix(runtime),MANIFEST_FILE=posix(manifest),MANIFEST_LIB=posix(ROOT/'deployment/v1/lib/manifest.sh'),
+                   ENV_FILE=posix(state),CHANNEL_JSON=json.dumps(channel),TARGET='1.0.1',NEOSECRA_PRODUCT=product,
+                   COMPOSE_JSON=json.dumps(compose),LOCAL_DIGEST='sha256:'+'c'*64 if failure=='digest' else digest,
+                   DEPENDENCY_DIGEST='sha256:'+'c'*64 if failure=='dependency-digest' else dependency_digest,
+                   TEST_CHANNEL=posix(signed_channel),TEST_ARCHIVE=posix(archive),
+                   TEST_PUBLIC_KEY=posix(p.root/'public-keys/fixture.pub'))
+    if failure not in (None,'manifest-only','registry-only'):
+        assert result.returncode==4,result.stdout+result.stderr
+        needle={'digest':'Enforcement checks failed','dependency-digest':'Enforcement checks failed',
+                'mapping':'Image mapping failure','channel-signature':'Channel signature failure',
+                'archive-signature':'Archive signature failure','missing-policy':'Missing or unsupported product trust policy',
+                'unknown-policy':'Missing or unsupported product trust policy','cosign':'Enforcement checks failed',
+                'policy-conflict':'Manifest/registry trust policy mismatch'}[failure]
+        assert needle in result.stderr,result.stdout+result.stderr
+        assert state.read_text()=='original\n'
+    else:
+        success(result)
+        assert 'BACKEND_IMAGE=reg/backend:1.0.1@'+digest in state.read_text()
+        assert 'REDIS_IMAGE=reg/redis:1.0.1@'+dependency_digest in state.read_text()
+
 
 def test_source_drift_blocks_before_activation(tmp_path):
     p=Publisher(tmp_path);p.register_fixture();source=p.seed()
