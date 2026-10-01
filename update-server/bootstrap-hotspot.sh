@@ -535,7 +535,10 @@ with tarfile.open(archive, "r:gz") as bundle:
     markers = [m for m in members if m.name == archive_root + "/VERSION" and m.isfile()]
     if len(markers) != 1 or markers[0].size > 256:
         fail("Hotspot archive VERSION declaration missing or oversized")
-    if bundle.extractfile(markers[0]).read().decode("utf-8").strip() != target_version:
+    version_bytes = bundle.extractfile(markers[0]).read()
+    if not re.fullmatch(rb"[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9]+)*(?:\r?\n)?", version_bytes):
+        fail("Hotspot archive VERSION declaration invalid")
+    if version_bytes.rstrip(b"\r\n").decode("ascii") != target_version:
         fail("Hotspot archive VERSION does not match signed channel")
     print("Archive preflight passed; extracting verified payload", flush=True)
     for member in members:

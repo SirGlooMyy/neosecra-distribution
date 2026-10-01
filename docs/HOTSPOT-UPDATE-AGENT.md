@@ -42,6 +42,12 @@ and an edition of `standard` or `enterprise`. Every release needs:
 * a source archive containing `docker-compose.yml`, `backend/.env.example`,
   `backend/`, `frontend/admin/`, and `frontend/portal/`.
 
+Write `VERSION` at the package root, alongside `docker-compose.yml`. It must
+contain exactly one version matching the signed channel and the gate's
+`--version`: `^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$`. An optional final
+newline (LF or CRLF) is accepted; whitespace and extra lines are rejected.
+Both the prerelease gate and bootstrap reject missing or mismatched declarations.
+
 The checked-in channel is `unavailable` until a signed Hotspot artifact is
 published. This prevents the UI from advertising an unverified or Assessment
 artifact. Runtime compatibility aliases such as `neosecra-hotspot` are accepted

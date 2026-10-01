@@ -24,11 +24,17 @@ def inspect(path, allowlist=(), docker=False):
             if not (member.isfile() or member.isdir()): raise ValueError('unsafe archive link or special entry')
             if not member.isfile(): continue
             base=pure.name.lower()
+            example=base.endswith(('.example','.sample','.template','.dist'))
             secret=any(fnmatch.fnmatchcase(base,p) for p in ('*.key','*.pem','*.p12','*.pfx','*.jks','id_rsa*','id_ed25519*','.env'))
-            secret=secret or (base.startswith('.env.') and base not in ('.env.example','.env.sample','.env.template'))
+            secret=(secret or base.startswith('.env.')) and not example
             relative='/'.join(pure.parts[1:]) if len(pure.parts)>1 else normalized
             allowed=normalized in allowlist or relative in allowlist
             if secret and not allowed: raise ValueError('archive contains secret-looking file: '+normalized)
+            if example:
+                with archive.extractfile(member) as source:
+                    content=source.read()
+                if b'PRIVATE KEY' in content or re.search(rb'''=[ \t]*["']?[A-Za-z0-9+/]{20,}={0,2}(?=["' \t\r\n#]|$)''',content):
+                    raise ValueError('archive contains secret-looking content: '+normalized)
             if pure.name=='manifest.json': manifest=True
     if docker and not manifest: raise ValueError('Docker bundle lacks manifest.json')
 

@@ -26,7 +26,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid Hotspot version" >&2; exit 2; }
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$ ]] || { echo "Invalid Hotspot version" >&2; exit 2; }
 [[ -f "$ARCHIVE" && ! -L "$ARCHIVE" && -s "$ARCHIVE" ]] || { echo "Hotspot archive is missing" >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 2; }
 
@@ -40,6 +40,22 @@ trap 'rm -rf -- "$TMP_DIR"' EXIT
 python3 "$EXTRACTOR" hotspot "$ARCHIVE" "$TMP_DIR/extract" "$VERSION"
 PAYLOAD="$(find "$TMP_DIR/extract" -mindepth 1 -maxdepth 1 -type d -print -quit)"
 [[ -n "$PAYLOAD" ]] || { echo "Hotspot archive payload root is missing" >&2; exit 4; }
+
+[[ -f "$PAYLOAD/VERSION" && ! -L "$PAYLOAD/VERSION" ]] || { echo "Hotspot archive VERSION declaration missing" >&2; exit 4; }
+python3 - "$PAYLOAD/VERSION" "$VERSION" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+marker = Path(sys.argv[1])
+if marker.stat().st_size > 256:
+    raise SystemExit("Hotspot archive VERSION declaration oversized")
+version_bytes = marker.read_bytes()
+if not re.fullmatch(rb"[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9]+)*(?:\r?\n)?", version_bytes):
+    raise SystemExit("Hotspot archive VERSION declaration invalid")
+if version_bytes.rstrip(b"\r\n").decode("ascii") != sys.argv[2]:
+    raise SystemExit("Hotspot archive VERSION does not match target version")
+PY
 
 required_files=(
   docker-compose.yml
