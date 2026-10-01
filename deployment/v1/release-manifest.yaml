@@ -10,6 +10,7 @@ product: neosecra-security-health
 edition: security-health
 version: 1.3.44
 channel: stable
+trust_policy: minisign-package-v1
 
 # Git commit — stamped at release time by CI.
 build_commit: f461530

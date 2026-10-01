@@ -1155,6 +1155,7 @@ PY
     )" || die "SECURITY VIOLATION: Invalid product trust policy" 4
     [[ -z "$manifest_policy" || "$manifest_policy" == "$trust_policy" ]] || die "SECURITY VIOLATION: Manifest/registry trust policy mismatch" 4
   else
+    [[ -n "$manifest_policy" ]] || die "SECURITY VIOLATION: Missing or unsupported product trust policy: Missing trust_policy in release-manifest.yaml and no product registry is installed. The legacy manifest cannot authorize an upgrade; obtain a newly signed release package with an explicit trust_policy matching products/<product>.json (minisign-package-v1 or cosign-spdx-v1). Do not edit the installed signed manifest." 4
     trust_policy="$manifest_policy"
   fi
   case "$trust_policy" in

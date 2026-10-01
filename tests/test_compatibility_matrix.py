@@ -3,9 +3,12 @@ import json
 import os
 import jsonschema
 import copy
+import shlex
+import subprocess
 from pathlib import Path
 
 import yaml
+from fixtures.publisher import BASH, posix
 
 def test_release_manifest_compatibility_matrix():
     v1_root = os.path.join(os.path.dirname(__file__), "../deployment/v1")
@@ -18,6 +21,7 @@ def test_release_manifest_compatibility_matrix():
         "product": "assessment",
         "edition": "standard",
         "version": "1.0.0",
+        "trust_policy": "minisign-package-v1",
         "release_channel": "stable",
         "git_commit": "abcdef1234567",
         "build_date": "2026-08-31T00:00:00Z",
@@ -122,3 +126,67 @@ def test_pointer_policy_requires_safe_migrations(release_policy_manifests):
         invalid["upgrade"].update(change)
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(invalid, schema)
+
+
+@pytest.mark.parametrize("policy", ["minisign-package-v1", "cosign-spdx-v1"])
+def test_explicit_trust_policies_pass_schema(release_policy_manifests, policy):
+    schema, backup, _ = release_policy_manifests
+    backup["trust_policy"] = policy
+    jsonschema.validate(backup, schema)
+
+
+@pytest.mark.parametrize("policy", [None, "fallback", "", 1])
+def test_missing_or_invalid_trust_policy_fails_schema(release_policy_manifests, policy):
+    schema, backup, _ = release_policy_manifests
+    if policy is None:
+        del backup["trust_policy"]
+    else:
+        backup["trust_policy"] = policy
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(backup, schema)
+
+
+@pytest.mark.parametrize("policy", [None, "minisign-package-v1", "cosign-spdx-v1", "fallback"])
+def test_upgrade_manifest_policy_without_registry(tmp_path, policy):
+    if not BASH or not Path(BASH).is_file():
+        pytest.skip("Git Bash/bash is unavailable")
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "deployment/v1/upgrade/upgrade.sh").read_text(encoding="utf-8")
+    function = "enforce_image_security() {\n" + source.split("enforce_image_security() {\n", 1)[1].split("\n# Every Compose service", 1)[0]
+    runtime = tmp_path / "customer/deployment/v1"
+    (runtime / "agent").mkdir(parents=True)
+    (runtime / "upgrade").mkdir()
+    (runtime / "agent/artifact-verifier.sh").write_text("# fixture\n", encoding="utf-8", newline="\n")
+    manifest = runtime / "release-manifest.yaml"
+    manifest.write_text("version: 1.0.0\n" + ("" if policy is None else "trust_policy: " + policy + "\n"), encoding="utf-8", newline="\n")
+    env_file = tmp_path / "fixture-env"
+    env_file.write_bytes(b"fixture-unchanged\n")
+    script = "\n".join([
+        "set -euo pipefail",
+        "source " + shlex.quote(posix(root / "deployment/v1/lib/manifest.sh")),
+        "V1_ROOT=" + shlex.quote(posix(runtime)),
+        'UPGRADE_SCRIPT_DIR="$V1_ROOT/upgrade"; RECOVERY_ROOT="$V1_ROOT"',
+        "MANIFEST_FILE=" + shlex.quote(posix(manifest)),
+        "ENV_FILE=" + shlex.quote(posix(env_file)),
+        "NEOSECRA_PRODUCT=assessment; NEOSECRA_EXPECTED_CHANNEL=assessment-stable; CHANNEL_URL=; CHANNEL_JSON=; TARGET=1.0.0",
+        "NEOSECRA_REQUIRE_PLATFORM_MANIFEST=0; NEOSECRA_PLATFORM_MANIFEST=; NEOSECRA_COSIGN_PUBKEY=",
+        'die() { echo "$1" >&2; exit "${2:-1}"; }',
+        "ok() { :; }; run_compose() { echo '{}'; }",
+        # Only mapping/host commands are doubled; execute the real policy gate.
+        'python3() { [[ "$1" == "$V1_ROOT/upgrade/verify_mapping.py" ]]; }',
+        function, "enforce_image_security 0",
+    ])
+    result = subprocess.run([str(BASH), "--noprofile", "--norc", "-s"], input=script, capture_output=True, text=True, timeout=30)
+    assert env_file.read_bytes() == b"fixture-unchanged\n"
+    assert not Path(str(env_file) + ".bak").exists()
+    if policy is None:
+        assert result.returncode == 4, result.stdout + result.stderr
+        assert "Missing trust_policy in release-manifest.yaml" in result.stderr
+        assert "no product registry is installed" in result.stderr
+        assert "obtain a newly signed release package" in result.stderr
+        assert "Do not edit the installed signed manifest" in result.stderr
+    elif policy == "fallback":
+        assert result.returncode == 4
+        assert "unsupported product trust policy" in result.stderr
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr

@@ -266,6 +266,18 @@ attestations. Existing installers or package producers that omit both the
 registry and manifest policy must supply that metadata before generic apply;
 publisher dry-run alone does not establish installability.
 
+Every new release manifest must declare the schema-required top-level
+`trust_policy: minisign-package-v1` (or `cosign-spdx-v1` for a product registered
+with that policy). YAML uses a single-line scalar; JSON manifests use the same
+field. If an archive contains a release manifest, publication requires exactly
+one manifest whose policy matches `products/<product>.json`, both before and
+after registered archive transformations, including dry-run and ungated channels.
+Missing, duplicate, unsupported or mismatched policies stop publication before
+signing/activation. Archives without a manifest retain their existing contract.
+An old manifest without this field still fails closed on a customer host without
+the registry: obtain a newly signed package carrying the registered policy;
+never edit the installed signed manifest to bypass the error.
+
 The POSIX signer receives the existing private key through an inherited read-only
 file descriptor (`/dev/fd/3`), scoped to the signing subprocess. No key pathname,
 key contents or password is passed to Minisign as a command-line value; no key

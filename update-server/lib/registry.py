@@ -127,6 +127,40 @@ def monotonic(data, version, digest):
     if data.get('current_version') and target <= tuple(map(int,data['current_version'].split('.'))):
         fail('publish target is not newer than current_version')
 
+def validate_manifest_trust(path, reg):
+    # Lazy import: bundle_lock also uses registry helpers. No YAML dependency
+    # is needed for the canonical top-level, single-line policy scalar.
+    from bundle_lock import TarReader
+    manifests = []
+    with TarReader(Path(path)) as stream:
+        for member in stream.getmembers():
+            if Path(member.name).name not in ('release-manifest.yaml','release-manifest.json'): continue
+            if not member.isfile() or member.size > 1024 * 1024:
+                fail('missing or unsafe release manifest trust_policy')
+            manifests.append(member)
+        if len(manifests) > 1: fail('ambiguous release manifest trust_policy: multiple manifests')
+        if not manifests: return
+        member = manifests[0]
+        with stream.extractfile(member) as source:
+            text = source.read().decode('utf-8')
+        if member.name.endswith('.json'):
+            data = json.loads(text,object_pairs_hook=unique_object)
+            if not isinstance(data,dict): fail('release manifest must be an object')
+            policy = data.get('trust_policy')
+        else:
+            if any(re.match(r'^(?:---|\.\.\.)(?:\s|$)',line) for line in text.splitlines()):
+                fail('release manifest trust_policy requires one canonical YAML document without document markers')
+            fields = [line for line in text.splitlines() if re.match(r'''^(?:trust_policy|'trust_policy'|"trust_policy")\s*:''',line)]
+            if not fields: fail('release manifest is missing trust_policy; rebuild and sign with the registered policy')
+            if len(fields) != 1: fail('duplicate release manifest trust_policy')
+            match = re.fullmatch(r'''(?:trust_policy|'trust_policy'|"trust_policy"):[ \t]*(?:(minisign-package-v1|cosign-spdx-v1)|'(minisign-package-v1|cosign-spdx-v1)'|"(minisign-package-v1|cosign-spdx-v1)")(?:[ \t]+#.*)?[ \t]*''',fields[0])
+            if not match: fail('invalid release manifest trust_policy; use a canonical top-level policy scalar')
+            policy = next(value for value in match.groups() if value is not None)
+        if policy not in ('minisign-package-v1','cosign-spdx-v1'):
+            fail('missing or unsupported release manifest trust_policy')
+        if policy != reg['trust_policy']:
+            fail('release manifest/registry trust_policy mismatch: expected '+reg['trust_policy'])
+
 def images(path, reg):
     rows = {}
     seen = {}
@@ -158,6 +192,11 @@ def main():
             for channel in reg['channels']: print(reg['code']+'-'+channel)
         return
     reg = load_registry(root,args[0])
+    if command=='validate-manifest':
+        from archive import inspect
+        inspect(args[1],reg['secret_allowlist'])
+        if len(args)>2 and args[2]: inspect(args[2],docker=True)
+        validate_manifest_trust(args[1],reg); return
     if command=='validate-channel':
         validate_channel(read_json(args[2]),reg,args[0]+'-'+args[1]); return
     if command=='plan':
@@ -178,6 +217,7 @@ def main():
             fail('--bundle and --images-lock are required together by bundle-lock step')
         if not Path(archive).is_file() or Path(archive).is_symlink(): fail('missing or unsafe archive')
         if not re.fullmatch(reg['archive_pattern'],Path(archive).name): fail('archive name does not match registry')
+        validate_manifest_trust(archive,reg)
         if lock: images(lock,reg)
         rel = 'releases/'+(reg['code']+'/' if reg['release_layout']=='product-version' else '')+version
         fields = [reg['bootstrap'] or '',reg['gate']['script'],reg['trust_policy'],rel,'1' if channel in reg['gate']['channels'] else '0',','.join(reg['steps']),','.join(reg['gate']['inputs'])]

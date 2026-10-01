@@ -8,6 +8,7 @@
     "product",
     "edition",
     "version",
+    "trust_policy",
     "images"
   ],
   "anyOf": [
@@ -74,6 +75,11 @@
     }
   ],
   "properties": {
+    "trust_policy": {
+      "type": "string",
+      "enum": ["minisign-package-v1", "cosign-spdx-v1"],
+      "description": "Explicit product trust policy; must match the product registry"
+    },
     "product": {
       "type": "string",
       "enum": ["assessment", "soc", "pish", "hotspot", "neosecra-security-health", "neosecra-soc", "neosecra-pish", "neosecra-hotspot"],

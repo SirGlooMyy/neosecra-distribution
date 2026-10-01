@@ -154,7 +154,7 @@ if [[ "$ARCHIVE" != "$STAGE/upload/$RELEASE_RELATIVE/$ARCHIVE_NAME" ]]; then
   mv -- "$ARCHIVE" "$STAGE/upload/$RELEASE_RELATIVE/$ARCHIVE_NAME"
   ARCHIVE="$STAGE/upload/$RELEASE_RELATIVE/$ARCHIVE_NAME"
 fi
-python3 "${SCRIPT_DIR}/lib/archive.py" "$REGISTRY_FILE" "$ARCHIVE" "$BUNDLE"
+python3 "${SCRIPT_DIR}/lib/registry.py" validate-manifest "$REPO_ROOT" "$PRODUCT" "$ARCHIVE" "$BUNDLE"
 BOOTSTRAP=""
 if [[ -n "$BOOTSTRAP_SRC" ]]; then
   [[ "$ARCHIVE_NAME" != "bootstrap.sh" ]] || die "Archive conflicts with bootstrap"

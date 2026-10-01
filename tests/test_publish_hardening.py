@@ -1,5 +1,6 @@
 """Offline regression coverage for publisher templates and Hotspot VERSION."""
 import shutil
+import json
 import subprocess
 import sys
 
@@ -8,6 +9,7 @@ from fixtures.publisher import ROOT, Publisher, package, posix
 
 sys.path.insert(0, str(ROOT / 'update-server/lib'))
 from archive import inspect
+from registry import validate_manifest_trust
 
 
 @pytest.mark.parametrize('suffix', ['example', 'sample', 'template', 'dist'])
@@ -112,3 +114,107 @@ def test_gate_accepts_prerelease_version(tmp_path):
     archive = package(tmp_path / 'hotspot.tar.gz', hotspot_payload(version, version.encode() + b'\n'))
     result = p.shell([posix(p.root / 'ci/prerelease-gate-hotspot.sh'), '--archive', posix(archive), '--version', version])
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('suffix', ['yaml', 'json'])
+@pytest.mark.parametrize('registered', ['minisign-package-v1', 'cosign-spdx-v1'])
+@pytest.mark.parametrize('policy', [None, 'minisign-package-v1', 'cosign-spdx-v1', 'fallback'])
+def test_publisher_manifest_policy_matches_registry(tmp_path, suffix, registered, policy):
+    p = Publisher(tmp_path, stub_gates=True)
+    p.register_fixture()
+    registry_path = p.root / 'products/fixtureprod.json'
+    reg = json.loads(registry_path.read_text(encoding='utf-8'))
+    reg['trust_policy'] = registered
+    registry_path.write_text(json.dumps(reg), encoding='utf-8')
+    p.seed()
+    before = p.snapshot()
+    data = {'version': '1.0.1'}
+    if policy is not None:
+        data['trust_policy'] = policy
+    content = json.dumps(data) if suffix == 'json' else ''.join(key + ': ' + value + '\n' for key, value in data.items())
+    archive = package(tmp_path / 'fixture.tar.gz', {'payload/deployment/v1/release-manifest.' + suffix: content.encode()})
+    result = p.run(archive=archive, dry=policy == registered)
+    if policy == registered:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert 'trust=' + registered in result.stdout
+        assert p.snapshot() == before
+    else:
+        assert result.returncode != 0
+        assert 'trust_policy' in result.stderr
+        if policy in ('minisign-package-v1', 'cosign-spdx-v1'):
+            assert 'mismatch' in result.stderr
+        assert p.snapshot() == before
+        assert not (tmp_path / 'gate.log').exists()
+        assert not (p.www / '.publish-lock').exists()
+
+
+@pytest.mark.parametrize('dry', [False, True])
+def test_manifest_mismatch_blocks_ungated_channel(tmp_path, dry):
+    p = Publisher(tmp_path, stub_gates=True)
+    p.register_fixture()
+    registry_path = p.root / 'products/fixtureprod.json'
+    reg = json.loads(registry_path.read_text(encoding='utf-8'))
+    reg['channels'].append('beta')
+    registry_path.write_text(json.dumps(reg), encoding='utf-8')
+    before = p.snapshot()
+    archive = package(tmp_path / 'fixtureprod-1.0.1.tar.gz', {
+        'release-manifest.yaml': b'trust_policy: cosign-spdx-v1\n',
+    })
+    result = p.run(channel='beta', archive=archive, dry=dry)
+    assert result.returncode != 0 and 'trust_policy mismatch' in result.stderr
+    assert p.snapshot() == before
+    assert not (tmp_path / 'gate.log').exists()
+
+
+@pytest.mark.parametrize('content', [
+    b'trust_policy: minisign-package-v1\ntrust_policy: cosign-spdx-v1\n',
+    b'trust_policy: minisign-package-v1\n"trust_policy": cosign-spdx-v1\n',
+    b'trust_policy: minisign-package-v1#not-a-comment\n',
+    b'trust_policy: minisign-package-v1\n---\n{trust_policy: cosign-spdx-v1}\n',
+    b'trust_policy: [minisign-package-v1]\n',
+])
+def test_ambiguous_or_invalid_yaml_policy_is_rejected(tmp_path, content):
+    archive = package(tmp_path / 'policy.tar.gz', {'release-manifest.yaml': content})
+    with pytest.raises(ValueError, match='trust_policy'):
+        validate_manifest_trust(archive, {'trust_policy': 'minisign-package-v1'})
+
+
+@pytest.mark.parametrize('value', ['minisign-package-v1', "'minisign-package-v1'", '"minisign-package-v1"'])
+def test_yaml_policy_scalar_and_comment_are_supported(tmp_path, value):
+    archive = package(tmp_path / 'policy.tar.gz', {
+        'release-manifest.yaml': ('trust_policy: ' + value + ' # registered policy\n').encode(),
+    })
+    validate_manifest_trust(archive, {'trust_policy': 'minisign-package-v1'})
+
+
+def test_multiple_release_manifests_are_rejected(tmp_path):
+    archive = package(tmp_path / 'policy.tar.gz', {
+        'release-manifest.yaml': b'trust_policy: minisign-package-v1\n',
+        'deployment/v1/release-manifest.json': b'{"trust_policy":"minisign-package-v1"}\n',
+    })
+    with pytest.raises(ValueError, match='multiple manifests'):
+        validate_manifest_trust(archive, {'trust_policy': 'minisign-package-v1'})
+
+
+def test_final_transformed_manifest_policy_is_checked(tmp_path):
+    p = Publisher(tmp_path, stub_gates=True)
+    p.register_fixture()
+    p.seed()
+    before = p.snapshot()
+    archive = package(tmp_path / 'fixture.tar.gz', {
+        'release-manifest.yaml': b'trust_policy: minisign-package-v1\n',
+    })
+    changed = package(tmp_path / 'changed.tar.gz', {
+        'release-manifest.yaml': b'trust_policy: cosign-spdx-v1\n',
+    })
+    # Fixture step changes only the staged archive, exercising the final check.
+    step = p.root / 'update-server/lib/steps/migration-contract.sh'
+    step.write_text('cp -- "' + posix(changed) + '" "$ARCHIVE"\n', encoding='utf-8', newline='\n')
+    registry_path = p.root / 'products/fixtureprod.json'
+    reg = json.loads(registry_path.read_text(encoding='utf-8'))
+    reg['steps'] = ['migration-contract']
+    registry_path.write_text(json.dumps(reg), encoding='utf-8')
+    result = p.run(archive=archive)
+    assert result.returncode != 0 and 'trust_policy mismatch' in result.stderr
+    assert p.snapshot() == before
+    assert not (tmp_path / 'gate.log').exists()
