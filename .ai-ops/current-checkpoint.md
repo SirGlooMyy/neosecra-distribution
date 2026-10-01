@@ -1,3 +1,9 @@
+## 2026-10-01 — Ortak update + lisans altyapısı (GÜNCEL DURUM — aşağıdaki eski bölümler tarihseldir)
+
+- Kaynak HEAD `5acd955` (origin/main ile eşit). Ayrıntı ve kanıtlar: `.ai-ops/fix-log.md` en üst kayıt. Plan ve kararlar: `E:\projects\.ai-ops\UPDATE-LICENSE-UNIFICATION-PLAN.md`. Ürün iş emirleri: `E:\projects\shared-guides\integration\`.
+- Canlı: distribution damgası 6225c5a (Caddy yeniden başlatıldı, HSTS, registry yazma 403). 6225c5a sonrası commit'lerin dağıtımı kullanıcıda açık.
+- Canlı dağıtım yalnız `neosecra-distribution/scripts/deploy-live.sh` ile, commit'lenmiş ve push edilmiş SHA'dan yapılır; bkz. `neosecra-distribution/docs/LIVE-DEPLOY.md`. Canlıda elle dosya düzenlenmez.
+
 ## 2026-09-15 Hotspot OFF metadata fix
 
 - Sourcec4d4642 pushed; recovery8 tests/bash-n/diff-check PASS; independent review clear. Verified updater installed with backup, signed POC0.3.76 exit0 and terminal journal OFF/null/zero PASS. Evidence work/no-migration-metadata-20260915.md. Existing unrelated dirty work preserved; this mixed log remains outside scoped commit.
