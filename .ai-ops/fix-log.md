@@ -1,3 +1,11 @@
+## D11/D12 yedekten rollback — 2026-10-02
+
+- Sorun: backup-restore ürünlerde (Assessment, SOC, PISH) ajan rollback'i koşulsuz `--pointer-only` gönderiyordu ve `rollback.sh` şifreli (`*.sql.gz.age`) ön yedeği okuyamıyordu; yedekten geri dönüş ne arayüzden ne otomatik çalışıyordu. Stack kapalıyken güvenlik yedeği alınamadığı için rollback duruyordu.
+- Değişen (origin/main): `ec4c175` ajan politikayı manifestten okur, `rollback.sh` şifreli yedeği önce sınar sonra akışla yükler, güvenlik yedeği `backup.sh` ile şifreli; ardından kapalı stack düzeltmesi: yalnız veritabanı başlatılır, hazır olması beklenir (en çok 60 sn), güvenlik yedeği atlanmaz.
+- Yerel test kanıtı (Codex, Windows): rollback/ajan paketleri **73 passed, 3 skipped** (izin/symlink testleri). Linux'ta ve gerçek servisle koşmadı.
+- Canlı: uygulanmadı (cihaz tarafı betikleri; ilk ürün yayınıyla gider).
+- Sıradaki: Assessment WP7 (rollback düğmesi) bu sürümle açılabilir; gerçek cihazda bir rollback provası.
+
 ## D10 deploy-live hızlandırma — 2026-10-02
 
 - Sorun: `scripts/deploy-live.sh` yerel doğrulamada dosya başına birkaç süreç açıyordu; Windows'ta 352 dosyalık lisans dağıtımı 9 dk 18 sn sessiz kalıyor, takılmış sanılıyordu.
