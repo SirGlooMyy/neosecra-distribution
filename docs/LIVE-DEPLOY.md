@@ -49,8 +49,12 @@ Bu komut kaynak depodaki remote-tracking reflerini günceller; aracın repo güv
 origin'in operatör tarafından doğru yapılandırılmış olmasına dayanır.
 
 Arşiv `git -c core.autocrlf=false -c core.eol=lf archive` ile üretilir. Seçilen her
-dosyanın arşiv SHA-256'sı `git cat-file blob <SHA>:<path>` baytlarının SHA-256'sı ile
-eşleşmelidir; tek uyumsuzlukta SSH öncesinde durulur. Commit edilmiş attributes ve
+dosyanın arşiv blob OID'i, `git ls-tree -r -z` ile alınan commit blob OID'i ile
+eşleşmelidir. Çıkarılan ağaçta tek `git hash-object --no-filters --stdin-paths`
+çağrısı kullanılır; filtreler/CRLF dönüşümü uygulanmaz ve kaynak deponun nesne
+formatı korunur. Tek uyumsuzlukta SSH öncesinde durulur. Uzak doğrulama ve manifest
+için SHA-256, boyutlar ve 644/755 modları toplu hesaplanır/uygulanır.
+Commit edilmiş attributes ve
 yerel `info/attributes`, geçici index üzerinden denetlenir. Seçilen dosyada etkin
 `export-ignore`/`export-subst` reddedilir. `.gitattributes` betik, Python ve Caddyfile
 için LF politikasını belirler; imzalı artifact'lerin mevcut `-text` kuralları korunur.
@@ -196,8 +200,19 @@ değiştirme, migration apply, silme serbest değildir).
    # Uygulamak için aynı komuta --apply eklenir (önce dry-run çıktısı onaylanır).
    ```
 
-   Yerel blob-hash doğrulaması (arşiv SHA-256'sı ile `git cat-file blob` karşılaştırması)
-   Windows'ta birkaç dakika sürer; takılma değildir, kesilmez.
+   Yerel doğrulama toplu blob OID, SHA-256, boyut ve mod kontrolleri kullanır;
+   dosya başına araç süreci başlatmaz. 350–352 küçük dosyada Windows Git Bash
+   hedefi 30 saniyenin altı, kabul sınırı 60 saniyenin altıdır (disk/dosya
+   büyüklüğüne bağlıdır). Uzun aşamaların başlangıç/bitişi stderr'e yazılır;
+   stdout plan biçimi korunur. CI süre testi, yavaş ortam payıyla 90 saniye sınırını
+   kullanır. Uzak plan/yedek/staging/rollback kontrolleri de topludur; dry-run
+   hedefte geçici dosya veya kilit oluşturmaz.
+
+   D10 ölçümü (02.10.2026, Windows Git Bash, `lisans`): aynı sentetik commit ve
+   boş geçici hedefte 350 küçük dosyanın dry-run süresi **438,8 sn → 22,5 sn**;
+   yeni yerel doğrulama **11 sn**. Eski betik `a1a7ccf` HEAD'inden `git show`
+   ile alındı; yeni betik çalışma ağacından çalıştırıldı. Testlerdeki yerel SSH
+   vekili kullanıldı, ağ bağlantısı yapılmadı ve hedef ağacı iki koşuda da değişmedi.
 4. **Lisans dağıtımı dosya aktarımıyla bitmez.** Kök `docker-compose.yml` araç
    tarafından aktarılmaz ve reddedilir (geliştirme dosyasıdır). Canlıdaki kök
    `docker-compose.yml`, `license-server/deployment/compose/docker-compose.prod.yml`
@@ -257,7 +272,7 @@ publisher `--dry-run`. Bu araç yayın/kanal güncellemesi yapmaz; imzalı yayı
 ```powershell
 $env:TEMP="$PWD\.codex-tmp"; $env:TMP=$env:TEMP
 New-Item -ItemType Directory -Force .codex-tmp | Out-Null
-.\.codex-python\python.exe -m pytest tests/test_deploy_live.py tests/test_deploy_live_real.py -q -p no:cacheprovider --basetemp=.codex-tmp\pt-D6b
+.\.codex-python\python.exe -m pytest tests/test_deploy_live.py tests/test_deploy_live_real.py -q -p no:cacheprovider --basetemp=.codex-tmp\pt-D10
 & 'C:\Program Files\Git\bin\bash.exe' -n scripts/deploy-live.sh
 ```
 

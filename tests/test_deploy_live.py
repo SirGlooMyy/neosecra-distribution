@@ -274,7 +274,8 @@ class World:
             self._local_sha = self.rev("HEAD")
         return self._local_sha
 
-    def run(self, *args: str, repo: Path | None = None, extra_env: dict | None = None) -> Run:
+    def run(self, *args: str, repo: Path | None = None, extra_env: dict | None = None,
+            script: Path = SCRIPT, timeout: int = 240) -> Run:
         log = self.tmp / f"log{next(self._seq)}"
         log.mkdir()
         env = dict(self.env, FAKE_LOG=log.as_posix(), **(extra_env or {}))
@@ -287,7 +288,7 @@ class World:
                 "-c",
                 'fb="$FAKE_BIN"; if command -v cygpath >/dev/null 2>&1; then fb=$(cygpath -u "$fb"); fi; '
                 'PATH="$fb:$PATH"; exec bash "$0" "$@"',
-                SCRIPT.as_posix(),
+                script.as_posix(),
                 "--repo",
                 (repo or self.repo).as_posix(),
                 *args,
@@ -299,7 +300,7 @@ class World:
             encoding="utf-8",
             errors="replace",
             stdin=subprocess.DEVNULL,
-            timeout=240,
+            timeout=timeout,
         )
         return Run(proc, log)
 

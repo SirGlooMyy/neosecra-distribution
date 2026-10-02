@@ -9,10 +9,12 @@ import hashlib
 import io
 import itertools
 import os
+import re
 import shlex
 import stat
 import subprocess
 import tarfile
+import time
 from pathlib import Path
 
 import pytest
@@ -280,6 +282,73 @@ def test_autocrlf_true_keeps_exact_git_blob_bytes(real: RealWorld):
         assert hashlib.sha256(actual).digest() == hashlib.sha256(blob).digest()
 
 
+def test_batch_blob_verification_rejects_changed_archive_before_ssh(real: RealWorld):
+    payload = real.tmp / "changed-source.tar"
+    with tarfile.open(payload, "w") as tf:
+        for name, body in BASE_FILES.items():
+            data = b"changed archive bytes\n" if name == "scripts/util.py" else body.encode()
+            member = tarfile.TarInfo(name)
+            member.size = len(data)
+            tf.addfile(member, io.BytesIO(data))
+    git = real.shell("command -v git").stdout.strip()
+    (real.bin / "git").write_text(
+        '#!/usr/bin/env bash\nset -euo pipefail\n'
+        'if [[ " $* " == *" archive "* ]]; then cat -- "$LOCAL_ARCHIVE"; '
+        'else exec "$REAL_GIT" "$@"; fi\n', encoding="utf-8", newline="\n")
+    (real.bin / "git").chmod(0o755)
+    before = snapshot(real.target)
+    run = real.deploy(extra_env={"REAL_GIT": git, "LOCAL_ARCHIVE": payload.as_posix()})
+    assert run.rc != 0 and "git blob / arsiv hash uyusmazligi: scripts/util.py" in run.err, run.text
+    assert run.count("ssh") == 0 and snapshot(real.target) == before
+
+
+def test_batch_paths_preserve_spaces_quotes_and_unicode(real: RealWorld):
+    paths = ["docs/space name.md", "docs/'quoted'.md", "docs/-dash.md", "docs/ölçüm.md"]
+    if os.name != "nt":  # NTFS does not allow a double quote in a filename.
+        paths.append('docs/"quoted".md')
+    real.sha = real.commit({p: "exact bytes\n" for p in paths})
+    run = real.deploy()
+    assert run.rc == 0 and "yerel dogrulama tamam" in run.err, run.text
+
+
+@pytest.mark.parametrize("tool", ["git", "sha256sum", "stat", "chmod"])
+def test_batch_tool_failure_stops_before_ssh(real: RealWorld, tool: str):
+    actual_git = real.shell("command -v git").stdout.strip()
+    body = '#!/usr/bin/env bash\nset -euo pipefail\n'
+    if tool == "git":
+        body += 'if [[ " $* " != *" hash-object "* ]]; then exec "$REAL_GIT" "$@"; fi\n'
+    body += 'echo "injected batch failure" >&2\nexit 99\n'
+    (real.bin / tool).write_text(body, encoding="utf-8", newline="\n")
+    (real.bin / tool).chmod(0o755)
+    before = snapshot(real.target)
+    run = real.deploy(extra_env={"REAL_GIT": actual_git})
+    assert run.rc != 0 and "injected batch failure" in run.err, run.text
+    assert run.count("ssh") == 0 and snapshot(real.target) == before
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_350_file_local_validation_budget(real: RealWorld, existing: bool):
+    files = {f"license-server/backend/f{i:03}.py": f"print({i})\n" for i in range(348)}
+    real.sha = real.commit(files)
+    real.target.rmdir()
+    real.target = real.tmp / "lisans"
+    real.target.mkdir()
+    if existing:
+        _write_tree(real.target, {**BASE_FILES, **files})
+    before = snapshot(real.target)
+    start = time.perf_counter()
+    run = real.deploy(profile="lisans")
+    elapsed = time.perf_counter() - start
+    assert run.rc == 0 and snapshot(real.target) == before, run.text
+    assert "yerel dogrulama: 350 dosya..." in run.err
+    seconds = re.search(r"yerel dogrulama tamam \((\d+) sn\)", run.err)
+    assert seconds and int(seconds[1]) < 90, run.err
+    assert "uzak plan..." in run.err and "yerel dogrulama" not in run.out
+    if existing:
+        assert "yeni dosya: 0, ayni: 350" in run.out
+    print(f"D10 350 files existing={existing}: local={seconds[1]}s total={elapsed:.3f}s")
+
+
 @pytest.mark.parametrize("attr", ["export-ignore", "export-subst"])
 def test_archive_attributes_fail_before_ssh(real: RealWorld, attr: str):
     real.sha = real.commit({".gitattributes": f"scripts/util.py {attr}\n"})
@@ -476,7 +545,15 @@ def test_glob_conversion_table(pattern: str, path: str, expected: bool):
     source = SCRIPT.read_text(encoding="utf-8")
     funcs = source[source.index("glob_to_regex() {"):source.index("is_denied() {")]
     # MSYS expands wildcard argv from native Python; stdin/env preserve literal patterns.
-    proc = subprocess.run([BASH, "-s"], input=funcs + '\nmatches "$GLOB_PATH" "$GLOB_PATTERN"',
+    checks = '''
+matches "$GLOB_PATH" "$GLOB_PATTERN"; expected=$?
+matches "$GLOB_PATH" "$GLOB_PATTERN"; cached=$?
+compile_patterns "$GLOB_PATTERN"
+[[ $GLOB_PATH =~ $PATTERN_REGEX ]]; combined=$?
+[[ $cached == "$expected" && $combined == "$expected" ]] || exit 3
+exit "$expected"
+'''
+    proc = subprocess.run([BASH, "-s"], input=funcs + checks,
                           env=dict(os.environ, GLOB_PATH=path, GLOB_PATTERN=pattern),
                           capture_output=True, text=True, timeout=30)
     assert proc.returncode == (0 if expected else 1), proc.stderr
