@@ -1,3 +1,11 @@
+## D10 deploy-live hızlandırma — 2026-10-02
+
+- Sorun: `scripts/deploy-live.sh` yerel doğrulamada dosya başına birkaç süreç açıyordu; Windows'ta 352 dosyalık lisans dağıtımı 9 dk 18 sn sessiz kalıyor, takılmış sanılıyordu.
+- Değişen (source HEAD `1c6caaf`, origin/main): toplu `git hash-object --no-filters --stdin-paths` (ls-tree OID'leriyle karşılaştırma), toplu sha256/stat/chmod, bir kez derlenen glob desenleri, stderr'e aşama satırları. Deny-önce-allow, blob/arşiv eşleşmesi, yedek manifesti ve taşıma sonrası doğrulama aynı.
+- Yerel test kanıtı (Codex, Windows): `tests/test_deploy_live.py tests/test_deploy_live_real.py` **85 passed, 12 skipped** (POSIX testleri Windows'ta koşmadı); 350 dosyalık sentetik dry-run 438,8 sn → 22,5 sn.
+- Canlı kanıt (salt-okunur dry-run, 100.117.210.76, lisans profili): 38 sn, plan önceki araçla aynı (değişecek 32, yeni 17, aynı 265). `--apply` yeni araçla henüz koşmadı; POSIX testleri Linux'ta yeniden koşmadı.
+- Sıradaki: lisans `892a73a` dağıtımı bu araçla; canlıdaki distribution damgası `a1a7ccf` (araç yerelden çalışır, yeniden dağıtım zorunlu değil).
+
 ## UNIFIED-UPDATE-20260930 — 2026-10-01T11:30+03:00
 
 - Sorun: publisher ürün adına göre dallanıyordu (SOC genel kapıya düşüyor, her ürüne Assessment bootstrap'ı, sürüm yolu çakışması, imzadan önce etkinleşen kanal, tüm www'ya `rsync --delete`); canlı host git deposu değildi ve kaynaktan ayrışmıştı; rollback doğrulama hatasını yutuyordu; bootstrap kanal imzasını doğrulamadan sürüm seçiyordu; registry dışarıdan yazılabilirdi; yayımlanmış eski Hotspot arşivlerinde (0.3.18–0.3.21) gerçek cihaz anahtarları vardı.
