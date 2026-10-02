@@ -90,6 +90,10 @@ protects backup copies that leave the device. If the identity is missing or
 unsafe, rollback stops before changing anything. The dump is decrypted and
 validated before stopping services, then streamed into PostgreSQL; the safety
 backup is also encrypted. `--dry-run` validates the dump without changing state.
+If the stack is stopped, rollback starts only `postgres` in the current Compose
+context and waits up to 60 seconds before taking the mandatory encrypted safety
+backup. Readiness uses `pg_isready` and host `timeout`; failure exits 12 before
+service shutdown or schema reset, leaving the database available for diagnosis.
 The agent selects the newest pre-upgrade backup for the target version; product
 triggers supply the target and signed authorization path, never `backup_path`.
 

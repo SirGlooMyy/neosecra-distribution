@@ -75,7 +75,7 @@ def sandbox(tmp_path, monkeypatch):
         if name.startswith(("NEOSECRA_", "EXPECTED_ROLLBACK_", "UPGRADE_", "TEST_")) or name in {
             "BASH_ENV", "ENV", "CURL_CA_BUNDLE", "EXEC_ID", "HEARTBEAT_PID", "V1_ROOT",
             "BACKUP_AGE_IDENTITY_FILE", "BACKUP_AGE_RECIPIENT", "BACKUP_AGE_RECIPIENTS_FILE",
-            "BACKUP_ALLOW_PLAINTEXT",
+            "BACKUP_ALLOW_PLAINTEXT", "ROLLBACK_DB_WAIT_TIMEOUT", "ROLLBACK_DB_WAIT_INTERVAL",
         }:
             monkeypatch.delenv(name, raising=False)
     return PolicySandbox(tmp_path, str(bash))
@@ -107,7 +107,9 @@ class PolicySandbox:
         write(self.tree / "upgrade/recovery.py", "import sys\nprint('fixture-recovery:' + ' '.join(sys.argv[1:]))\n")
         # Execute the real fail-closed backup; only its external commands are fake.
         backup_source = (self.tree / "backup/backup.sh").read_text(encoding="utf-8")
-        backup_source = backup_source.replace('TARGET=""; AUTO=0', 'TEST_BACKUP_ARGS="$*"\nTARGET=""; AUTO=0')
+        backup_source = backup_source.replace('TARGET=""; AUTO=0',
+                                              'printf "backup-invoked:%s\\n" "$*" >> "$TEST_COMMAND_LOG"\n'
+                                              'TEST_BACKUP_ARGS="$*"\nTARGET=""; AUTO=0')
         write(self.tree / "backup/backup.sh", backup_source +
               '\nprintf "backup:%s\\n" "$TEST_BACKUP_ARGS" >> "$TEST_COMMAND_LOG"\n')
         write(self.tree / "docker-compose.v1.yml", "services: {}\n")
@@ -139,13 +141,29 @@ class PolicySandbox:
             "EXPECTED_ROLLBACK_EDITION": "standard",
             "EXPECTED_ROLLBACK_NONCE": "fixture-rollback-nonce-1234",
             "BACKUP_AGE_RECIPIENT": "fixture-public-recipient",
+            "ROLLBACK_DB_WAIT_TIMEOUT": "2", "ROLLBACK_DB_WAIT_INTERVAL": "1",
             "TEMP": str(root), "TMP": str(root), "TMPDIR": shell_path(root),
         }
         write(self.bin / "docker", '''#!/usr/bin/env bash
 printf 'docker:%s\n' "$*" >> "$TEST_COMMAND_LOG"
 case " $* " in
-  *" ps "*) echo fixture-running-container ;;
-  *" pg_dump "*) echo 'SELECT 1;' ;;
+  *" ps "*)
+    if [[ "${TEST_STACK_RUNNING:-1}" == 1 || -f "$TEST_FIXTURES/postgres-started" ]]; then
+      echo fixture-running-container
+    fi ;;
+  *" up -d postgres "*)
+    [[ "${TEST_POSTGRES_UP_EXIT:-0}" == 0 ]] || exit "$TEST_POSTGRES_UP_EXIT"
+    touch "$TEST_FIXTURES/postgres-started" ;;
+  *" pg_isready "*)
+    count_file="$TEST_FIXTURES/ready-count"
+    count=$(cat "$count_file" 2>/dev/null || echo 0)
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$count_file"
+    if [[ "${TEST_PG_READY_HANG:-0}" == 1 ]]; then /usr/bin/sleep 10; fi
+    [[ "${TEST_PG_READY_EXIT:-0}" == 0 && "$count" -ge "${TEST_PG_READY_AFTER:-1}" ]] ;;
+  *" pg_dump "*)
+    [[ "${TEST_PG_DUMP_EXIT:-0}" == 0 ]] || exit "$TEST_PG_DUMP_EXIT"
+    [[ "${TEST_PG_DUMP_EMPTY:-0}" == 1 ]] || echo 'SELECT 1;' ;;
   *" psql "*) "$TEST_FAKE_BIN/psql" "$@" ;;
 esac
 ''')
@@ -166,6 +184,7 @@ if [[ "$1" == -d ]]; then
   fi
   { IFS= read -r marker; [[ "$marker" == fixture-age ]] || exit 23; cat; } < "$4"
 else
+  [[ "${TEST_AGE_ENCRYPT_EXIT:-0}" == 0 ]] || exit "$TEST_AGE_ENCRYPT_EXIT"
   printf 'fixture-age\n'
   cat
 fi
@@ -176,7 +195,7 @@ exit "${TEST_MINISIGN_EXIT:-0}"
 ''')
         for name in ("systemctl", "sudo", "cosign", "pg_restore", "pg_dump", "logger"):
             write(self.bin / name, f'#!/usr/bin/env bash\nprintf "{name}:%s\\n" "$*" >> "$TEST_COMMAND_LOG"\nexit 99\n')
-        write(self.bin / "sleep", "#!/usr/bin/env bash\nexit 0\n")
+        write(self.bin / "sleep", '#!/usr/bin/env bash\nif [[ "${TEST_REAL_SLEEP:-0}" == 1 ]]; then /usr/bin/sleep "$@"; fi\n')
         write(self.bin / "curl", '''#!/usr/bin/env bash
 set -euo pipefail
 printf 'curl:%s\n' "$*" >> "$TEST_COMMAND_LOG"
@@ -477,6 +496,131 @@ def test_encrypted_rollback_streams_sql_and_creates_encrypted_safety_backup(sand
     assert pointer.stdout.strip().endswith("/releases/1.0.0")
 
 
+def test_stopped_stack_starts_current_database_then_backs_up_and_restores(sandbox):
+    sandbox.encrypted_backup()
+    sandbox.complete_postflight()
+    sandbox.env.update(TEST_STACK_RUNNING="0", TEST_PG_READY_AFTER="2")
+    result = sandbox.rollback()
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = sandbox.calls()
+    start = calls.index(" up -d postgres")
+    ready = calls.index(" pg_isready ")
+    invoked = calls.index("backup-invoked:--target")
+    completed = calls.index("backup:--target")
+    stopped = calls.index(" stop")
+    restored = calls.index(" psql ")
+    assert start < ready < invoked < completed < stopped < restored
+    assert calls[:invoked].count(" pg_isready ") == 2
+    assert calls.count(" pg_dump ") == 1
+    startup = next(line for line in calls.splitlines() if " up -d postgres" in line)
+    assert f"--project-directory {shell_path(sandbox.tree)} " in startup
+    assert f"-f {shell_path(sandbox.tree / 'docker-compose.v1.yml')} " in startup
+    assert str(sandbox.target.as_posix()) not in startup
+    assert calls.count("age:-d ") == 2
+    sql = (sandbox.root / "psql-input.log").read_text()
+    assert "DROP SCHEMA" in sql and "SELECT 11;" in sql
+    assert (sandbox.install / "state/installed-version").read_text() == "1.0.0\n"
+    safety = list((sandbox.install / "backups").glob("*-pre-rollback-2.0.0"))
+    assert len(safety) == 1
+    assert list(safety[0].glob("*-db.sql.gz.age"))
+    assert list(safety[0].glob("*-config.tar.gz.age"))
+    assert not list(safety[0].rglob("*.sql"))
+    assert not list(safety[0].rglob("*.PLAINTEXT.*"))
+
+
+@pytest.mark.parametrize("failure", ["startup", "not-ready", "hung-probe"])
+def test_stopped_stack_database_failure_prevents_backup_shutdown_and_schema_reset(sandbox, failure):
+    sandbox.encrypted_backup()
+    sandbox.env.update(TEST_STACK_RUNNING="0", ROLLBACK_DB_WAIT_TIMEOUT="1", TEST_REAL_SLEEP="1")
+    if failure == "startup":
+        sandbox.env["TEST_POSTGRES_UP_EXIT"] = "23"
+    elif failure == "not-ready":
+        sandbox.env["TEST_PG_READY_EXIT"] = "1"
+    else:
+        sandbox.env["TEST_PG_READY_HANG"] = "1"
+    before = sandbox.snapshot()
+    result = sandbox.rollback()
+    assert result.returncode == 12, result.stdout + result.stderr
+    assert "Database service could not be started for the safety backup; nothing was changed" in result.stderr
+    calls = sandbox.calls()
+    assert calls.count(" up -d postgres") == 1
+    assert not any(word in calls for word in ("backup-invoked:", " stop", " psql ", "--force-recreate"))
+    assert sandbox.snapshot() == before
+    assert (sandbox.root / "postgres-started").exists() == (failure != "startup")
+    assert not (sandbox.root / "psql-input.log").exists()
+
+
+@pytest.mark.parametrize("failure", ["recipient", "pg-dump", "empty-dump", "encryption"])
+def test_stopped_stack_safety_backup_failure_prevents_shutdown_and_schema_reset(sandbox, failure):
+    sandbox.encrypted_backup()
+    sandbox.env.update(TEST_STACK_RUNNING="0", BACKUP_ALLOW_PLAINTEXT="1")
+    if failure == "recipient":
+        del sandbox.env["BACKUP_AGE_RECIPIENT"]
+    elif failure == "pg-dump":
+        sandbox.env["TEST_PG_DUMP_EXIT"] = "23"
+    elif failure == "empty-dump":
+        sandbox.env["TEST_PG_DUMP_EMPTY"] = "1"
+    else:
+        sandbox.env["TEST_AGE_ENCRYPT_EXIT"] = "23"
+    before = sandbox.snapshot()
+    result = sandbox.rollback()
+    assert result.returncode == 12, result.stdout + result.stderr
+    assert "Encrypted safety backup failed" in result.stderr
+    calls = sandbox.calls()
+    assert calls.index(" up -d postgres") < calls.index("backup-invoked:--target")
+    assert not any(word in calls for word in ("backup:--target", " stop", " psql ", "--force-recreate"))
+    assert sandbox.snapshot() == before
+    assert (sandbox.root / "postgres-started").exists()
+    assert not (sandbox.root / "psql-input.log").exists()
+    assert not list((sandbox.install / "backups").glob("*-pre-rollback-2.0.0/*"))
+
+
+@pytest.mark.parametrize("running", ["0", "1"])
+@pytest.mark.parametrize("encrypted", [False, True])
+def test_safety_backup_cannot_be_skipped_or_plaintext(sandbox, running, encrypted):
+    if encrypted:
+        sandbox.encrypted_backup()
+    else:
+        sandbox.set_policy("backup_restore")
+    sandbox.complete_postflight()
+    sandbox.env.update(TEST_STACK_RUNNING=running, BACKUP_ALLOW_PLAINTEXT="1")
+    result = sandbox.rollback()
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = sandbox.calls()
+    assert calls.index("backup-invoked:--target") < calls.index(" pg_dump ")
+    assert calls.index("backup:--target") < calls.index(" stop") < calls.index(" psql ")
+    safety = list((sandbox.install / "backups").glob("*-pre-rollback-2.0.0"))
+    assert len(safety) == 1
+    assert list(safety[0].glob("*-db.sql.gz.age"))
+    assert list(safety[0].glob("*-config.tar.gz.age"))
+    assert "encrypted: age" in (safety[0] / "MANIFEST").read_text()
+    assert not list(safety[0].rglob("*.PLAINTEXT.*"))
+    assert not list(safety[0].rglob("*.sql"))
+    if running == "1":
+        assert " up -d postgres" not in calls[:calls.index("backup-invoked:--target")]
+        assert " pg_isready " not in calls
+
+
+@pytest.mark.parametrize("failure", ["unset", "zero", "over-limit", "invalid"])
+def test_database_readiness_uses_bounded_defaults_and_rejects_invalid_timeout(sandbox, failure):
+    sandbox.encrypted_backup()
+    sandbox.env["TEST_STACK_RUNNING"] = "0"
+    if failure == "unset":
+        del sandbox.env["ROLLBACK_DB_WAIT_TIMEOUT"]
+        del sandbox.env["ROLLBACK_DB_WAIT_INTERVAL"]
+        sandbox.complete_postflight()
+        result = sandbox.rollback()
+        assert result.returncode == 0, result.stdout + result.stderr
+    else:
+        sandbox.env["ROLLBACK_DB_WAIT_TIMEOUT"] = {"zero": "0", "over-limit": "61", "invalid": "bad"}[failure]
+        before = sandbox.snapshot()
+        result = sandbox.rollback()
+        assert result.returncode == 12, result.stdout + result.stderr
+        assert sandbox.snapshot() == before
+        assert "backup-invoked:" not in sandbox.calls()
+        assert " stop" not in sandbox.calls()
+
+
 @pytest.mark.parametrize("failure", ["unset-identity", "missing-identity", "missing-age", "decrypt", "gzip", "empty"])
 def test_encrypted_preflight_failure_changes_nothing(sandbox, failure):
     sandbox.encrypted_backup()
@@ -522,6 +666,7 @@ def test_real_mode_0600_identity_accepts_encrypted_rollback(sandbox):
 
 @pytest.mark.parametrize("encrypted", [False, True])
 def test_missing_recipient_refuses_safety_backup_without_mutation(sandbox, encrypted):
+    sandbox.env["TEST_STACK_RUNNING"] = "1"
     if encrypted:
         sandbox.encrypted_backup()
     else:
@@ -532,17 +677,21 @@ def test_missing_recipient_refuses_safety_backup_without_mutation(sandbox, encry
     result = sandbox.rollback()
     assert "No age recipient configured" in result.stderr
     assert_rejected_without_mutation(sandbox, result, before, 12)
+    assert "backup-invoked:--target" in sandbox.calls()
+    assert not (sandbox.root / "psql-input.log").exists()
 
 
-def test_encrypted_dry_run_validates_without_safety_backup_or_mutation(sandbox):
+@pytest.mark.parametrize("running", ["0", "1"])
+def test_encrypted_dry_run_validates_without_safety_backup_or_mutation(sandbox, running):
     sandbox.encrypted_backup()
     del sandbox.env["BACKUP_AGE_RECIPIENT"]
     before = sandbox.snapshot()
+    sandbox.env["TEST_STACK_RUNNING"] = running
     result = sandbox.rollback("--dry-run")
     assert result.returncode == 0, result.stdout + result.stderr
     assert sandbox.calls().count("age:-d ") == 1
     assert sandbox.snapshot() == before
-    assert not any(word in sandbox.calls() for word in (" psql ", " stop", " up ", "backup:"))
+    assert not any(word in sandbox.calls() for word in (" psql ", " stop", " up ", "backup:", "backup-invoked:"))
 
 
 def test_encrypted_dry_run_fails_closed_on_bad_ciphertext(sandbox):

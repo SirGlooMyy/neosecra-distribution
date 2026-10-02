@@ -139,6 +139,21 @@ stack_is_running() {
   run_compose ps --status running -q 2>/dev/null | grep -q . || return 1
 }
 
+# Bound the whole readiness loop, including Compose command execution.
+wait_for_postgres() (
+  local wait_seconds="${ROLLBACK_DB_WAIT_TIMEOUT:-60}" interval="${ROLLBACK_DB_WAIT_INTERVAL:-2}"
+  [[ "$wait_seconds" =~ ^([1-9]|[1-5][0-9]|60)$ ]] || return 1
+  [[ "$interval" =~ ^([1-9]|[1-5][0-9]|60)$ ]] || return 1
+  command -v timeout >/dev/null 2>&1 || return 1
+  export -f docker compose run_compose
+  export PROJECT_NAME V1_ROOT ENV_FILE COMPOSE_FILE _DOCKER_NEEDS_SUDO
+  timeout "$wait_seconds" bash -c '
+    until run_compose exec -T postgres pg_isready -t 1 -U "$1" -d "$2" >/dev/null 2>&1; do
+      sleep "$3"
+    done
+  ' bash "$(env_value POSTGRES_USER neosecra)" "$(env_value POSTGRES_DB neosecra_assessment)" "$interval"
+)
+
 port_is_free() {
   local port="$1"
   if command -v ss >/dev/null 2>&1; then

@@ -50,6 +50,12 @@ SQL stream are verified before any changes, including in `--dry-run`. Before
 stopping services, rollback calls `backup.sh` for an encrypted safety backup;
 it requires the recipient setting even when restoring a legacy dump. SQL is
 decrypted directly into strict `psql` replay, never into a plaintext file.
+When the stack is stopped, rollback first starts only the current `postgres`
+service and polls `pg_isready`, bounded by host `timeout` to 60 seconds. The
+safety backup is always required and encrypted. Readiness failure exits 12 and
+leaves postgres running for diagnosis; `--dry-run` never starts services.
+`ROLLBACK_DB_WAIT_TIMEOUT` (1–60 seconds, default 60) and
+`ROLLBACK_DB_WAIT_INTERVAL` (1–60 seconds, default 2) can shorten test waits.
 Missing/unsafe identity, missing `age`, unreadable dumps or failed safety backup
 stop rollback before service shutdown or schema reset. Keep the on-device
 identity root-only: encryption protects copies exported off-device.

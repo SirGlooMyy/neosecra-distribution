@@ -125,6 +125,12 @@ fi
 [[ $DRY -eq 1 ]] && { ok "Rollback dry-run complete (${ROLLBACK_POLICY})"; exit 0; }
 
 if [[ "$ROLLBACK_POLICY" == "backup_restore" ]]; then
+  if ! stack_is_running; then
+    log "Starting the current database service for the encrypted safety backup"
+    if ! run_compose up -d postgres || ! wait_for_postgres; then
+      die "Database service could not be started for the safety backup; nothing was changed" 12
+    fi
+  fi
   SAFE_STAMP=$(date -u +%Y%m%dT%H%M%SZ)
   SAFE_DIR="${BACKUP_ROOT}/${SAFE_STAMP}-pre-rollback-${CURRENT}"
   BACKUP_ALLOW_PLAINTEXT=0 bash "${V1_ROOT}/backup/backup.sh" --target "$SAFE_DIR" ||
