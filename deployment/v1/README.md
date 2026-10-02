@@ -80,6 +80,19 @@ install/install.sh --confirm-backed-up --profile openvas
 
 ## Safety rules (enforced)
 
+### Backup-restore rollback
+
+For automatic or UI-triggered rollback on backup-restore products (Assessment,
+SOC, PISH), the device needs `age`, `BACKUP_AGE_RECIPIENT` (or
+`BACKUP_AGE_RECIPIENTS_FILE`) and `BACKUP_AGE_IDENTITY_FILE` (regular file,
+mode 0600, root-only access). The identity remains on the device, so encryption
+protects backup copies that leave the device. If the identity is missing or
+unsafe, rollback stops before changing anything. The dump is decrypted and
+validated before stopping services, then streamed into PostgreSQL; the safety
+backup is also encrypted. `--dry-run` validates the dump without changing state.
+The agent selects the newest pre-upgrade backup for the target version; product
+triggers supply the target and signed authorization path, never `backup_path`.
+
 - **No destructive operations** in any script. No `down -v`, no `volume rm`,
   no prune, no migration rewrite, no history reset.
 - **Existing volumes are preserved** — never wiped, never renamed.

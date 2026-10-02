@@ -52,6 +52,34 @@ err()  { printf '%s[error]%s %s\n'  "$_C_RED" "$_C_RST" "$*" >&2; }
 
 die() { err "$1"; exit "${2:-1}"; }
 
+# Use the installed release's policy identically in the agent and rollback.
+read_rollback_policy() {
+  local manifest="$1"
+  [[ -f "$manifest" && ! -L "$manifest" ]] || {
+    err "Release policy manifest is missing or unsafe"; return 12;
+  }
+  python3 - "$manifest" <<'PY'
+import sys, yaml
+data = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+upgrade = data.get("upgrade") or {}
+rollback = data.get("rollback") or {}
+policy = rollback.get("database_strategy", "backup_restore")
+if policy not in {"none", "backup_restore"}:
+    raise SystemExit("Unsupported database rollback policy")
+if upgrade.get("backup_required", True) is not (policy == "backup_restore"):
+    raise SystemExit("Inconsistent backup/rollback policy")
+print(policy)
+PY
+}
+
+# Read-only, fail-closed check: do not probe/chmod the identity or its directory.
+backup_age_identity_valid() {
+  local identity="${BACKUP_AGE_IDENTITY_FILE:-}" mode
+  [[ -n "$identity" && -f "$identity" && ! -L "$identity" ]] || return 1
+  mode="$(stat -c '%a' "$identity" 2>/dev/null || stat -f '%Lp' "$identity" 2>/dev/null)" || return 1
+  [[ "$mode" == "600" ]]
+}
+
 # --- Version ---
 read_version() {
   if [[ -f "$VERSION_FILE" ]]; then

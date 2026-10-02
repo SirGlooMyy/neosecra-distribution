@@ -613,7 +613,7 @@ process_rollback_request() {
   fi
 
   if python3 -c 'import json,sys; raise SystemExit(0 if not json.load(open(sys.argv[1], encoding="utf-8")).get("backup_path") else 1)' "${trigger_file}" 2>/dev/null; then :; else
-    agent_err "Database backup/restore rollback metadata is unsupported"
+    agent_err "Products cannot supply backup_path; the agent locates the pre-upgrade backup automatically"
     write_agent_status ROLLBACK_REJECTED "${target_version}" 12
     rm -f "${trigger_file}"; return 1
   fi
@@ -647,7 +647,16 @@ process_rollback_request() {
   export EXPECTED_ROLLBACK_CHANNEL="${rollback_channel:-${UPGRADE_RELEASE_CHANNEL:-}}"
   export EXPECTED_ROLLBACK_EDITION="${rollback_edition:-${NEOSECRA_EDITION_ID:-}}"
   export EXPECTED_ROLLBACK_NONCE="${rollback_nonce:-}"
-  local rollback_cmd=("${V1_ROOT}/upgrade/rollback.sh" "--to" "${target_version}" "--auth" "${auth_path}" "--pointer-only")
+  local rollback_cmd=("${V1_ROOT}/upgrade/rollback.sh" "--to" "${target_version}" "--auth" "${auth_path}")
+  if [[ "${RUNTIME_PRODUCT_CODE}" != "hotspot" ]]; then
+    local rollback_policy
+    rollback_policy="$(read_rollback_policy "$MANIFEST_FILE")" || {
+      agent_err "Release rollback policy validation failed"
+      write_agent_status ROLLBACK_FAILED "${target_version}" 12
+      rm -f "${trigger_file}"; return 12
+    }
+    [[ "$rollback_policy" != "none" ]] || rollback_cmd+=("--pointer-only")
+  fi
 
   local rc=0
   if [[ "${RUNTIME_PRODUCT_CODE}" == "hotspot" ]]; then

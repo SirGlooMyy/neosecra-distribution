@@ -38,20 +38,7 @@ if ! python3 "${V1_ROOT}/upgrade/verify_rollback_auth.py" "$AUTH" "$TARGET"; the
   die "SECURITY VIOLATION: Rollback authorization failed" 4
 fi
 
-[[ -f "$MANIFEST_FILE" && ! -L "$MANIFEST_FILE" ]] || die "Release policy manifest is missing or unsafe" 12
-ROLLBACK_POLICY="$(python3 - "$MANIFEST_FILE" <<'PY'
-import sys, yaml
-data = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
-upgrade = data.get("upgrade") or {}
-rollback = data.get("rollback") or {}
-policy = rollback.get("database_strategy", "backup_restore")
-if policy not in {"none", "backup_restore"}:
-    raise SystemExit("Unsupported database rollback policy")
-if upgrade.get("backup_required", True) is not (policy == "backup_restore"):
-    raise SystemExit("Inconsistent backup/rollback policy")
-print(policy)
-PY
-)" || die "Release rollback policy validation failed" 12
+ROLLBACK_POLICY="$(read_rollback_policy "$MANIFEST_FILE")" || die "Release rollback policy validation failed" 12
 if [[ "$ROLLBACK_POLICY" == "none" ]]; then
   [[ "$POINTER_ONLY" == "1" && -z "$BACKUP_SRC" ]] || die "Pointer-only policy requires --pointer-only and forbids database restore" 12
 else
@@ -108,9 +95,7 @@ if [[ "$ROLLBACK_POLICY" == "none" ]]; then
   verify_pointer_only_metadata "${TARGET_V1_ROOT}" ||
     die "Target release is not eligible for database-restore-free rollback" 12
 fi
-[[ $DRY -eq 1 ]] && { ok "Rollback dry-run complete (${ROLLBACK_POLICY})"; exit 0; }
-ensure_release_v1_link "${TARGET_V1_ROOT}"
-
+ENCRYPTED_DUMP=0
 if [[ "$ROLLBACK_POLICY" == "backup_restore" ]]; then
   # The pre-upgrade backup is named for the release being restored.
   if [[ -z "$BACKUP_SRC" ]]; then
@@ -118,23 +103,34 @@ if [[ "$ROLLBACK_POLICY" == "backup_restore" ]]; then
   fi
   [[ -n "$BACKUP_SRC" ]] || die "No backup found for ${TARGET}" 1
   log "Using backup: ${BACKUP_SRC}"
-  DB_DUMP="${BACKUP_SRC}/neosecra-${TARGET}-db.sql"
-  if [[ ! -f "$DB_DUMP" ]]; then
-    DB_DUMP="$(ls -t "${BACKUP_SRC}"/*-db.sql 2>/dev/null | head -1 || true)"
+  DB_DUMP="$(ls -t "${BACKUP_SRC}"/neosecra-*-db.sql.gz.age 2>/dev/null | head -1 || true)"
+  if [[ -n "$DB_DUMP" ]]; then
+    ENCRYPTED_DUMP=1
+    backup_age_identity_valid || die "BACKUP_AGE_IDENTITY_FILE must be a regular non-symlink file with mode 0600" 12
+    command -v age >/dev/null 2>&1 || die "age is required for encrypted rollback" 12
+    if ! DB_BYTES="$(age -d -i "$BACKUP_AGE_IDENTITY_FILE" "$DB_DUMP" | gunzip -c | wc -c)"; then
+      die "Database dump decrypt/decompress failed; nothing was changed" 12
+    fi
+    [[ "${DB_BYTES:-0}" -gt 0 ]] || die "Database dump decodes to an empty stream; nothing was changed" 12
+  else
+    DB_DUMP="${BACKUP_SRC}/neosecra-${TARGET}-db.sql"
+    if [[ ! -f "$DB_DUMP" ]]; then
+      DB_DUMP="$(ls -t "${BACKUP_SRC}"/*-db.sql 2>/dev/null | head -1 || true)"
+    fi
+    warn "Using legacy plaintext database backup; re-encrypt retained backup copies"
   fi
   [[ -n "$DB_DUMP" && -s "$DB_DUMP" ]] || die "No database dump found in ${BACKUP_SRC}; refusing rollback" 12
+fi
 
+[[ $DRY -eq 1 ]] && { ok "Rollback dry-run complete (${ROLLBACK_POLICY})"; exit 0; }
+
+if [[ "$ROLLBACK_POLICY" == "backup_restore" ]]; then
   SAFE_STAMP=$(date -u +%Y%m%dT%H%M%SZ)
   SAFE_DIR="${BACKUP_ROOT}/${SAFE_STAMP}-pre-rollback-${CURRENT}"
-  mkdir -p "$SAFE_DIR"
-  if stack_is_running; then
-    PGUSER=$(env_value POSTGRES_USER neosecra)
-    PGDB=$(env_value POSTGRES_DB neosecra_assessment)
-    run_compose exec -T postgres pg_dump -U "$PGUSER" -d "$PGDB" > "${SAFE_DIR}/pre-rollback-db.sql" 2>/dev/null ||
-      die "Safety database backup failed; refusing rollback" 12
-    [[ -s "${SAFE_DIR}/pre-rollback-db.sql" ]] || die "Safety database backup is empty; refusing rollback" 12
-  fi
+  BACKUP_ALLOW_PLAINTEXT=0 bash "${V1_ROOT}/backup/backup.sh" --target "$SAFE_DIR" ||
+    die "Encrypted safety backup failed; refusing rollback before any changes" 12
 fi
+ensure_release_v1_link "${TARGET_V1_ROOT}"
 
 # --- Stop ---
 run_compose stop
@@ -171,8 +167,14 @@ END
 $reset$;
 CREATE SCHEMA IF NOT EXISTS public;
 SQL
-  run_compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$PGUSER" -d "$PGDB" \
-    < "$DB_DUMP" || die "Database restore failed from ${DB_DUMP}" 1
+  if [[ "$ENCRYPTED_DUMP" == "1" ]]; then
+    age -d -i "$BACKUP_AGE_IDENTITY_FILE" "$DB_DUMP" | gunzip -c | \
+      run_compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$PGUSER" -d "$PGDB" ||
+      die "Database restore pipeline failed from ${DB_DUMP}" 1
+  else
+    run_compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$PGUSER" -d "$PGDB" \
+      < "$DB_DUMP" || die "Database restore failed from ${DB_DUMP}" 1
+  fi
   ok "Database restored: ${DB_DUMP}"
 fi
 

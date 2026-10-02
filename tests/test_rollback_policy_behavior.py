@@ -6,6 +6,7 @@ postflight; upgrade stops after policy selection at its missing-env gate.
 """
 
 import hashlib
+import gzip
 import io
 import json
 import os
@@ -73,6 +74,8 @@ def sandbox(tmp_path, monkeypatch):
     for name in list(os.environ):
         if name.startswith(("NEOSECRA_", "EXPECTED_ROLLBACK_", "UPGRADE_", "TEST_")) or name in {
             "BASH_ENV", "ENV", "CURL_CA_BUNDLE", "EXEC_ID", "HEARTBEAT_PID", "V1_ROOT",
+            "BACKUP_AGE_IDENTITY_FILE", "BACKUP_AGE_RECIPIENT", "BACKUP_AGE_RECIPIENTS_FILE",
+            "BACKUP_ALLOW_PLAINTEXT",
         }:
             monkeypatch.delenv(name, raising=False)
     return PolicySandbox(tmp_path, str(bash))
@@ -92,6 +95,7 @@ class PolicySandbox:
             "upgrade/rollback.sh", "upgrade/upgrade.sh", "upgrade/verify_rollback_auth.py",
             "upgrade/secure_extract.py", "lib/common.sh", "lib/state.sh",
             "lib/manifest.sh", "lib/docker.sh", "agent/artifact-verifier.sh",
+            "agent/update-agent.sh", "backup/backup.sh",
         ):
             write(self.tree / relative, (V1 / relative).read_text(encoding="utf-8"))
         if os.name == "nt":
@@ -101,13 +105,13 @@ class PolicySandbox:
                 stream.write('\natomic_replace_file() { chmod "${3:-600}" "$1" && mv -f -- "$1" "$2"; }\n')
         # Recovery locking is outside this contract (fcntl is absent on Windows).
         write(self.tree / "upgrade/recovery.py", "import sys\nprint('fixture-recovery:' + ' '.join(sys.argv[1:]))\n")
-        write(self.tree / "backup/backup.sh", '''#!/usr/bin/env bash
-set -euo pipefail
-printf 'backup:%s\n' "$*" >> "$TEST_COMMAND_LOG"
-[[ "$1" == --target ]]
-mkdir -p "$2"
-printf 'SELECT 1;\n' > "$2/neosecra-2.0.0-db.sql"
-''')
+        # Execute the real fail-closed backup; only its external commands are fake.
+        backup_source = (self.tree / "backup/backup.sh").read_text(encoding="utf-8")
+        backup_source = backup_source.replace('TARGET=""; AUTO=0', 'TEST_BACKUP_ARGS="$*"\nTARGET=""; AUTO=0')
+        write(self.tree / "backup/backup.sh", backup_source +
+              '\nprintf "backup:%s\\n" "$TEST_BACKUP_ARGS" >> "$TEST_COMMAND_LOG"\n')
+        write(self.tree / "docker-compose.v1.yml", "services: {}\n")
+        write(self.tree / ".env.v1", "")
         write(self.tree / "VERSION", "2.0.0\n")
         write(self.target / "VERSION", "1.0.0\n")
         write(self.target / "docker-compose.v1.yml", "services: {}\n")
@@ -134,6 +138,7 @@ printf 'SELECT 1;\n' > "$2/neosecra-2.0.0-db.sql"
             "EXPECTED_ROLLBACK_CHANNEL": "assessment-stable",
             "EXPECTED_ROLLBACK_EDITION": "standard",
             "EXPECTED_ROLLBACK_NONCE": "fixture-rollback-nonce-1234",
+            "BACKUP_AGE_RECIPIENT": "fixture-public-recipient",
             "TEMP": str(root), "TMP": str(root), "TMPDIR": shell_path(root),
         }
         write(self.bin / "docker", '''#!/usr/bin/env bash
@@ -141,14 +146,35 @@ printf 'docker:%s\n' "$*" >> "$TEST_COMMAND_LOG"
 case " $* " in
   *" ps "*) echo fixture-running-container ;;
   *" pg_dump "*) echo 'SELECT 1;' ;;
-  *" psql "*) cat >> "$TEST_FIXTURES/restore-input.sql" ;;
+  *" psql "*) "$TEST_FAKE_BIN/psql" "$@" ;;
 esac
+''')
+        write(self.bin / "psql", '''#!/usr/bin/env bash
+printf 'psql:call\n' >> "$TEST_COMMAND_LOG"
+cat >> "$TEST_FIXTURES/psql-input.log"
+if [[ $(grep -c '^psql:call' "$TEST_COMMAND_LOG") -gt 1 ]]; then
+  exit "${TEST_PSQL_REPLAY_EXIT:-0}"
+fi
+exit "${TEST_PSQL_EXIT:-0}"
+''')
+        write(self.bin / "age", '''#!/usr/bin/env bash
+printf 'age:%s\n' "$*" >> "$TEST_COMMAND_LOG"
+if [[ "$1" == -d ]]; then
+  [[ "${TEST_AGE_DECRYPT_EXIT:-0}" == 0 ]] || exit "$TEST_AGE_DECRYPT_EXIT"
+  if [[ "${TEST_AGE_FAIL_REPLAY:-0}" == 1 ]] && [[ $(grep -c '^age:-d ' "$TEST_COMMAND_LOG") -gt 1 ]]; then
+    exit 23
+  fi
+  { IFS= read -r marker; [[ "$marker" == fixture-age ]] || exit 23; cat; } < "$4"
+else
+  printf 'fixture-age\n'
+  cat
+fi
 ''')
         write(self.bin / "minisign", '''#!/usr/bin/env bash
 printf 'minisign:%s\n' "$*" >> "$TEST_COMMAND_LOG"
 exit "${TEST_MINISIGN_EXIT:-0}"
 ''')
-        for name in ("systemctl", "sudo", "cosign", "pg_restore", "psql", "pg_dump"):
+        for name in ("systemctl", "sudo", "cosign", "pg_restore", "pg_dump", "logger"):
             write(self.bin / name, f'#!/usr/bin/env bash\nprintf "{name}:%s\\n" "$*" >> "$TEST_COMMAND_LOG"\nexit 99\n')
         write(self.bin / "sleep", "#!/usr/bin/env bash\nexit 0\n")
         write(self.bin / "curl", '''#!/usr/bin/env bash
@@ -191,7 +217,11 @@ if sys.argv[0].endswith('verify_rollback_auth.py') and os.environ.get('TEST_AUTH
     print('fixture authorization verifier error', file=sys.stderr)
     raise SystemExit(int(os.environ['TEST_AUTH_VERIFIER_EXIT']))
 if sys.argv[0] == '-':
-    exec(compile(sys.stdin.read(), '<stdin>', 'exec'), {'__name__': '__main__'})
+    code = sys.stdin.read()
+    # Keep the real pointer switch; only its final POSIX directory fsync is
+    # unavailable on Windows. No policy/auth/database code is bypassed.
+    if not (os.name == 'nt' and 'os.open(sys.argv[1], os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))' in code):
+        exec(compile(code, '<stdin>', 'exec'), {'__name__': '__main__'})
 elif sys.argv[0] == '-c':
     code = sys.argv.pop(1)
     exec(compile(code, '<command>', 'exec'), {'__name__': '__main__'})
@@ -232,6 +262,26 @@ else:
         return self.run_shell('bash -eu "$@"', shell_path(self.tree / "upgrade/rollback.sh"),
                               "--to", "1.0.0", "--auth", shell_path(self.auth), *arguments)
 
+    def encrypted_backup(self):
+        self.set_policy("backup_restore")
+        self.identity = self.root / "fixture-identity"
+        # Synthetic identity, never a real private key.
+        write(self.identity, "fixture-identity\n")
+        self.identity.chmod(0o600)
+        self.env["BACKUP_AGE_IDENTITY_FILE"] = shell_path(self.identity)
+        self.encrypted_dump = self.backup / "neosecra-1.0.0-db.sql.gz.age"
+        self.encrypted_dump.write_bytes(b"fixture-age\n" + gzip.compress(b"SELECT 11;\n"))
+        if os.name == "nt":
+            # Exercise encryption/service dispatch on Windows with a known-safe
+            # synthetic mode. Real POSIX permission tests are explicitly skipped.
+            write(self.bin / "stat", '''#!/usr/bin/env bash
+if [[ "${@: -1}" == "$BACKUP_AGE_IDENTITY_FILE" ]]; then echo 600;
+else /usr/bin/stat "$@"; fi
+''')
+
+    def complete_postflight(self):
+        write(self.target / "install/postflight.sh", "#!/usr/bin/env bash\nexit 0\n")
+
     def calls(self):
         return self.commands.read_text(encoding="utf-8") if self.commands.exists() else ""
 
@@ -243,6 +293,16 @@ else:
         return files, pointer.stdout
 
     def upgrade(self, policy):
+        # This pre-existing test covers policy selection at the missing-env
+        # gate, not backup execution; keep its original isolation boundary.
+        self.tree.joinpath(".env.v1").unlink()
+        write(self.tree / "backup/backup.sh", '''#!/usr/bin/env bash
+set -euo pipefail
+printf 'backup:%s\n' "$*" >> "$TEST_COMMAND_LOG"
+[[ "$1" == --target ]]
+mkdir -p "$2"
+printf 'fixture encrypted backup\n' > "$2/neosecra-2.0.0-db.sql.gz.age"
+''')
         self.set_policy(policy)
         data = manifest(policy)
         data["version"] = "3.0.0"
@@ -364,11 +424,14 @@ def test_backup_restore_dispatches_safety_backup_and_sql_without_pointer_metadat
     assert "fixture-postflight-stop" in result.stderr
     assert "unbound variable" not in result.stderr
     calls = sandbox.calls()
+    assert "backup:--target" in calls
     assert " pg_dump " in calls
     assert calls.count(" psql ") == 2
-    sql = (sandbox.root / "restore-input.sql").read_text()
+    sql = (sandbox.root / "psql-input.log").read_text()
     assert "DROP SCHEMA" in sql and "SELECT 1;" in sql
-    assert list((sandbox.install / "backups").glob("*-pre-rollback-2.0.0/pre-rollback-db.sql"))
+    assert "legacy plaintext database backup" in result.stderr
+    assert list((sandbox.install / "backups").glob("*-pre-rollback-2.0.0/neosecra-*-db.sql.gz.age"))
+    assert not list((sandbox.install / "backups").glob("*-pre-rollback-2.0.0/*.sql"))
 
 
 def test_inconsistent_pointer_manifest_is_rejected(sandbox):
@@ -387,6 +450,152 @@ def test_generic_agent_pointer_only_option_is_rejected_for_backup_policy(sandbox
     result = sandbox.rollback("--pointer-only")
     assert "Backup-restore policy forbids pointer-only rollback" in result.stderr
     assert_rejected_without_mutation(sandbox, result, before, 12)
+
+
+def test_encrypted_rollback_streams_sql_and_creates_encrypted_safety_backup(sandbox):
+    sandbox.encrypted_backup()
+    sandbox.complete_postflight()
+    result = sandbox.rollback()
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = sandbox.calls()
+    assert calls.count("age:-d ") == 2  # Preflight and strict replay.
+    assert "backup:--target" in calls
+    assert calls.index("backup:--target") < calls.index(" stop")
+    assert calls.count(" psql -v ON_ERROR_STOP=1 ") == 2
+    sql = (sandbox.root / "psql-input.log").read_text()
+    assert "DROP SCHEMA" in sql and "SELECT 11;" in sql
+    assert "SELECT 1;" not in sql  # Encrypted dump wins over the legacy fixture.
+    safety = list((sandbox.install / "backups").glob("*-pre-rollback-2.0.0"))
+    assert len(safety) == 1
+    assert list(safety[0].glob("*-db.sql.gz.age"))
+    assert list(safety[0].glob("*-config.tar.gz.age"))
+    assert not list(safety[0].rglob("*.sql"))
+    assert not list(sandbox.tree.rglob("*.sql"))
+    assert not list(sandbox.target.rglob("*.sql"))
+    assert (sandbox.install / "state/installed-version").read_text() == "1.0.0\n"
+    pointer = sandbox.run_shell('readlink "$NEOSECRA_INSTALL_ROOT/current"')
+    assert pointer.stdout.strip().endswith("/releases/1.0.0")
+
+
+@pytest.mark.parametrize("failure", ["unset-identity", "missing-identity", "missing-age", "decrypt", "gzip", "empty"])
+def test_encrypted_preflight_failure_changes_nothing(sandbox, failure):
+    sandbox.encrypted_backup()
+    if failure == "unset-identity":
+        del sandbox.env["BACKUP_AGE_IDENTITY_FILE"]
+    elif failure == "missing-identity":
+        sandbox.identity.unlink()
+    elif failure == "missing-age":
+        sandbox.bin.joinpath("age").unlink()
+        # Mask a host age binary without changing unrelated command discovery.
+        with (sandbox.tree / "lib/common.sh").open("a", encoding="utf-8", newline="\n") as stream:
+            stream.write('\ncommand() { if [[ "$1" == -v && "${2:-}" == age ]]; then return 1; fi; builtin command "$@"; }\n')
+    elif failure == "decrypt":
+        sandbox.env["TEST_AGE_DECRYPT_EXIT"] = "23"
+    elif failure == "gzip":
+        sandbox.encrypted_dump.write_bytes(b"fixture-age\ninvalid gzip")
+    else:
+        sandbox.encrypted_dump.write_bytes(b"fixture-age\n" + gzip.compress(b""))
+    before = sandbox.snapshot()
+    assert_rejected_without_mutation(sandbox, sandbox.rollback(), before, 12)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not enforce POSIX identity modes/symlinks")
+@pytest.mark.parametrize("unsafe", ["mode-0644", "symlink"])
+def test_unsafe_identity_is_rejected_before_mutation(sandbox, unsafe):
+    sandbox.encrypted_backup()
+    if unsafe == "mode-0644":
+        sandbox.identity.chmod(0o644)
+    else:
+        destination = sandbox.identity.with_name("fixture-identity-target")
+        sandbox.identity.rename(destination)
+        sandbox.identity.symlink_to(destination)
+    before = sandbox.snapshot()
+    assert_rejected_without_mutation(sandbox, sandbox.rollback(), before, 12)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not enforce POSIX identity mode 0600")
+def test_real_mode_0600_identity_accepts_encrypted_rollback(sandbox):
+    sandbox.encrypted_backup()
+    result = sandbox.rollback("--dry-run")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("encrypted", [False, True])
+def test_missing_recipient_refuses_safety_backup_without_mutation(sandbox, encrypted):
+    if encrypted:
+        sandbox.encrypted_backup()
+    else:
+        sandbox.set_policy("backup_restore")
+    del sandbox.env["BACKUP_AGE_RECIPIENT"]
+    sandbox.env["BACKUP_ALLOW_PLAINTEXT"] = "1"  # Rollback must override this exception.
+    before = sandbox.snapshot()
+    result = sandbox.rollback()
+    assert "No age recipient configured" in result.stderr
+    assert_rejected_without_mutation(sandbox, result, before, 12)
+
+
+def test_encrypted_dry_run_validates_without_safety_backup_or_mutation(sandbox):
+    sandbox.encrypted_backup()
+    del sandbox.env["BACKUP_AGE_RECIPIENT"]
+    before = sandbox.snapshot()
+    result = sandbox.rollback("--dry-run")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert sandbox.calls().count("age:-d ") == 1
+    assert sandbox.snapshot() == before
+    assert not any(word in sandbox.calls() for word in (" psql ", " stop", " up ", "backup:"))
+
+
+def test_encrypted_dry_run_fails_closed_on_bad_ciphertext(sandbox):
+    sandbox.encrypted_backup()
+    sandbox.env["TEST_AGE_DECRYPT_EXIT"] = "23"
+    before = sandbox.snapshot()
+    assert_rejected_without_mutation(sandbox, sandbox.rollback("--dry-run"), before, 12)
+
+
+@pytest.mark.parametrize("failure", ["age", "gunzip", "psql"])
+def test_replay_pipeline_failure_is_not_reported_as_success(sandbox, failure):
+    sandbox.encrypted_backup()
+    sandbox.complete_postflight()
+    if failure == "age":
+        sandbox.env["TEST_AGE_FAIL_REPLAY"] = "1"
+    elif failure == "gunzip":
+        write(sandbox.bin / "gunzip", '''#!/usr/bin/env bash
+count_file="$TEST_FIXTURES/gunzip-count"
+count=$(cat "$count_file" 2>/dev/null || echo 0)
+count=$((count + 1))
+printf '%s\n' "$count" > "$count_file"
+if [[ "$count" -gt 1 ]]; then cat >/dev/null; exit 23; fi
+/usr/bin/gunzip "$@"
+''')
+    else:
+        sandbox.env["TEST_PSQL_REPLAY_EXIT"] = "23"
+    result = sandbox.rollback()
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "Database restore pipeline failed" in result.stderr
+    assert "--force-recreate" not in sandbox.calls()
+    assert (sandbox.install / "state/installed-version").read_text() == "2.0.0\n"
+
+
+def test_auto_selection_uses_newest_backup_for_target(sandbox):
+    sandbox.encrypted_backup()
+    newer = sandbox.install / "backups/newer-1.0.0"
+    newer.mkdir()
+    (newer / sandbox.encrypted_dump.name).write_bytes(b"fixture-age\n" + gzip.compress(b"SELECT 22;\n"))
+    os.utime(sandbox.backup, (1000, 1000))
+    os.utime(newer, (2000, 2000))
+    result = sandbox.rollback()
+    assert result.returncode == 42, result.stdout + result.stderr
+    assert "SELECT 22;" in (sandbox.root / "psql-input.log").read_text()
+
+
+def test_explicit_from_backup_restores_upgrade_backup_directory(sandbox):
+    sandbox.encrypted_backup()
+    source = sandbox.install / "backups/pre-upgrade-selected"
+    source.mkdir()
+    (source / sandbox.encrypted_dump.name).write_bytes(b"fixture-age\n" + gzip.compress(b"SELECT 33;\n"))
+    result = sandbox.rollback("--from-backup", shell_path(source))
+    assert result.returncode == 42, result.stdout + result.stderr
+    assert "SELECT 33;" in (sandbox.root / "psql-input.log").read_text()
 
 
 @pytest.mark.parametrize("policy", ["none", "backup_restore", "legacy"])
