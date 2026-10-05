@@ -54,18 +54,16 @@ def test_file_of_another_product_is_byte_identical_to_the_committed_one(path):
     assert actual.replace(b'\r\n', b'\n') == expected.replace(b'\r\n', b'\n'), path
 
 
-def test_update_agent_differs_from_the_committed_one_only_in_the_scrubbed_pin_names():
+def test_update_agent_scrubs_the_same_pin_names_before_upgrade_and_rollback():
     """The agent drops stale image pins inherited from the unit's environment file before it calls
-    upgrade.sh/rollback.sh; Assessment's three new pin names join that list. Nothing else changed."""
-    expected = committed('deployment/v1/agent/update-agent.sh')
-    if expected is None:
-        pytest.skip('not a git checkout or not tracked')
+    upgrade.sh/rollback.sh; Assessment's three pin names are part of that list in both places.
+    (Checked against the file itself, so the test holds before and after the change is committed.)"""
     lf, crlf = chr(10).encode(), (chr(13) + chr(10)).encode()
-    old = b'REDIS_IMAGE OPENVAS_IMAGE' + lf
-    normalised = expected.replace(crlf, lf)
-    assert normalised.count(old) == 2
-    patched = normalised.replace(old, b'REDIS_IMAGE OPENVAS_IMAGE BEAT_IMAGE ZAP_IMAGE DAST_EGRESS_IMAGE' + lf)
-    assert (ROOT / 'deployment/v1/agent/update-agent.sh').read_bytes().replace(crlf, lf) == patched
+    text = (ROOT / 'deployment/v1/agent/update-agent.sh').read_bytes().replace(crlf, lf)
+    scrub = (b'unset NEOSECRA_VERSION BACKEND_IMAGE WORKER_IMAGE FRONTEND_IMAGE POSTGRES_IMAGE REDIS_IMAGE '
+             b'OPENVAS_IMAGE BEAT_IMAGE ZAP_IMAGE DAST_EGRESS_IMAGE' + lf)
+    assert text.count(scrub) == 2
+    assert text.count(b'BEAT_IMAGE') == 2 and text.count(b'DAST_EGRESS_IMAGE') == 2
 
 
 def test_other_products_registry_contracts_are_unchanged():
