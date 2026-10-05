@@ -674,7 +674,8 @@ verify_rollback_auth() {
 }
 
 verify_release_rollback_metadata() {
-  local tree="$1" metadata="${tree}/.neosecra-update-metadata.json"
+  local tree="$1"
+  local metadata="${tree}/.neosecra-update-metadata.json"
   [[ -f "${metadata}" && ! -L "${metadata}" ]] || {
     echo "Rollback metadata is missing; DB-restore-free rollback is not proven" >&2
     return 12
