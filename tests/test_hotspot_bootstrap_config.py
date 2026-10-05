@@ -95,7 +95,8 @@ def test_ip_only_install_requires_explicit_valid_address() -> None:
     assert 'cp -- "$RELEASE_DIR/backend/.env.example" "$ENV_FILE"' in script
     assert 'set_env SERVER_HOST_IP "$SERVER_IP"' in script
     assert 'set_env RADIUS_LISTENER_HOST "$SERVER_IP"' in script
-    assert 'set_env CORS_ORIGINS "http://${SERVER_IP}:35174,http://${SERVER_IP}:35175"' in script
+    # The admin panel moved to HTTPS 443 in 0.3.127; new installs write that origin.
+    assert 'set_env CORS_ORIGINS "https://${SERVER_IP}"' in script
     assert 'r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$"' in script
     assert "os.chmod(target, 0o755)" in script
     assert "0o755 if (member.mode & 0o111) else 0o644" in script

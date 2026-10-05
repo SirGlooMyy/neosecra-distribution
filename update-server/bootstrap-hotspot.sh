@@ -604,6 +604,13 @@ RELEASE_DIR="${RELEASES_DIR}/${VERSION}"
 [[ ! -e "$RELEASE_DIR" && ! -L "$RELEASE_DIR" ]] || die "Release zaten mevcut: ${RELEASE_DIR}" 1
 mkdir -p "$RELEASE_DIR"
 cp -a "$PAYLOAD/." "$RELEASE_DIR/"
+# This script runs with umask 077, so directories the extractor had to create
+# end up 0700. The images are built from this tree and one service (the
+# storage guard) runs as root with every capability dropped: it could not read
+# its own module and the stack never started on a fresh host. The payload
+# holds no secrets (the .env written below is 0600), so make it readable the
+# way the update agent's extraction already does.
+chmod -R u+rwX,go+rX,go-w "$RELEASE_DIR"
 
 ENV_FILE="${RELEASE_DIR}/backend/.env"
 if [[ -f "$CURRENT_ENV" ]]; then
@@ -669,7 +676,33 @@ set_env MINIO_SECRET_KEY "$MINIO_SECRET"
 ensure_env CLICKHOUSE_PASSWORD "$(random_hex 32)" >/dev/null
 RADIUS_KEY="$(ensure_env RADIUS_API_KEY "$(random_hex 32)")"
 SYSLOG_KEY="$(ensure_env SYSLOG_API_KEY "$(random_hex 32)")"
-ensure_env DEFAULT_SUPERADMIN_PASSWORD "Neosecra123!" >/dev/null
+# Every installation gets its own first administrator password. A fixed
+# default would be shared by all customers; the panel forces a change at the
+# first login either way. The value is kept once in a root-only file so the
+# operator (or the appliance first-boot screen) can read it.
+INITIAL_ADMIN_FILE="${STATE_DIR}/initial-admin-password"
+if [[ -z "$(env_value DEFAULT_SUPERADMIN_PASSWORD || true)" ]]; then
+  INITIAL_ADMIN_PASSWORD="$(python3 - <<'ADMIN_PW_PY'
+import secrets
+import string
+
+lower = "abcdefghijkmnpqrstuvwxyz"
+upper = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+digits = "23456789"
+alphabet = lower + upper + digits
+while True:
+    value = "".join(secrets.choice(alphabet) for _ in range(20))
+    if any(c in lower for c in value) and any(c in upper for c in value) and any(c in digits for c in value):
+        print(value)
+        break
+ADMIN_PW_PY
+)"
+  [[ ${#INITIAL_ADMIN_PASSWORD} -eq 20 ]] || die "Ilk yonetici parolasi uretilemedi" 4
+  set_env DEFAULT_SUPERADMIN_PASSWORD "$INITIAL_ADMIN_PASSWORD"
+  ( umask 077; printf '%s\n' "$INITIAL_ADMIN_PASSWORD" > "$INITIAL_ADMIN_FILE" )
+  chmod 0600 "$INITIAL_ADMIN_FILE"
+  unset INITIAL_ADMIN_PASSWORD
+fi
 ensure_env POSTGRES_USER hotspot >/dev/null
 ensure_env POSTGRES_DB hotspot >/dev/null
 ensure_env CLICKHOUSE_USER default >/dev/null
@@ -715,7 +748,8 @@ set_env BACKUP_PATH /data/backups
 if [[ -n "$SERVER_IP" ]]; then
   set_env SERVER_HOST_IP "$SERVER_IP"
   set_env RADIUS_LISTENER_HOST "$SERVER_IP"
-  set_env CORS_ORIGINS "http://${SERVER_IP}:35174,http://${SERVER_IP}:35175"
+  # The admin panel is served on HTTPS 443 since 0.3.127; 35174/35175 are legacy redirects.
+  set_env CORS_ORIGINS "https://${SERVER_IP}"
 fi
 
 for data_dir in postgres clickhouse minio archives backups radius-runtime; do
@@ -809,3 +843,6 @@ atomic_write() {
 atomic_switch "$RELEASE_DIR"
 atomic_write "${STATE_DIR}/installed-version" "$VERSION"
 info "Hotspot v${VERSION} kuruldu; signed update kanali aktif: $CHANNEL_URL"
+if [[ -f "${STATE_DIR}/initial-admin-password" ]]; then
+  info "Ilk yonetici hesabi: admin@neosecra.com; parola bir kez okunmak uzere ${STATE_DIR}/initial-admin-password dosyasinda (yalniz root). Ilk giriste degistirilir; okuduktan sonra dosyayi silin."
+fi

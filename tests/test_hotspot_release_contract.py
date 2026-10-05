@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 import subprocess
 import sys
 import tarfile
@@ -71,7 +72,13 @@ def test_hotspot_scripts_keep_monotonic_and_recovery_guards() -> None:
     assert "COMPOSE_CONFIG_FAILED" in updater
     assert 'run --rm migrate' in updater
     assert 'start_args=(up -d --remove-orphans api worker beat admin portal freeradius)' in updater
-    assert 'DEFAULT_SUPERADMIN_PASSWORD "Neosecra123!"' in bootstrap
+    # No shared default: each installation generates its first administrator
+    # password and keeps it once in a root-only state file.
+    assert not re.search(r'ensure_env DEFAULT_SUPERADMIN_PASSWORD "[^"$]', bootstrap)
+    assert 'set_env DEFAULT_SUPERADMIN_PASSWORD "$INITIAL_ADMIN_PASSWORD"' in bootstrap
+    assert 'INITIAL_ADMIN_FILE="${STATE_DIR}/initial-admin-password"' in bootstrap
+    # Payload permissions are normalised after extraction (umask 077 installer).
+    assert 'chmod -R u+rwX,go+rX,go-w "$RELEASE_DIR"' in bootstrap
     assert "validate_channel_monotonic" in publisher
     assert "immutable release violation" in publisher
     assert "ensure_env POSTGRES_PASSWORD" in bootstrap
