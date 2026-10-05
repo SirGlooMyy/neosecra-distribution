@@ -259,8 +259,24 @@ def main() -> None:
 
     manifest_services = set(images) | set(dependencies)
     compose_services = set(services)
-    if manifest_services != compose_services:
+    # A release may declare entries that belong to a compose profile as
+    # "optional": true (Assessment: openvas, zap, dast-egress).  Such an entry is
+    # pinned and verified, but it only has to match a compose service when that
+    # profile is enabled on the installation.  Everything that IS in the compose
+    # config must still be mapped, and nothing else may be unmapped, so a release
+    # without optional entries (every other product) keeps the exact-match rule.
+    optional = {
+        name for name, metadata in {**images, **dependencies}.items()
+        if isinstance(metadata, dict) and metadata.get("optional") is True
+    }
+    if compose_services - manifest_services or (manifest_services - compose_services) - optional:
         fail("Compose services do not exactly match the release image mapping")
+    for name in sorted(optional - compose_services):
+        section = images if name in images else dependencies
+        label = f"{name} optional {'image' if name in images else 'dependency'}"
+        metadata = section[name]
+        _validate_reference(metadata.get("reference"), label)
+        _validate_digest(metadata.get("digest"), label)
 
     seen_digests: dict[str, tuple[str, str]] = {}
     for service_name in sorted(compose_services):

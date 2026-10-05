@@ -122,13 +122,54 @@ require_compose_v2() {
     die "docker compose v2 plugin not available" 2
 }
 
+# Optional DAST scanner overlay (Assessment).  A release that ships
+# docker-compose.dast.yml next to its compose file adds it to EVERY compose
+# invocation of an installation whose COMPOSE_PROFILES contains "dast"; without
+# that profile (or without the file - every other product) nothing changes.
+# Profile precedence is docker compose's own: the process environment first, then
+# the environment file.  One-off "run" containers never get the overlay: it pins
+# static addresses that a second backend container could not share.
+dast_profile_enabled() {
+  local env_file="${1:-$ENV_FILE}" profiles
+  if [[ -n "${COMPOSE_PROFILES+x}" ]]; then
+    profiles="$COMPOSE_PROFILES"
+  else
+    profiles="$(env_file_value "$env_file" COMPOSE_PROFILES "")"
+  fi
+  case ",${profiles//[[:space:]]/}," in *,dast,*) return 0 ;; esac
+  return 1
+}
+
+dast_overlay_file() {
+  local tree="${1:-$V1_ROOT}" file
+  file="${tree}/docker-compose.dast.yml"
+  [[ -f "$file" && ! -L "$file" ]] || return 1
+  printf '%s' "$file"
+}
+
+dast_overlay_active() {
+  dast_overlay_file "${1:-$V1_ROOT}" >/dev/null && dast_profile_enabled "${2:-$ENV_FILE}"
+}
+
 compose() {
+  local -a overlay=()
+  if [[ "${1:-}" != "run" ]] && dast_overlay_active; then
+    overlay=(-f "$(dast_overlay_file)")
+  fi
   docker compose \
     --project-name "$PROJECT_NAME" \
     --project-directory "$V1_ROOT" \
     --env-file "$ENV_FILE" \
     -f "$COMPOSE_FILE" \
+    ${overlay[@]+"${overlay[@]}"} \
     "$@"
+}
+
+# The compose arguments (without the "docker compose" prefix) of the current
+# context, for callers that must wrap the command (for example in timeout(1)).
+compose_args() {
+  COMPOSE_ARGS=(--project-name "$PROJECT_NAME" --project-directory "$V1_ROOT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
+  if dast_overlay_active; then COMPOSE_ARGS+=(-f "$(dast_overlay_file)"); fi
 }
 
 run_compose() {
@@ -145,7 +186,7 @@ wait_for_postgres() (
   [[ "$wait_seconds" =~ ^([1-9]|[1-5][0-9]|60)$ ]] || return 1
   [[ "$interval" =~ ^([1-9]|[1-5][0-9]|60)$ ]] || return 1
   command -v timeout >/dev/null 2>&1 || return 1
-  export -f docker compose run_compose
+  export -f docker compose run_compose dast_profile_enabled dast_overlay_file dast_overlay_active env_file_value
   export PROJECT_NAME V1_ROOT ENV_FILE COMPOSE_FILE _DOCKER_NEEDS_SUDO
   timeout "$wait_seconds" bash -c '
     until run_compose exec -T postgres pg_isready -t 1 -U "$1" -d "$2" >/dev/null 2>&1; do
@@ -968,11 +1009,17 @@ recover_previous_release() {
       export COMPOSE_FILE="${prev_dir}/docker-compose.v1.yml"
       export ENV_FILE="${prev_dir}/.env.v1"
       cd "$prev_dir"
+      # The previous release's own DAST overlay (if it shipped one and enabled it).
+      recovery_overlay=()
+      if dast_overlay_active "$prev_dir" "${prev_dir}/.env.v1"; then
+        recovery_overlay=(-f "$(dast_overlay_file "$prev_dir")")
+      fi
       docker compose \
         --project-name "$COMPOSE_PROJECT" \
         --project-directory "$prev_dir" \
         --env-file "${prev_dir}/.env.v1" \
         -f "${prev_dir}/docker-compose.v1.yml" \
+        ${recovery_overlay[@]+"${recovery_overlay[@]}"} \
         up -d 2>/dev/null || warn "Recovery compose up failed — manual intervention may be needed"
     )
     ok "Recovery: previous release compose started (${prev_ver})"

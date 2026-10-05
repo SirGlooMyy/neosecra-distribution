@@ -1,175 +1,59 @@
 #!/usr/bin/env bash
-# NeoSecra Update Server — Build distribution release archive
-# Usage: build-release.sh <version>
-# Output: update-server/www/releases/<version>/distribution.tar.gz
+# NeoSecra Update Server - build the signed-channel release archive for Assessment.
+#
+# Usage:
+#   build-release.sh --version X.Y.Z --product-root <Assessment checkout> \
+#       --images-lock <images.lock> [--output <file>] [--release-date YYYY-MM-DDTHH:MM:SSZ]
+#
+# The archive is assembled by lib/assessment_package.py from the product files
+# Assessment owns (compose, DAST overlay, env template, release manifest, nginx
+# config, scanner scripts) and the shared runtime this repository owns (agent,
+# upgrade, lib, install, backup, bin, smoke-tests, schemas, ca).  It carries ONE
+# release manifest (stamped with version, database head, trust_policy and the
+# digests of the image lock) and release/images.lock.  The version comes from the
+# argument; no VERSION file of either repository is modified.
+#
+# images.lock is produced from real, pushed images by make-images-lock.sh.
+# Output (default): dist/distribution-<version>.tar.gz
 set -euo pipefail
-
-VERSION="${1:-}"
-if [[ -z "$VERSION" ]]; then
-    echo "Usage: $0 <version>"
-    exit 1
-fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-# Default publishes into the update-server web tree; override with
-# NEOSECRA_BUILD_OUTPUT_DIR for local/test builds (keeps www/releases clean).
-OUTPUT_DIR="${NEOSECRA_BUILD_OUTPUT_DIR:-${SCRIPT_DIR}/www/releases/${VERSION}}"
-ARCHIVE_NAME="distribution.tar.gz"
-ARCHIVE_DIRNAME="neosecra-distribution-${VERSION}"
+VERSION="" PRODUCT_ROOT="" IMAGES_LOCK="" OUTPUT="" RELEASE_DATE=""
 
-echo "[build-release] Building distribution archive for v${VERSION}"
+usage() { sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
+die() { echo "[build-release] ERROR: $*" >&2; exit 1; }
 
-# Create temp working directory
-TMP_DIR="$(mktemp -d)"
-trap "rm -rf '${TMP_DIR}'" EXIT
-
-# Create the archive root directory
-ARCHIVE_ROOT="${TMP_DIR}/${ARCHIVE_DIRNAME}"
-mkdir -p "${ARCHIVE_ROOT}"
-
-# Copy repository contents into archive root
-echo "[build-release] Copying repository contents..."
-cd "${REPO_ROOT}"
-
-# Copy only tracked files to avoid .git, secrets, etc.
-# Exclude the entire update-server/ tree: it is the *publisher* (build/sign/
-# serve tooling plus previously-published artifacts). It is not customer
-# payload, bloats the archive with nested tarballs and old bootstrap.sh copies,
-# and its build scripts (this one) carry ghcr.io patterns that must NOT be
-# rewritten by the stamping step below. The CA cert is added separately.
-git ls-files | while IFS= read -r f; do
-    case "$f" in
-        update-server/*) continue ;;
-    esac
-    mkdir -p "${ARCHIVE_ROOT}/$(dirname "$f")"
-    cp -a "$f" "${ARCHIVE_ROOT}/$f"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version) VERSION="${2:-}"; shift 2 ;;
+    --product-root) PRODUCT_ROOT="${2:-}"; shift 2 ;;
+    --images-lock) IMAGES_LOCK="${2:-}"; shift 2 ;;
+    --output) OUTPUT="${2:-}"; shift 2 ;;
+    --release-date) RELEASE_DATE="${2:-}"; shift 2 ;;
+    --help|-h) usage; exit 0 ;;
+    *) usage >&2; die "unknown option: $1" ;;
+  esac
 done
+[[ -n "$VERSION" && -n "$PRODUCT_ROOT" && -n "$IMAGES_LOCK" ]] || { usage >&2; die "--version, --product-root and --images-lock are required"; }
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "version must be numeric semver X.Y.Z"
+[[ -d "$PRODUCT_ROOT/deployment/v1" ]] || die "not an Assessment checkout: $PRODUCT_ROOT"
+[[ -f "$IMAGES_LOCK" ]] || die "image lock not found: $IMAGES_LOCK"
+[[ -n "$OUTPUT" ]] || OUTPUT="${NEOSECRA_BUILD_OUTPUT_DIR:-${REPO_ROOT}/dist}/distribution-${VERSION}.tar.gz"
 
-# Ensure CA certificate is included in archive (for client-side TLS verification).
-# The runtime (bootstrap/upgrade) reads it from deployment/ca/, which is the
-# only copy shipped. update-server/ is excluded below as it is the publisher,
-# not customer payload, and its build-tool scripts would otherwise self-collide
-# with the ghcr stamping step below.
-if [[ -d deployment/ca ]]; then
-  mkdir -p "${ARCHIVE_ROOT}/deployment/ca"
-  cp -a deployment/ca/update-neosecra-com-root.crt "${ARCHIVE_ROOT}/deployment/ca/" 2>/dev/null || true
-fi
+if [[ -n "${PYTHON_BIN:-}" ]]; then PYTHON="$PYTHON_BIN"
+elif command -v python3 >/dev/null 2>&1 && python3 -c 'import sys' >/dev/null 2>&1; then PYTHON=python3
+elif command -v python >/dev/null 2>&1 && python -c 'import sys' >/dev/null 2>&1; then PYTHON=python
+else die "python3 is required"; fi
 
-echo "[build-release] Stamping version ${VERSION}..."
-echo "${VERSION}" > "${ARCHIVE_ROOT}/deployment/VERSION"
+commit_of() { git -C "$1" rev-parse HEAD 2>/dev/null || true; }
+ARGS=(build --version "$VERSION" --product-root "$PRODUCT_ROOT" --shared-root "$REPO_ROOT"
+      --images-lock "$IMAGES_LOCK" --output "$OUTPUT")
+[[ -z "$RELEASE_DATE" ]] || ARGS+=(--release-date "$RELEASE_DATE")
+BUILD_COMMIT="$(commit_of "$PRODUCT_ROOT")"; [[ -z "$BUILD_COMMIT" ]] || ARGS+=(--build-commit "$BUILD_COMMIT")
+DIST_COMMIT="$(commit_of "$REPO_ROOT")"; [[ -z "$DIST_COMMIT" ]] || ARGS+=(--distribution-commit "$DIST_COMMIT")
 
-# Stamp the shipped v1 subtree as well: v1/VERSION and
-# v1/release-manifest.yaml are what the installed preflight compares
-# (lib/common.sh VERSION_FILE/MANIFEST_FILE resolve under v1/). 1.3.45
-# shipped v1/VERSION=1.3.44 + manifest version 1.3.2 -> preflight
-# "Version mismatch" on every fresh install.
-if [[ -d "${ARCHIVE_ROOT}/deployment/v1" ]]; then
-    echo "${VERSION}" > "${ARCHIVE_ROOT}/deployment/v1/VERSION"
-fi
-
-# U7: Compute script checksums for the manifest
-SCRIPT_CHECKSUMS=""
-checksum_script() {
-    local path="$1"
-    if [[ -f "${ARCHIVE_ROOT}/$path" ]]; then
-        local hash
-        hash=$(sha256sum "${ARCHIVE_ROOT}/$path" | cut -d' ' -f1)
-        SCRIPT_CHECKSUMS="${SCRIPT_CHECKSUMS}${path}=${hash},"
-    fi
-}
-checksum_script "deployment/upgrade/upgrade.sh"
-checksum_script "deployment/install/preflight.sh"
-checksum_script "deployment/install/postflight.sh"
-checksum_script "deployment/lib/common.sh"
-checksum_script "deployment/lib/manifest.sh"
-checksum_script "deployment/lib/state.sh"
-checksum_script "deployment/lib/docker.sh"
-checksum_script "deployment/lib/logging.sh"
-checksum_script "deployment/upgrade/rollback.sh"
-checksum_script "bootstrap.sh"
-# Strip trailing comma
-SCRIPT_CHECKSUMS="${SCRIPT_CHECKSUMS%,}"
-
-# Update release-manifest.yaml version, image refs, script checksums, release date
-# Stamps BOTH the top-level manifest and the shipped v1 subtree manifest (the
-# v1 manifest is the one preflight/install actually reads on customer hosts).
-MANIFESTS=("${ARCHIVE_ROOT}/deployment/release-manifest.yaml" "${ARCHIVE_ROOT}/deployment/v1/release-manifest.yaml")
-RELEASE_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-DB_REVISION=""
-
-# Try to get revision from alembic if available
-ASSESSMENT_REPO="${REPO_ROOT}/../neosecra-assessment"
-if [[ -d "${ASSESSMENT_REPO}/backend" ]]; then
-    DB_REVISION=$(cd "${ASSESSMENT_REPO}/backend" && \
-        DATABASE_URL=sqlite+aiosqlite:///:memory: alembic heads 2>/dev/null | awk '/\(head\)/{print $1}' || true)
-fi
-
-for MANIFEST in "${MANIFESTS[@]}"; do
-if [[ -f "$MANIFEST" ]]; then
-    sed -i "s/^version:.*/version: ${VERSION}/" "$MANIFEST"
-    sed -i "s|security-health-backend:[0-9.]*\$|security-health-backend:${VERSION}|g" "$MANIFEST"
-    sed -i "s|security-health-frontend:[0-9.]*\$|security-health-frontend:${VERSION}|g" "$MANIFEST"
-
-    # U7: script_checksums only on the top-level manifest (the v1 manifest
-    # schema predates that field; keep the shipped v1 manifest minimal).
-    # NOTE: | delimiter — SCRIPT_CHECKSUMS contains / (paths like deployment/upgrade/upgrade.sh=...)
-    if [[ "$MANIFEST" == "${ARCHIVE_ROOT}/deployment/release-manifest.yaml" ]]; then
-        if grep -q '^script_checksums:' "$MANIFEST"; then
-            sed -i "s|^script_checksums:.*|script_checksums: \"${SCRIPT_CHECKSUMS}\"|" "$MANIFEST"
-        else
-            sed -i "/^database_revision:/a script_checksums: \"${SCRIPT_CHECKSUMS}\"" "$MANIFEST"
-        fi
-    fi
-
-    if grep -q '^release_date:' "$MANIFEST"; then
-        sed -i "s|^release_date:.*|release_date: \"${RELEASE_DATE}\"|" "$MANIFEST"
-    elif grep -q '^script_checksums:' "$MANIFEST"; then
-        sed -i "/^script_checksums:/a release_date: \"${RELEASE_DATE}\"" "$MANIFEST"
-    else
-        sed -i "/^database_revision:/a release_date: \"${RELEASE_DATE}\"" "$MANIFEST"
-    fi
-
-    if [[ -n "$DB_REVISION" ]]; then
-        sed -i "s|^database_revision:.*|database_revision: \"${DB_REVISION}\"|" "$MANIFEST"
-    fi
-
-    echo "[build-release] Manifest stamped (${MANIFEST#"${ARCHIVE_ROOT}"/}):"
-    grep -E '^(version:|database_revision:|script_checksums:|release_date:)' "$MANIFEST" | sed 's/^/  /'
-fi
-done
-
-# U9: Pin every image reference to registry.neosecra.com and assert the archive
-# carries NO ghcr.io reference in any artifact. The 1.3.13 regression was caused
-# by stale ghcr refs leaking into .env.v1; this is the hard contract that
-# prevents recurrence. Two rewrites:
-#   1. ghcr.io/sirgloomyy/neosecra-assessment/<img>  -> registry.neosecra.com/<img>
-#   2. residual bare ghcr.io (login/firewall prose)   -> registry.neosecra.com
-echo "[build-release] Stamping image refs -> registry.neosecra.com ..."
-while IFS= read -r -d '' f; do
-    sed -i \
-        -e 's|ghcr.io/sirgloomyy/neosecra-assessment|registry.neosecra.com|g' \
-        -e 's|ghcr\.io|registry.neosecra.com|g' "$f"
-done < <(grep -rIl --null 'ghcr\.io' "$ARCHIVE_ROOT" 2>/dev/null || true)
-
-# Hard contract: no ghcr.io may remain in the shipped archive.
-mapfile -t -d '' GHCR_HITS < <(grep -rIl --null 'ghcr\.io' "$ARCHIVE_ROOT" 2>/dev/null || true)
-if [[ ${#GHCR_HITS[@]} -ne 0 ]]; then
-    echo "[build-release] ERROR: ghcr.io references remain in archive after stamping:" >&2
-    printf '  %s\n' "${GHCR_HITS[@]}" >&2
-    exit 1
-fi
-echo "[build-release] Verified: no ghcr.io references in archive"
-
-# Create the tarball
-echo "[build-release] Creating archive..."
-mkdir -p "${OUTPUT_DIR}"
-cd "${TMP_DIR}"
-tar czf "${OUTPUT_DIR}/${ARCHIVE_NAME}" "${ARCHIVE_DIRNAME}"
-
-# Show result
-echo "[build-release] Archive created: ${OUTPUT_DIR}/${ARCHIVE_NAME}"
-echo "[build-release] Size: $(du -h "${OUTPUT_DIR}/${ARCHIVE_NAME}" | cut -f1)"
-echo "[build-release] Contents:"
-tar tzf "${OUTPUT_DIR}/${ARCHIVE_NAME}" | head -20 || true
-echo "[build-release] Done."
+echo "[build-release] Assembling Assessment ${VERSION} (product ${PRODUCT_ROOT})"
+"$PYTHON" "${SCRIPT_DIR}/lib/assessment_package.py" "${ARGS[@]}"
+echo "[build-release] Validated with the publisher's archive checks (links, secrets, single manifest, trust_policy)."
+echo "[build-release] Next: publish.sh --product assessment --channel candidate --version ${VERSION} --archive ${OUTPUT} --images-lock ${IMAGES_LOCK} --dry-run"

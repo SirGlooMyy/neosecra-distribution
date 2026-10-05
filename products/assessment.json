@@ -5,19 +5,39 @@
   ],
   "channels": [
     "beta",
+    "candidate",
     "stable"
   ],
   "archive_pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*\\.(tar\\.gz|tgz|tar\\.xz|txz|tar\\.bz2|tbz2|tar\\.zst|tzst|tar)$",
   "trust_policy": "minisign-package-v1",
   "bundle": {
-    "requirement": "optional",
-    "format": "docker-save-tar"
+    "requirement": "none",
+    "format": "none"
   },
   "images_lock": {
-    "requirement": "none",
-    "format": "none",
-    "services": [],
-    "shared_services": []
+    "requirement": "required",
+    "format": "name-ref-sha256-v1",
+    "services": [
+      "postgres",
+      "redis",
+      "backend",
+      "worker",
+      "beat",
+      "frontend"
+    ],
+    "shared_services": [
+      [
+        "backend",
+        "worker",
+        "beat"
+      ]
+    ],
+    "optional_services": [
+      "openvas",
+      "zap",
+      "dast-egress"
+    ],
+    "archive_path": "deployment/release/images.lock"
   },
   "bootstrap": "bootstrap.sh",
   "gate": {
@@ -35,7 +55,9 @@
   "migration_metadata": "none",
   "rollback_policy": "backup-restore",
   "release_layout": "version",
-  "steps": [],
+  "steps": [
+    "images-lock"
+  ],
   "channel_defaults": {
     "edition": "standard",
     "status": "available"
@@ -46,5 +68,8 @@
   ],
   "legacy_empty_channels": [
     "beta"
+  ],
+  "pending_channels": [
+    "candidate"
   ]
 }

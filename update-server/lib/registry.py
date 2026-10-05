@@ -79,6 +79,15 @@ def load_registry(root, code):
     for allowed in reg['secret_allowlist']:
         if '..' in Path(allowed).parts: fail('unsafe secret test allowlist path')
     if lock['requirement']!='none' and not lock['services']: fail('required image service set is empty')
+    optional=lock.get('optional_services',[])
+    if set(optional)&set(lock['services']): fail('optional image service is also required')
+    if optional and lock['requirement']=='none': fail('optional image services need an image lock')
+    archive_path=lock.get('archive_path')
+    if archive_path is not None:
+        pure=Path(archive_path)
+        if pure.is_absolute() or '..' in pure.parts or '\\' in archive_path or lock['requirement']=='none': fail('unsafe image lock archive path')
+    if not set(reg.get('pending_channels',[]))<=set(reg['channels']): fail('pending channel is not registered')
+    if set(reg.get('pending_channels',[]))&set(reg.get('legacy_empty_channels',[])): fail('channel cannot be both pending and legacy empty')
     if 'bundle-lock' in reg['steps'] and (reg['bundle']['requirement']=='none' or lock['requirement']=='none'):
         fail('bundle-lock step requires declared bundle and image lock formats')
     return reg
@@ -180,7 +189,12 @@ def images(path, reg):
             fail('duplicate image digest is not an allowed share')
         rows[name] = {'reference':reference,'digest':digest}
         seen[digest]=name
-    if set(rows) != set(reg['images_lock']['services']): fail('images lock must match compose services exactly')
+    required=set(reg['images_lock']['services']); optional=set(reg['images_lock'].get('optional_services',[]))
+    if not required <= set(rows) or set(rows)-required-optional: fail('images lock must match compose services exactly')
+    # Profile services (Assessment: openvas, zap, dast-egress) are pinned like the rest but
+    # flagged, so a stack without that profile still matches the signed mapping.
+    for name in rows:
+        if name in optional: rows[name]['optional']=True
     return rows
 
 def main():
@@ -199,6 +213,19 @@ def main():
         validate_manifest_trust(args[1],reg); return
     if command=='validate-channel':
         validate_channel(read_json(args[2]),reg,args[0]+'-'+args[1]); return
+    if command=='validate-lock-in-archive':
+        # The package carries the image lock it was built with; it must be the lock being published.
+        _,archive,lock=args
+        member_path=reg['images_lock'].get('archive_path')
+        if not member_path: return
+        from bundle_lock import TarReader
+        with TarReader(Path(archive)) as stream:
+            matches=[m for m in stream.getmembers() if m.isfile() and m.name.split('/',1)[-1]==member_path]
+            if len(matches)!=1: fail('archive does not carry exactly one '+member_path)
+            with stream.extractfile(matches[0]) as source: packaged=source.read()
+        normalise=lambda data:data.replace(b'\r\n',b'\n')
+        if normalise(packaged)!=normalise(Path(lock).read_bytes()): fail('archive image lock differs from --images-lock')
+        return
     if command=='plan':
         _,channel,version,archive,bundle,lock,migration = args
         if not CODE.fullmatch(channel) or channel not in reg['channels']: fail('channel is not registered for product')

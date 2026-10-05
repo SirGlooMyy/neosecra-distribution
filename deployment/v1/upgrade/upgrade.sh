@@ -12,6 +12,20 @@ ARTIFACT_VERIFIER="${NEOSECRA_ARTIFACT_VERIFIER:-${V1_ROOT}/agent/artifact-verif
 [[ -f "${ARTIFACT_VERIFIER}" && ! -L "${ARTIFACT_VERIFIER}" ]] || die "SECURITY VIOLATION: artifact-verifier.sh missing" 4
 source "${ARTIFACT_VERIFIER}"
 
+# Assessment steps (service switch incl. beat and the optional DAST services,
+# upgrade-time login probe) and the declarative post-upgrade hook
+# runner live in their own libraries.  A tree that does not ship them keeps the
+# historic behaviour through the fallbacks below.
+[[ ! -f "${V1_ROOT}/lib/assessment_upgrade.sh" ]] || source "${V1_ROOT}/lib/assessment_upgrade.sh"
+[[ ! -f "${V1_ROOT}/lib/post_upgrade.sh" ]] || source "${V1_ROOT}/lib/post_upgrade.sh"
+type -t switch_application_services >/dev/null 2>&1 || switch_application_services() {
+  run_compose up -d --force-recreate backend worker frontend
+}
+type -t verify_admin_login_for_upgrade >/dev/null 2>&1 || verify_admin_login_for_upgrade() {
+  verify_initial_admin_login_via_frontend
+}
+type -t run_post_upgrade_hooks >/dev/null 2>&1 || run_post_upgrade_hooks() { return 0; }
+
 # Sourced libraries intentionally derive their own helper paths.  Keep the
 # canonical upgrade/recovery tree immutable when the runtime context later
 # switches to releases/<target>.
@@ -673,6 +687,11 @@ prepare_target_release() {
       die "Release payload for ${target} lacks the expected layout (missing deployment/${marker}) — aborting" 4
   done
   cp -a "${payload}/." "${staging}/"
+  # The extractor accepts no dot-files, so a package ships its environment
+  # template as env.v1.example (preflight expects .env.v1.example).
+  if [[ -f "${staging}/env.v1.example" && ! -e "${staging}/.env.v1.example" ]]; then
+    mv -- "${staging}/env.v1.example" "${staging}/.env.v1.example"
+  fi
 
   # Carry local config from the running tree (the payload ships templates
   # only). The env file (.env.v1) holds the install secrets; config/tls holds
@@ -1166,6 +1185,23 @@ PY
   # Backup env file for atomic rollback if verification fails mid-way
   cp -a "$ENV_FILE" "${ENV_FILE}.bak"
 
+  # Repository digest of an image in the local store.  An image pulled BY DIGEST (every
+  # pinned image is) has no tag, so "<repo>:<tag>" finds nothing; Assessment therefore asks
+  # for the exact "<repo>@<digest>" first and falls back to the historic lookup by reference.
+  # Either way the digest Docker reports must equal the signed one.  Other products keep
+  # the by-reference lookup only.
+  local_image_digest() {
+    local ref="$1" expected="$2" repo last found=""
+    if [[ "$expected_product" == "assessment" && "$expected" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+      if [[ "$ref" == */* ]]; then last="${ref##*/}"; repo="${ref%/*}/${last%%:*}"; else repo="${ref%%:*}"; fi
+      found="$(docker inspect --format '{{range .RepoDigests}}{{.}}{{println}}{{end}}' "${repo}@${expected}" 2>/dev/null | grep -oE 'sha256:[0-9a-f]{64}' | grep -Fx -- "$expected" | head -n1 || true)"
+    fi
+    if [[ -z "$found" ]]; then
+      found="$(docker inspect --format '{{range .RepoDigests}}{{.}}{{println}}{{end}}' "$ref" 2>/dev/null | grep -oE 'sha256:[0-9a-f]{64}' | head -n1 || true)"
+    fi
+    printf '%s' "$found"
+  }
+
   local success=1
   while read -r action arg1 arg2 arg3 arg4 arg5; do
      if [[ -z "$action" ]]; then continue; fi
@@ -1191,7 +1227,7 @@ PY
          # local digest check
          local local_digest
          if [[ "$require_local_digest" == "1" ]]; then
-           local_digest="$(docker inspect --format '{{range .RepoDigests}}{{.}}{{println}}{{end}}' "$image_ref" 2>/dev/null | grep -oE 'sha256:[0-9a-f]{64}' | head -n1 || true)"
+           local_digest="$(local_image_digest "$image_ref" "$expected_digest")"
            if [[ -z "$local_digest" || "$local_digest" != "$expected_digest" ]]; then
              echo 'F: DIGEST_MISMATCH ' "$local_digest" "$expected_digest"; success=0; break
            fi
@@ -1220,7 +1256,7 @@ PY
          fi
          local local_digest
          if [[ "$require_local_digest" == "1" ]]; then
-           local_digest="$(docker inspect --format '{{range .RepoDigests}}{{.}}{{println}}{{end}}' "$image_ref" 2>/dev/null | grep -oE 'sha256:[0-9a-f]{64}' | head -n1 || true)"
+           local_digest="$(local_image_digest "$image_ref" "$expected_digest")"
            if [[ -z "$local_digest" || "$local_digest" != "$expected_digest" ]]; then
              echo 'F: DIGEST_MISMATCH ' "$local_digest" "$expected_digest"; success=0; break
            fi
@@ -1316,7 +1352,7 @@ sync_initial_admin_credentials || die "Initial admin credential synchronization 
 
 # --- Restart ---
 python3 "${RECOVERY_ROOT}/upgrade/recovery.py" journal_step "${RECOVERY_ROOT}" "PROMOTE" "STARTED" "${EXEC_ID:-none}" "$TARGET"
-if ! run_compose up -d --force-recreate backend worker frontend; then
+if ! switch_application_services; then
   print_service_diagnostics backend worker frontend
   die "Application services failed to start after upgrade" 13
 fi
@@ -1325,7 +1361,7 @@ wait_service_running worker 60
 wait_service_running frontend 60
 wait_frontend_http 120 || { print_service_diagnostics frontend; die "Frontend HTTP not reachable within 120s" 13; }
 wait_frontend_api_proxy 120 || { print_service_diagnostics frontend backend; die "Frontend API proxy not reachable within 120s" 13; }
-verify_initial_admin_login_via_frontend || { print_service_diagnostics frontend backend; die "Initial admin login verification failed" 13; }
+verify_admin_login_for_upgrade || { print_service_diagnostics frontend backend; die "Initial admin login verification failed" 13; }
 
 # --- Verify ---
 if ! bash "${V1_ROOT}/install/postflight.sh" --timeout 120; then
@@ -1335,6 +1371,16 @@ if ! bash "${V1_ROOT}/install/postflight.sh" --timeout 120; then
   die "Upgrade failed at health verification" 13
 fi
 ok "Health verification passed"
+
+# --- Post-upgrade hooks (declared in the target release manifest) ---
+# Idempotent steps that need the new services up (for example the compliance
+# backfill of 1.3.75).  Hooks declared on_failure=warn never fail the upgrade.
+if ! run_post_upgrade_hooks "$CURRENT" "$TARGET" "${V1_ROOT}/release-manifest.yaml"; then
+  err "A post-upgrade hook declared on_failure=fail did not succeed"
+  print_service_diagnostics backend worker
+  attempt_signed_rollback
+  die "Upgrade failed at a post-upgrade hook" 13
+fi
 
 # --- State ---
 

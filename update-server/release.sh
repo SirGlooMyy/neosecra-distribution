@@ -34,6 +34,15 @@ Options:
   --skip-registry-push       Skip image promotion (only with an explicit reason)
   --image-digests <path>     JSON lock produced by CI with backend/frontend
                              sha256 digests; required for image promotion
+  --channel <name>           Release channel: stable (default) or candidate.
+                             candidate publishes assessment-candidate (demo/POC
+                             hosts) without the stable gate; the same archive
+                             bytes are promoted to stable later with
+                             --channel stable. Images of a candidate release are
+                             pushed from the publish host (docs: Assessment
+                             release runbook), so use --skip-registry-push.
+  --images-lock <path>       images.lock made by make-images-lock.sh from the
+                             real, pushed images (required: build + publish)
   --rsync <target>           rsync target for publish.sh (user@host:/path)
   --dry-run                  Print actions without executing anything destructive
   --help                     Show this help and exit
@@ -61,9 +70,13 @@ SKIP_REGISTRY_PUSH=0
 IMAGE_DIGESTS_FILE="${NEOSECRA_IMAGE_DIGESTS_FILE:-}"
 RSYNC_TARGET=""
 DRY_RUN=0
+CHANNEL_ARG=""
+IMAGES_LOCK=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --channel)           CHANNEL_ARG="$2";      shift 2 ;;
+        --images-lock)       IMAGES_LOCK="$2";      shift 2 ;;
         --assessment-repo)   ASSESSMENT_REPO="$2";  shift 2 ;;
         --skip-ci-wait)      SKIP_CI_WAIT=1;        shift   ;;
         --skip-registry-push) SKIP_REGISTRY_PUSH=1;  shift   ;;
@@ -120,10 +133,19 @@ ASSESSMENT_VERSION_FILE="${ASSESSMENT_REPO}/VERSION"
 ASSESSMENT_V1_VERSION_FILE="${ASSESSMENT_REPO}/deployment/v1/VERSION"
 MANIFEST_FILE="${ASSESSMENT_REPO}/deployment/v1/release-manifest.yaml"
 ALEMBIC_DIR="${ASSESSMENT_REPO}/backend/alembic/versions"
-ARCHIVE_DIR="${SCRIPT_DIR}/www/releases/${VERSION}"
+ARCHIVE_DIR="${REPO_ROOT}/dist"
+ARCHIVE_FILE="${ARCHIVE_DIR}/distribution-${VERSION}.tar.gz"
 TAG="security-health-v${VERSION}"
 PRODUCT="assessment"
-CHANNEL="stable"
+CHANNEL="${CHANNEL_ARG:-stable}"
+case "$CHANNEL" in
+    stable|candidate) ;;
+    *) echo "[ERROR] --channel must be stable or candidate (got: ${CHANNEL})"; exit 1 ;;
+esac
+if [[ -z "$IMAGES_LOCK" || ! -f "$IMAGES_LOCK" ]] && [[ $DRY_RUN -eq 0 ]]; then
+    echo "[ERROR] --images-lock <file> is required (make-images-lock.sh produces it from the pushed images)"
+    exit 1
+fi
 
 REGISTRY_PUSH_TARGET="${UPDATE_REGISTRY_PUSH_TARGET:-ssh neosecra@100.125.0.108}"
 
@@ -426,10 +448,11 @@ fi
 log_step 3 6 "Building distribution archive via build-release.sh"
 
 if [[ $DRY_RUN -eq 1 ]]; then
-    log " [DRY-RUN]   bash ${SCRIPT_DIR}/build-release.sh ${VERSION}"
+    log " [DRY-RUN]   bash ${SCRIPT_DIR}/build-release.sh --version ${VERSION} --product-root ${ASSESSMENT_REPO} --images-lock ${IMAGES_LOCK:-<images.lock>} --output ${ARCHIVE_FILE}"
 else
-    bash "${SCRIPT_DIR}/build-release.sh" "${VERSION}"
-    log " Build complete: ${ARCHIVE_DIR}/distribution.tar.gz"
+    bash "${SCRIPT_DIR}/build-release.sh" --version "${VERSION}" --product-root "${ASSESSMENT_REPO}" \
+        --images-lock "${IMAGES_LOCK}" --output "${ARCHIVE_FILE}"
+    log " Build complete: ${ARCHIVE_FILE}"
 fi
 
 # ============================================================================
@@ -575,17 +598,17 @@ log_step 5 6 "Signing and publishing archive via publish.sh"
 
 if [[ $DRY_RUN -eq 1 ]]; then
     log " [DRY-RUN]   mktemp -d"
-    log " [DRY-RUN]   cp ${ARCHIVE_DIR}/distribution.tar.gz -> <tmp>/distribution-${VERSION}.tar.gz"
+    log " [DRY-RUN]   cp ${ARCHIVE_FILE} -> <tmp>/distribution-${VERSION}.tar.gz"
     if [[ -n "$RSYNC_TARGET" ]]; then
-        log " [DRY-RUN]   bash ${SCRIPT_DIR}/publish.sh --product ${PRODUCT} --channel ${CHANNEL} --version ${VERSION} --archive <tmp>/distribution-${VERSION}.tar.gz --rsync ${RSYNC_TARGET}"
+        log " [DRY-RUN]   bash ${SCRIPT_DIR}/publish.sh --product ${PRODUCT} --channel ${CHANNEL} --version ${VERSION} --archive <tmp>/distribution-${VERSION}.tar.gz --images-lock ${IMAGES_LOCK:-<images.lock>} --rsync ${RSYNC_TARGET}"
     else
-        log " [DRY-RUN]   bash ${SCRIPT_DIR}/publish.sh --product ${PRODUCT} --channel ${CHANNEL} --version ${VERSION} --archive <tmp>/distribution-${VERSION}.tar.gz"
+        log " [DRY-RUN]   bash ${SCRIPT_DIR}/publish.sh --product ${PRODUCT} --channel ${CHANNEL} --version ${VERSION} --archive <tmp>/distribution-${VERSION}.tar.gz --images-lock ${IMAGES_LOCK:-<images.lock>}"
     fi
 else
     PUBLISH_TMPDIR="$(mktemp -d)"
     log " Temp dir: ${PUBLISH_TMPDIR}"
 
-    ARCHIVE_SRC="${ARCHIVE_DIR}/distribution.tar.gz"
+    ARCHIVE_SRC="${ARCHIVE_FILE}"
     if [[ ! -f "$ARCHIVE_SRC" ]]; then
         echo "[ERROR] Archive not found at ${ARCHIVE_SRC}. Did build-release.sh succeed?"
         exit 1
@@ -600,6 +623,7 @@ else
         --channel "${CHANNEL}"
         --version "${VERSION}"
         --archive "${ARCHIVE_COPY}"
+        --images-lock "${IMAGES_LOCK}"
     )
     if [[ -n "$RSYNC_TARGET" ]]; then
         PUBLISH_ARGS+=(--rsync "${RSYNC_TARGET}")
@@ -656,7 +680,7 @@ if [[ $DRY_RUN -eq 0 ]]; then
         CURRENT_CHANNEL_VER=$(python3 -c "import json; print(json.load(open('${CHANNEL_JSON}'))['current_version'])")
         echo "  Channel version: ${CURRENT_CHANNEL_VER}"
     fi
-    ARCHIVE_SHA_FILE="${ARCHIVE_DIR}/distribution.tar.gz.sha256"
+    ARCHIVE_SHA_FILE="${SCRIPT_DIR}/www/releases/${VERSION}/distribution-${VERSION}.tar.gz.sha256"
     if [[ -f "$ARCHIVE_SHA_FILE" ]]; then
         ARCHIVE_SHA=$(cut -d' ' -f1 "$ARCHIVE_SHA_FILE")
         echo "  Archive SHA256:  ${ARCHIVE_SHA}"

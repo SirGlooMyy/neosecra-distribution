@@ -10,6 +10,7 @@ import tarfile
 import pytest
 from fixtures.publisher import ROOT, Publisher, package, migration_off, fake_signature, posix
 from test_soc_publish_contract import _lock, _write_bundle, _write_package
+from test_assessment_publish import archive as assessment_archive, write_lock as assessment_lock
 
 sys.path.insert(0,str(ROOT/'update-server/lib'))
 from channel import spans
@@ -23,7 +24,7 @@ def test_unsigned_assessment_reservation_cannot_be_published(tmp_path):
     source.write_bytes((ROOT/'channels/assessment-beta.json').read_bytes())
     Path(str(source)+'.minisig').unlink()
     before=p.snapshot()
-    result=p.run(product='assessment',channel='beta')
+    result=p.run(product='assessment',channel='beta',archive=assessment_archive(tmp_path/'assessment-1.0.1.tar.gz',version='1.0.1'),lock=assessment_lock(tmp_path))
     assert result.returncode!=0 and 'Unsafe channel pair' in result.stderr
     assert p.snapshot()==before
 
@@ -104,7 +105,7 @@ def test_two_products_same_version_do_not_collide(tmp_path):
     assert (p.www/'releases/pish/1.0.1/second.tar.gz').read_bytes()==second.read_bytes()
 
 def test_assessment_retains_legacy_bootstrap_layout(tmp_path):
-    p=Publisher(tmp_path,stub_gates=True);success(p.run(product='assessment'))
+    p=Publisher(tmp_path,stub_gates=True);success(p.run(product='assessment',archive=assessment_archive(tmp_path/'assessment-1.0.1.tar.gz',version='1.0.1'),lock=assessment_lock(tmp_path)))
     release=json.loads((p.www/'channels/assessment-stable.json').read_text())['releases'][0]
     assert release['bootstrap']['url']=='https://update.neosecra.com/releases/1.0.1/bootstrap.sh'
     assert (p.www/'releases/1.0.1/bootstrap.sh').read_bytes()==(p.root/'bootstrap.sh').read_bytes()
@@ -191,7 +192,8 @@ def without_image_trust_tools(p):
 def test_minisign_publisher_needs_no_cosign_or_syft(tmp_path,product,dry):
     p=Publisher(tmp_path);without_image_trust_tools(p);before=p.snapshot()
     # Exercise the actual generic gate with only its repository pytest runner stubbed.
-    result=p.run(product=product,dry=dry);success(result)
+    inputs=dict(archive=assessment_archive(tmp_path/'assessment-1.0.1.tar.gz',version='1.0.1'),lock=assessment_lock(tmp_path)) if product=='assessment' else {}
+    result=p.run(product=product,dry=dry,**inputs);success(result)
     if dry:
         assert 'trust=minisign-package-v1' in result.stdout
         assert p.snapshot()==before

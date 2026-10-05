@@ -34,11 +34,19 @@ sys.path.insert(0,script_text+'/update-server/lib')
 from registry import load_registry,read_json,repo_file,validate_channel,validate_empty_channel
 from verify import signature
 root=Path(root_text);www=Path(www_args[0]) if www_args else None
-registry_root=Path(registry_text);count=0
+registry_root=Path(registry_text);count=0;pending=[]
 for path in sorted((registry_root/'products').glob('*.json')):
     reg=load_registry(registry_root,path.stem)
     for channel in reg['channels']:
         name=reg['code']+'-'+channel
+        planned=root/('channels/'+name+'.json')
+        # A channel registered ahead of its first signed publication ("pending_channels")
+        # has no file yet; it is tolerated only while neither copy exists.
+        if channel in reg.get('pending_channels',[]) and not planned.exists() and not planned.is_symlink():
+            if www and (www/'channels'/(name+'.json')).exists():
+                raise SystemExit('channel source-of-truth drift')
+            pending.append(name)
+            continue
         source=repo_file(root,'channels/'+name+'.json')
         source_sig=Path(str(source)+'.minisig')
         unsigned=not source_sig.exists() and not source_sig.is_symlink()
@@ -59,5 +67,5 @@ for path in sorted((registry_root/'products').glob('*.json')):
                 raise SystemExit('channel signature source-of-truth drift')
         count+=1
 if not count: raise SystemExit('no registered channels')
-print(f'validated {count} registered channels')
+print(f'validated {count} registered channels'+(' (pending first publication: '+', '.join(pending)+')' if pending else ''))
 PY

@@ -17,11 +17,29 @@ def test_canonical_records_match_schema(product):
     assert load_registry(ROOT,product)==data
     assert data['trust_policy']=='minisign-package-v1'
 
-@pytest.mark.parametrize('product',['assessment','pish'])
+@pytest.mark.parametrize('product',['pish'])
 def test_minisign_policy_preserves_existing_package_contract(product):
     data=load_registry(ROOT,product)
     assert data['bundle']=={'requirement':'optional','format':'docker-save-tar'}
     assert data['images_lock']=={'requirement':'none','format':'none','services':[],'shared_services':[]}
+    assert data['channel_defaults']['status']=='available'
+
+def test_assessment_publishes_registry_pulled_digest_pinned_images():
+    data=load_registry(ROOT,'assessment')
+    assert data['channels']==['beta','candidate','stable']
+    assert data['trust_policy']=='minisign-package-v1'
+    # upgrade.sh pulls by digest from the registry: a docker bundle is not part of this contract.
+    assert data['bundle']=={'requirement':'none','format':'none'}
+    lock=data['images_lock']
+    assert lock['requirement']=='required' and lock['format']=='name-ref-sha256-v1'
+    assert lock['services']==['postgres','redis','backend','worker','beat','frontend']
+    assert lock['shared_services']==[['backend','worker','beat']]
+    assert lock['optional_services']==['openvas','zap','dast-egress']
+    assert lock['archive_path']=='deployment/release/images.lock'
+    assert data['steps']==['images-lock'] and data['pending_channels']==['candidate']
+    # Candidate is not gated (like hotspot-candidate); stable keeps the registered gate.
+    assert data['gate']['channels']==['stable']
+    assert data['legacy_empty_channels']==['beta']
     assert data['channel_defaults']['status']=='available'
 
 def test_existing_channels_pass_unchanged():
@@ -74,7 +92,7 @@ def test_registry_channel_list_is_dynamic(tmp_path):
         for channel in data['channels']: p.seed(data['code'],channel)
     result=p.shell([str(p.root/'bin/validate-channels.sh').replace('\\','/'),str(p.root).replace('\\','/')])
     assert result.returncode==0,result.stdout+result.stderr
-    assert 'validated 8 registered channels' in result.stdout
+    assert 'validated 9 registered channels' in result.stdout
     blocked=p.shell([str(p.root/'bin/validate-channels.sh').replace('\\','/'),str(p.root).replace('\\','/')],NEOSECRA_CHANNEL_PUBLIC_KEY=str(tmp_path/'missing.pub').replace('\\','/'))
     assert blocked.returncode!=0 and 'missing explicitly pinned' in blocked.stderr
 
@@ -124,7 +142,7 @@ def validator_fixture(tmp_path):
 
 
 @pytest.mark.parametrize('www_arg',['omitted','empty','present','python-fallback'])
-def test_validator_accepts_only_unsigned_reservation_and_counts_seven(tmp_path,www_arg):
+def test_validator_accepts_only_unsigned_reservation_and_counts_eight(tmp_path,www_arg):
     p=validator_fixture(tmp_path);before=p.snapshot()
     if www_arg=='python-fallback':
         (p.bin/'python').write_bytes((p.bin/'python3').read_bytes())
@@ -135,7 +153,7 @@ def test_validator_accepts_only_unsigned_reservation_and_counts_seven(tmp_path,w
     if www_arg=='present': args.append(str(p.www).replace('\\','/'))
     result=p.shell(args)
     assert result.returncode==0,result.stdout+result.stderr
-    assert result.stdout.strip()=='validated 7 registered channels'
+    assert result.stdout.strip()=='validated 8 registered channels'
     assert p.snapshot()==before
 
 
@@ -163,5 +181,5 @@ def test_validator_reservation_exception_remains_fail_closed(tmp_path,failure):
     before=p.snapshot()
     result=p.shell([str(p.root/'bin/validate-channels.sh').replace('\\','/'),str(p.root).replace('\\','/'),str(p.www).replace('\\','/')])
     assert result.returncode!=0,result.stdout+result.stderr
-    assert 'validated 7 registered channels' not in result.stdout
+    assert 'validated 8 registered channels' not in result.stdout
     assert p.snapshot()==before

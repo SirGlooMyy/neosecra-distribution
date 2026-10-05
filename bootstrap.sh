@@ -90,6 +90,21 @@ fi
 # Channel / version resolution
 # ---------------------------------------------------------------------------
 CHANNEL_URL="${NEOSECRA_CHANNEL_URL:-https://update.neosecra.com/channels/assessment-stable.json}"
+# The channel this installation follows.  Default (and every existing install):
+# assessment-stable.  A demo/POC host is installed from assessment-candidate by
+# pointing NEOSECRA_CHANNEL_URL at that file (or setting NEOSECRA_EXPECTED_CHANNEL).
+EXPECTED_CHANNEL="${NEOSECRA_EXPECTED_CHANNEL:-}"
+if [[ -z "$EXPECTED_CHANNEL" ]]; then
+  case "$(basename "${CHANNEL_URL%%\?*}")" in
+    assessment-candidate.json) EXPECTED_CHANNEL="assessment-candidate" ;;
+    assessment-beta.json) EXPECTED_CHANNEL="assessment-beta" ;;
+    *) EXPECTED_CHANNEL="assessment-stable" ;;
+  esac
+fi
+case "$EXPECTED_CHANNEL" in
+  assessment-stable|assessment-candidate|assessment-beta) ;;
+  *) err "Unsupported channel: ${EXPECTED_CHANNEL} (assessment-stable, assessment-candidate or assessment-beta)" ;;
+esac
 if [[ -n "${LOCAL_MANIFEST:-}" ]]; then
   cp -- "$LOCAL_MANIFEST" "$TMP_DIR/channel.json"
   cp -- "${LOCAL_MANIFEST}.minisig" "$TMP_DIR/channel.json.minisig"
@@ -98,8 +113,9 @@ else
   curl "${CURL_OPTS[@]}" -o "$TMP_DIR/channel.json.minisig" "${CHANNEL_URL}.minisig"
 fi
 verify_minisign_keyring "$TMP_DIR/channel.json" "$TMP_DIR/channel.json.minisig" || err "Channel Minisign signature verification failed"
-python3 - "$TMP_DIR/channel.json" "$BASE" "${NEOSECRA_VERSION:-}" "$TMP_DIR/release-fields" "${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-}" <<'CHANNEL_PY'
+NEOSECRA_EXPECTED_CHANNEL="$EXPECTED_CHANNEL" python3 - "$TMP_DIR/channel.json" "$BASE" "${NEOSECRA_VERSION:-}" "$TMP_DIR/release-fields" "${NEOSECRA_DISTRIBUTION_ARCHIVE_URL:-}" <<'CHANNEL_PY'
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -115,7 +131,7 @@ def version_key(value):
     rank = 0 if suffix.startswith("-") else 2 if suffix.startswith(".") else 1
     return int(major), int(minor), int(patch), rank, tokens
 channel = json.loads(Path(source).read_text(encoding="utf-8"))
-if (not isinstance(channel, dict) or channel.get("channel") != "assessment-stable"
+if (not isinstance(channel, dict) or channel.get("channel") != os.environ.get("NEOSECRA_EXPECTED_CHANNEL", "assessment-stable")
         or channel.get("product") != "assessment"
         or channel.get("product_code", "assessment") != "assessment"):
     raise SystemExit("Channel identity mismatch")
@@ -465,6 +481,16 @@ if [[ -d "$RELEASE_DIR" ]]; then
 fi
 mkdir -p "$RELEASE_DIR"
 rsync -a deployment/ "$RELEASE_DIR/" 2>/dev/null || cp -r deployment/* "$RELEASE_DIR/" 2>/dev/null || err "Script dosyaları kopyalanamadı"
+# The archive extractor accepts no dot-files: a package ships its environment
+# template as env.v1.example (preflight expects .env.v1.example).
+if [[ -f "${RELEASE_DIR}/env.v1.example" && ! -e "${RELEASE_DIR}/.env.v1.example" ]]; then
+  mv -- "${RELEASE_DIR}/env.v1.example" "${RELEASE_DIR}/.env.v1.example"
+fi
+# A flat package keeps the runtime at the release root while the update-agent units
+# reach it through current/v1/...; a package with its own v1/ tree is left alone.
+if [[ -f "${RELEASE_DIR}/agent/update-agent.sh" && ! -e "${RELEASE_DIR}/v1" ]]; then
+  ln -sfn . "${RELEASE_DIR}/v1"
+fi
 
 # U6: Script checksum divergence check — compare deployed scripts against manifest
 if [[ -f "${RELEASE_DIR}/release-manifest.yaml" ]]; then
@@ -534,6 +560,11 @@ if [[ ! -f .env.v1 ]]; then
     [[ "$LICENSE_PUBLIC_KEY_LINE" != "LICENSE_PUBLIC_KEY_B64=" ]] || LICENSE_PUBLIC_KEY_LINE="LICENSE_PUBLIC_KEY_B64=qe+qrDcT1FNuvTcVNUEf/bwru4dJakikHPaf0ELEdf8="
   fi
 
+  # Stable keeps the historic lines; any other channel also binds the agent/licence to it.
+  UPGRADE_CHANNEL_LINES=("UPGRADE_CHANNEL_URL=https://update.neosecra.com/channels/${EXPECTED_CHANNEL}.json")
+  if [[ "$EXPECTED_CHANNEL" != "assessment-stable" ]]; then
+    UPGRADE_CHANNEL_LINES+=("UPGRADE_RELEASE_CHANNEL=${EXPECTED_CHANNEL}")
+  fi
   printf '%s\n' \
     "NEOSECRA_VERSION=${VERSION}" \
     "${LICENSE_PUBLIC_KEY_LINE}" \
@@ -570,7 +601,7 @@ if [[ ! -f .env.v1 ]]; then
     "DATA_RETENTION_ENABLED=true" \
     "DATA_RETENTION_DAYS=365" \
     "DATA_RETENTION_FAILED_DAYS=90" \
-    "UPGRADE_CHANNEL_URL=https://update.neosecra.com/channels/assessment-stable.json" \
+    "${UPGRADE_CHANNEL_LINES[@]}" \
     "UPGRADE_CHANNEL_PUBLIC_KEY=/etc/neosecra/ca/update-neosecra-com.pub" \
     "NOTIFICATION_ENABLED=false" \
     "SMTP_HOST=" \

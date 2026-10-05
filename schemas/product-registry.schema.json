@@ -115,6 +115,18 @@
             },
             "minItems": 2
           }
+        },
+        "optional_services": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          }
+        },
+        "archive_path": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._/-]*$"
         }
       }
     },
@@ -233,6 +245,14 @@
       }
     },
     "legacy_empty_channels": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      }
+    },
+    "pending_channels": {
       "type": "array",
       "uniqueItems": true,
       "items": {

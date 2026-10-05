@@ -7,6 +7,7 @@
 update-server/publish.sh
 update-server/release.sh
 update-server/build-release.sh
+update-server/make-images-lock.sh
 update-server/soc-bundle-lock.py
 update-server/lib/**
 update-server/src/**

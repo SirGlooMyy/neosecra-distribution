@@ -48,7 +48,7 @@ class Publisher:
         self.key=tmp/'adapter-key';self.key.write_text('test-only signing adapter\n',encoding='utf-8')
         for name in ('minisign','rsync','ssh'):
             shutil.copyfile(FIXTURES/name,self.bin/name);(self.bin/name).chmod(0o755)
-        python=posix(ROOT/'.codex-python/python.exe') if os.name=='nt' else sys.executable
+        python=os.environ.get('NEOSECRA_TEST_PYTHON') or (posix(ROOT/'.codex-python/python.exe') if os.name=='nt' else sys.executable)
         (self.bin/'python3').write_text('#!/usr/bin/env bash\nexec "'+python+'" "$@"\n',encoding='utf-8')
         (self.bin/'python3').chmod(0o755)
         for name in ('cosign','docker','pytest'):

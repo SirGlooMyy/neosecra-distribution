@@ -54,3 +54,6 @@ __pycache__/
 /update-server/www/releases/*/bootstrap*.sh*
 /.codex-python/
 /.codex-tmp/
+
+# Release archives built by update-server/build-release.sh (never committed)
+dist/

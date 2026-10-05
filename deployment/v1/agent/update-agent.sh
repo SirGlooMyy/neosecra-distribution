@@ -564,7 +564,7 @@ process_upgrade_request() {
   # compose interpolation prefers process env over --env-file, which would
   # silently recreate containers with the OLD images. Drop the pins so the
   # env file updated by upgrade.sh wins.
-  unset NEOSECRA_VERSION BACKEND_IMAGE WORKER_IMAGE FRONTEND_IMAGE POSTGRES_IMAGE REDIS_IMAGE OPENVAS_IMAGE
+  unset NEOSECRA_VERSION BACKEND_IMAGE WORKER_IMAGE FRONTEND_IMAGE POSTGRES_IMAGE REDIS_IMAGE OPENVAS_IMAGE BEAT_IMAGE ZAP_IMAGE DAST_EGRESS_IMAGE
   agent_info "Running upgrade.sh ${target_version}"
   local upgrade_cmd=("${V1_ROOT}/upgrade/upgrade.sh" "${target_version}")
   [[ -n "${bundle_path}" ]] && upgrade_cmd+=(--bundle "${bundle_path}")
@@ -642,7 +642,7 @@ process_rollback_request() {
   }
 
   # Same stale-pin inheritance hazard as the upgrade path (see above).
-  unset NEOSECRA_VERSION BACKEND_IMAGE WORKER_IMAGE FRONTEND_IMAGE POSTGRES_IMAGE REDIS_IMAGE OPENVAS_IMAGE
+  unset NEOSECRA_VERSION BACKEND_IMAGE WORKER_IMAGE FRONTEND_IMAGE POSTGRES_IMAGE REDIS_IMAGE OPENVAS_IMAGE BEAT_IMAGE ZAP_IMAGE DAST_EGRESS_IMAGE
   export EXPECTED_ROLLBACK_PRODUCT="${rollback_product:-${RUNTIME_PRODUCT_CODE}}"
   export EXPECTED_ROLLBACK_CHANNEL="${rollback_channel:-${UPGRADE_RELEASE_CHANNEL:-}}"
   export EXPECTED_ROLLBACK_EDITION="${rollback_edition:-${NEOSECRA_EDITION_ID:-}}"
