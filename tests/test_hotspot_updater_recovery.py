@@ -38,6 +38,7 @@ def test_restore_rebuilds_radius_and_propagates_its_failure(tmp_path, radius_ok)
         "wait_api() { echo api; }",
         "wait_freeradius() { echo radius; return " + ("0" if radius_ok else "1") + "; }",
         "verify_compose_working_dir() { echo provenance; }",
+        function("start_previous_stack"),
         function("restore_previous_stack"),
         'restore_previous_stack /releases/0.3.66 /releases/0.3.66/backend/.env',
     ]))
@@ -47,6 +48,104 @@ def test_restore_rebuilds_radius_and_propagates_its_failure(tmp_path, radius_ok)
     assert commands[0].endswith("build api worker beat admin portal freeradius")
     assert any("up -d postgres redis clickhouse minio createbuckets" in line for line in commands)
     assert ("provenance" in result.stdout) == radius_ok
+
+
+def previous_stack_script(tmp_path, entrypoint, fail_command=""):
+    release = tmp_path / "releases" / "0.3.66"
+    (release / "backend").mkdir(parents=True)
+    (release / "backend" / ".env").write_text("", encoding="utf-8")
+    return "\n".join([
+        "set -Eeuo pipefail",
+        f"RELEASES_DIR='{release.parent.as_posix()}'; TARGET=0.3.66",
+        f"FAIL_COMMAND='{fail_command}'",
+        'run_compose() { shift 2; printf "compose:%s\\n" "$*"; [[ "$*" != "$FAIL_COMMAND" ]]; }',
+        'compose_env() { printf "%s/backend/.env\\n" "$1"; }',
+        'current_tree() { printf "%s/0.3.67\\n" "$RELEASES_DIR"; }',
+        "current_version() { echo 0.3.67; }",
+        'verify_rollback_auth() { echo "auth:$*"; }',
+        'verify_release_rollback_metadata() { echo "metadata:$*"; }',
+        "wait_api() { echo api; }",
+        "wait_freeradius() { echo radius; }",
+        'verify_compose_working_dir() { echo "provenance:$*"; }',
+        'atomic_switch_current() { echo "switch:$*"; }',
+        'write_state() { echo "state:$*"; }',
+        'write_journal() { echo "journal:$*"; }',
+        function("start_previous_stack"),
+        function("restore_previous_stack"),
+        function("rollback_to"),
+        ("rollback_to" if entrypoint == "rollback_to" else
+         f"restore_previous_stack '{release.as_posix()}' '{release.as_posix()}/backend/.env'"),
+    ])
+
+
+def test_manual_rollback_and_recovery_share_migration_free_compose_sequence(tmp_path):
+    results = []
+    for entrypoint in ("rollback_to", "restore_previous_stack"):
+        sandbox = tmp_path / entrypoint
+        sandbox.mkdir()
+        result = bash_run(sandbox, previous_stack_script(sandbox, entrypoint))
+        assert result.returncode == 0, result.stderr
+        results.append(result)
+    commands = [
+        [line.removeprefix("compose:") for line in result.stdout.splitlines() if line.startswith("compose:")]
+        for result in results
+    ]
+    assert commands[0][0] == "down --remove-orphans"
+    assert commands[0][1:] == commands[1] == [
+        "build api worker beat admin portal freeradius",
+        "up -d postgres redis clickhouse minio createbuckets",
+        "up -d --no-deps api worker beat admin portal freeradius",
+    ]
+    assert all("migrate" not in command.split() for sequence in commands for command in sequence)
+    # Dependencies have explicit names; application startup must bypass depends_on.
+    assert [command for command in commands[0] if command.startswith("up -d")] == [
+        "up -d postgres redis clickhouse minio createbuckets",
+        "up -d --no-deps api worker beat admin portal freeradius",
+    ]
+    lines = results[0].stdout.splitlines()
+    assert lines[0] == "auth:0.3.66"
+    assert lines[1].startswith("metadata:")
+    assert lines[2] == "compose:down --remove-orphans"
+    health = lines.index("api")
+    assert lines[health + 1] == "radius"
+    assert lines[health + 2].startswith("provenance:")
+    assert lines[health + 3].startswith("switch:")
+    assert lines[health + 4:] == [
+        "state:0.3.66",
+        "journal:ROLLED_BACK 0.3.67  POINTER_ONLY_ROLLBACK",
+    ]
+
+
+@pytest.mark.parametrize("entrypoint", ["rollback_to", "restore_previous_stack"])
+@pytest.mark.parametrize("fail_command", [
+    "build api worker beat admin portal freeradius",
+    "up -d postgres redis clickhouse minio createbuckets",
+    "up -d --no-deps api worker beat admin portal freeradius",
+])
+def test_previous_stack_start_failure_stops_health_and_state_writes(tmp_path, entrypoint, fail_command):
+    result = bash_run(tmp_path, previous_stack_script(tmp_path, entrypoint, fail_command))
+    assert result.returncode != 0
+    lines = result.stdout.splitlines()
+    assert lines[-1] == f"compose:{fail_command}"
+    assert "api" not in lines and "radius" not in lines
+    assert not any(line.startswith(("provenance:", "switch:", "state:", "journal:")) for line in lines)
+
+
+def test_forward_update_still_runs_migration(tmp_path):
+    result = bash_run(tmp_path, "\n".join([
+        "set -Eeuo pipefail",
+        "STAGING=/releases/0.3.67; old_tree=/releases/0.3.66; from=0.3.66",
+        'compose_env() { printf "%s/backend/.env\\n" "$1"; }',
+        'run_compose() { shift 2; printf "compose:%s\\n" "$*"; }',
+        "fail_update() { return 1; }",
+        source_between("  STAGING_STARTED=1\n", "  start_args="),
+    ]))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        "compose:build --pull=false api worker beat migrate admin portal freeradius",
+        "compose:up -d postgres redis clickhouse minio createbuckets",
+        "compose:run --rm migrate",
+    ]
 
 
 @pytest.mark.parametrize("state,success", [("running healthy", True), ("restarting unhealthy", False), ("running starting", False)])

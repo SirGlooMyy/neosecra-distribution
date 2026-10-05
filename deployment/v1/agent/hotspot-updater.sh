@@ -702,7 +702,7 @@ rollback_to() {
   old_env="$(compose_env "${old_tree}")"
   run_compose "${old_tree}" "${old_env}" down --remove-orphans
   [[ -f "$(compose_env "${target_tree}")" && ! -L "$(compose_env "${target_tree}")" ]] || { echo "Rollback target environment missing" >&2; return 1; }
-  run_compose "${target_tree}" "$(compose_env "${target_tree}")" up -d --remove-orphans
+  start_previous_stack "${target_tree}" "$(compose_env "${target_tree}")" || return 1
   wait_api && wait_freeradius || { echo "Rollback health check failed" >&2; return 1; }
   verify_compose_working_dir "${target_tree}" || return 1
   atomic_switch_current "${target_tree}"
@@ -719,16 +719,24 @@ recover_previous() {
   write_state "${old_tree##*/}"
 }
 
-restore_previous_stack() {
+start_previous_stack() {
   local old_tree="$1" old_env="$2"
+  local dependencies=(postgres redis clickhouse minio createbuckets)
+  local applications=(api worker beat admin portal freeradius)
   # Staging and production deliberately share the project name so the
   # release can reuse the existing named data volumes and host ports. A
   # `down` on the staging tree would therefore remove the active stack too.
   # Rebuild the previous source tree and recreate only its application
   # services instead; persistent dependencies and volumes stay untouched.
-  run_compose "${old_tree}" "${old_env}" build api worker beat admin portal freeradius || return 1
-  run_compose "${old_tree}" "${old_env}" up -d postgres redis clickhouse minio createbuckets || return 1
-  run_compose "${old_tree}" "${old_env}" up -d --no-deps api worker beat admin portal freeradius || return 1
+  # Never start the previous release's migration against the expanded schema.
+  run_compose "${old_tree}" "${old_env}" build "${applications[@]}" || return 1
+  run_compose "${old_tree}" "${old_env}" up -d "${dependencies[@]}" || return 1
+  run_compose "${old_tree}" "${old_env}" up -d --no-deps "${applications[@]}" || return 1
+}
+
+restore_previous_stack() {
+  local old_tree="$1" old_env="$2"
+  start_previous_stack "${old_tree}" "${old_env}" || return 1
   wait_api || return 1
   wait_freeradius || return 1
   verify_compose_working_dir "${old_tree}"
