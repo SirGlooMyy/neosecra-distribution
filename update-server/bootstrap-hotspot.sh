@@ -23,6 +23,7 @@ SINGLE_DISK=0
 
 RED=\033[31m; GREEN=\033[32m; RESET=\033[0m
 info() { printf '%s[neosecra-hotspot]%s %s\n' "${GREEN}" "${RESET}" "$@"; }
+warn() { printf '[neosecra-hotspot] UYARI: %s\n' "$@" >&2; }
 die() { printf '%s[neosecra-hotspot]%s %s\n' "${RED}" "${RESET}" "$@" >&2; exit "${2:-1}"; }
 
 usage() {
@@ -784,6 +785,31 @@ command -v docker >/dev/null 2>&1 || die "Docker kurulumu dogrulanamadi" 4
 docker compose version >/dev/null 2>&1 || die "Docker Compose v2 gerekli" 4
 systemctl enable --now docker >/dev/null 2>&1 || die "Docker servisi baslatilamadi" 4
 docker info >/dev/null 2>&1 || die "Docker daemon erisimi dogrulanamadi" 4
+
+# The syslog receiver asks for a 16 MB UDP receive buffer; the kernel silently
+# caps the request at net.core.rmem_max, and packets are lost under a burst.
+# Idempotent: the file is rewritten with the same content on every run.
+configure_udp_receive_buffer() {
+  local conf=/etc/sysctl.d/60-neosecra-hotspot.conf staged="$TMP_DIR/60-neosecra-hotspot.conf" effective
+  {
+    printf '%s\n' '# NeoSecra Hotspot: UDP syslog receive buffer (kernel caps SO_RCVBUF at rmem_max).'
+    printf '%s\n' 'net.core.rmem_max = 33554432'
+    printf '%s\n' 'net.core.rmem_default = 1048576'
+  } > "$staged" || { warn "sysctl dosyasi hazirlanamadi; UDP alim tamponu limiti yukseltilmedi"; return 0; }
+  # install sets the mode explicitly, so umask 077 does not leave it 0600.
+  if ! install -d -m 0755 /etc/sysctl.d || ! install -m 0644 "$staged" "$conf"; then
+    warn "${conf} yazilamadi; UDP alim tamponu limiti yukseltilmedi"
+    return 0
+  fi
+  if command -v sysctl >/dev/null 2>&1 && sysctl -q -p "$conf" >/dev/null 2>&1; then
+    effective="$(sysctl -n net.core.rmem_max 2>/dev/null || true)"
+    info "UDP alim tamponu limiti uygulandi: net.core.rmem_max=${effective:-?}"
+  else
+    warn "sysctl uygulanamadi (konteyner ya da salt okunur /proc/sys olabilir); ${conf} bir sonraki acilista gecerli olur, syslog alim tamponu o zamana kadar sinirli kalabilir"
+  fi
+  return 0
+}
+configure_udp_receive_buffer
 
 info "Host update-agent kuruluyor"
 bash "${RELEASE_DIR}/deployment/v1/agent/install-hotspot-agent.sh" \

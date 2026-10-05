@@ -144,3 +144,23 @@ def test_storage_layout_prefers_blank_data_disk_then_bounds_single_disk() -> Non
     assert "findmnt --fstab -M" in bootstrap
     assert '[[ "$DATA_TOTAL_GB" -ge 900 && "$DATA_FREE_GB" -ge 700 ]]' in bootstrap
     assert '[[ "$DATA_MOUNT_TARGET" == "$DATA_ROOT" ]]' in bootstrap
+
+
+def test_bootstrap_raises_udp_receive_buffer_limits_without_aborting() -> None:
+    bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
+    assert "configure_udp_receive_buffer\n" in bootstrap
+    function = bootstrap.split("configure_udp_receive_buffer() {", 1)[1].split("\n}\n", 1)[0]
+    assert "/etc/sysctl.d/60-neosecra-hotspot.conf" in function
+    assert "net.core.rmem_max = 33554432" in function
+    assert "net.core.rmem_default = 1048576" in function
+    # umask 077 would leave the file 0600; install sets the mode explicitly.
+    assert 'install -m 0644 "$staged" "$conf"' in function
+    assert 'sysctl -q -p "$conf"' in function
+    # Containers cannot write /proc/sys: a warning, never an aborted installation.
+    assert function.count("warn ") >= 2 and "die " not in function
+    assert function.rstrip().endswith("return 0")
+    # Runs after the prerequisites and the Docker daemon check, before the stack starts.
+    call = bootstrap.index("\nconfigure_udp_receive_buffer\n")
+    assert bootstrap.index('docker info >/dev/null 2>&1 || die') < call
+    assert call < bootstrap.index('info "Host update-agent kuruluyor"')
+    assert call < bootstrap.index('"${COMPOSE[@]}" up')

@@ -128,3 +128,64 @@ def test_runtime_contract_pins_production_and_populates_compose_minio_credential
     assert "export HOTSPOT_ENFORCE_LICENSED_OPERATIONS=true" in script
     assert 'set_env MINIO_ACCESS_KEY "$MINIO_ACCESS"' in script
     assert 'set_env MINIO_SECRET_KEY "$MINIO_SECRET"' in script
+
+
+def _run_sysctl_function(
+    tmp_path: Path, *, install_fails: bool, sysctl_fails: bool
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    text = BOOTSTRAP.read_text(encoding="utf-8")
+    body = text.split("configure_udp_receive_buffer() {", 1)[1].split("\n}\n", 1)[0]
+    function = "configure_udp_receive_buffer() {" + body + "\n}\n"
+    calls = tmp_path / "calls.log"
+    log = calls.as_posix()
+    # Shell functions shadow the real install/sysctl so nothing touches the host.
+    install_stub = (
+        f'install() {{ echo "install $*" >> "{log}"; return 1; }}\n'
+        if install_fails
+        else f'install() {{ echo "install $*" >> "{log}"; return 0; }}\n'
+    )
+    sysctl_stub = f'sysctl() {{ echo "sysctl $*" >> "{log}"; return {1 if sysctl_fails else 0}; }}\n'
+    script = tmp_path / "run.sh"
+    script.write_text(
+        "set -Eeuo pipefail\n"
+        "umask 077\n"
+        "info() { printf 'INFO %s\n' \"$@\"; }\n"
+        "warn() { printf 'WARN %s\n' \"$@\" >&2; }\n"
+        f'TMP_DIR="{tmp_path.as_posix()}"\n'
+        f"{install_stub}{sysctl_stub}{function}"
+        "configure_udp_receive_buffer\n"
+        "echo DONE\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    result = subprocess.run(
+        [str(BASH), str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result, calls
+
+
+def test_bootstrap_sysctl_step_writes_both_keys_with_mode_0644(tmp_path: Path) -> None:
+    result, calls = _run_sysctl_function(tmp_path, install_fails=False, sysctl_fails=False)
+    assert result.returncode == 0, result.stderr
+    assert "DONE" in result.stdout and "WARN" not in result.stderr
+    log = calls.read_text(encoding="utf-8")
+    assert "install -m 0644 " in log and "/etc/sysctl.d/60-neosecra-hotspot.conf" in log
+    assert "sysctl -q -p /etc/sysctl.d/60-neosecra-hotspot.conf" in log
+    staged = (tmp_path / "60-neosecra-hotspot.conf").read_text(encoding="utf-8")
+    keys = [line for line in staged.splitlines() if line and not line.startswith("#")]
+    assert keys == ["net.core.rmem_max = 33554432", "net.core.rmem_default = 1048576"]
+
+
+def test_bootstrap_sysctl_step_tolerates_unwritable_sysctl(tmp_path: Path) -> None:
+    result, _ = _run_sysctl_function(tmp_path, install_fails=False, sysctl_fails=True)
+    assert result.returncode == 0, result.stderr
+    assert "DONE" in result.stdout and "WARN" in result.stderr
+
+
+def test_bootstrap_sysctl_step_tolerates_unwritable_sysctl_directory(tmp_path: Path) -> None:
+    result, _ = _run_sysctl_function(tmp_path, install_fails=True, sysctl_fails=False)
+    assert result.returncode == 0, result.stderr
+    assert "DONE" in result.stdout and "WARN" in result.stderr
