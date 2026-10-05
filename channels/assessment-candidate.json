@@ -1,0 +1,126 @@
+{
+  "product": "assessment",
+  "product_code": "assessment",
+  "edition": "standard",
+  "channel": "assessment-candidate",
+  "status": "available",
+  "current_version": "1.3.77",
+  "updated": "2026-10-05T21:51:57Z",
+  "releases": [
+    {
+      "version": "1.3.76",
+      "released_at": "2026-10-05T21:51:42Z",
+      "archive": {
+        "url": "https://update.neosecra.com/releases/1.3.76/distribution-1.3.76.tar.gz",
+        "sha256": "09fcbf6a0f6283e2d8a9fbfd63d7ba55f1e5ba111cb28284c42d74b9e4ccca8b",
+        "size_bytes": 109646,
+        "signature_url": "https://update.neosecra.com/releases/1.3.76/distribution-1.3.76.tar.gz.minisig"
+      },
+      "bootstrap": {
+        "url": "https://update.neosecra.com/releases/1.3.76/bootstrap.sh",
+        "sha256": "457f03bf46c37dc276312ef30cdc936ee096f73bd36172afc16ef834c9e15cc5",
+        "size_bytes": 33991,
+        "signature_url": "https://update.neosecra.com/releases/1.3.76/bootstrap.sh.minisig"
+      },
+      "images": {
+        "postgres": {
+          "reference": "postgres:15",
+          "digest": "sha256:5f72c7b5bd616308ccfd2e74d6be16fb06364e5eecbb815fe9dc6ab9761d2111"
+        },
+        "redis": {
+          "reference": "redis:7-alpine",
+          "digest": "sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
+        },
+        "backend": {
+          "reference": "registry.neosecra.com/security-health-backend:1.3.76",
+          "digest": "sha256:56beb2655c66573ea28926556028b9232563de8430c93d499d532effb9e5a748"
+        },
+        "worker": {
+          "reference": "registry.neosecra.com/security-health-backend:1.3.76",
+          "digest": "sha256:56beb2655c66573ea28926556028b9232563de8430c93d499d532effb9e5a748"
+        },
+        "beat": {
+          "reference": "registry.neosecra.com/security-health-backend:1.3.76",
+          "digest": "sha256:56beb2655c66573ea28926556028b9232563de8430c93d499d532effb9e5a748"
+        },
+        "frontend": {
+          "reference": "registry.neosecra.com/security-health-frontend:1.3.76",
+          "digest": "sha256:5cf3a6cbedfc7fae6a0679606bfd24bef3ccc7e3207f91414909ba1cf43c69f1"
+        },
+        "openvas": {
+          "reference": "immauss/openvas:26.07.12.01",
+          "digest": "sha256:b8381d8acb7c102dbfa5f97ab2b1d17464be168f96c0b6ea84f8a1687deb5e63",
+          "optional": true
+        },
+        "zap": {
+          "reference": "ghcr.io/zaproxy/zaproxy:2.17.0",
+          "digest": "sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef",
+          "optional": true
+        },
+        "dast-egress": {
+          "reference": "registry.neosecra.com/neosecra-dast-egress:4",
+          "digest": "sha256:e91e39e1e3214514aed8bc413f4730160914c7805c299fd5517763a7fcae0085",
+          "optional": true
+        }
+      }
+    }
+  ,
+    {
+      "version": "1.3.77",
+      "released_at": "2026-10-05T21:51:57Z",
+      "archive": {
+        "url": "https://update.neosecra.com/releases/1.3.77/distribution-1.3.77.tar.gz",
+        "sha256": "a01d4c9045ac0730f8bef6ebdf9be86387804f07435fc00f0f1683195d1db815",
+        "size_bytes": 109634,
+        "signature_url": "https://update.neosecra.com/releases/1.3.77/distribution-1.3.77.tar.gz.minisig"
+      },
+      "bootstrap": {
+        "url": "https://update.neosecra.com/releases/1.3.77/bootstrap.sh",
+        "sha256": "457f03bf46c37dc276312ef30cdc936ee096f73bd36172afc16ef834c9e15cc5",
+        "size_bytes": 33991,
+        "signature_url": "https://update.neosecra.com/releases/1.3.77/bootstrap.sh.minisig"
+      },
+      "images": {
+        "postgres": {
+          "reference": "postgres:15",
+          "digest": "sha256:5f72c7b5bd616308ccfd2e74d6be16fb06364e5eecbb815fe9dc6ab9761d2111"
+        },
+        "redis": {
+          "reference": "redis:7-alpine",
+          "digest": "sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
+        },
+        "backend": {
+          "reference": "registry.neosecra.com/security-health-backend:1.3.77",
+          "digest": "sha256:a9dcd8326b37f963af58880da0ce4cab270dbee113c1dffbfd7116b362d75c28"
+        },
+        "worker": {
+          "reference": "registry.neosecra.com/security-health-backend:1.3.77",
+          "digest": "sha256:a9dcd8326b37f963af58880da0ce4cab270dbee113c1dffbfd7116b362d75c28"
+        },
+        "beat": {
+          "reference": "registry.neosecra.com/security-health-backend:1.3.77",
+          "digest": "sha256:a9dcd8326b37f963af58880da0ce4cab270dbee113c1dffbfd7116b362d75c28"
+        },
+        "frontend": {
+          "reference": "registry.neosecra.com/security-health-frontend:1.3.77",
+          "digest": "sha256:318c0700cc289d4c0b12c9cae6eabbb12a06212f51daae3038aa545108b9ea24"
+        },
+        "openvas": {
+          "reference": "immauss/openvas:26.07.12.01",
+          "digest": "sha256:b8381d8acb7c102dbfa5f97ab2b1d17464be168f96c0b6ea84f8a1687deb5e63",
+          "optional": true
+        },
+        "zap": {
+          "reference": "ghcr.io/zaproxy/zaproxy:2.17.0",
+          "digest": "sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef",
+          "optional": true
+        },
+        "dast-egress": {
+          "reference": "registry.neosecra.com/neosecra-dast-egress:4",
+          "digest": "sha256:e91e39e1e3214514aed8bc413f4730160914c7805c299fd5517763a7fcae0085",
+          "optional": true
+        }
+      }
+    }
+  ]
+}
