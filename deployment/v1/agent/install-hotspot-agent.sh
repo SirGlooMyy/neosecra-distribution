@@ -11,13 +11,14 @@ AGENT_ROOT=""
 BACKUP_ROOT=""
 BACKEND_UID="1000:1000"
 CHANNEL_URL="https://update.neosecra.com/channels/hotspot-stable.json"
+CHANNEL_URL_SET=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --hotspot-root) shift; ROOT="${1:-}" ;;
     --agent-root) shift; AGENT_ROOT="${1:-}" ;;
     --backup-root) shift; BACKUP_ROOT="${1:-}" ;;
     --backend-uid) shift; BACKEND_UID="${1:-}" ;;
-    --channel-url) shift; CHANNEL_URL="${1:-}" ;;
+    --channel-url) shift; CHANNEL_URL="${1:-}"; CHANNEL_URL_SET=1 ;;
     --help|-h)
       cat <<'EOF'
 Usage: sudo install-hotspot-agent.sh [options]
@@ -53,6 +54,22 @@ HEARTBEAT_FILE="${STATE_BRIDGE}/agent-alive"
 AGENT_STATE="${ROOT}/state/update-agent"
 UNITS_DIR="/etc/systemd/system"
 ENV_FILE="/etc/neosecra/hotspot-update-agent.env"
+# Reinstall keeps the configured channel unless the operator explicitly changes
+# it. Read only this value; never execute the environment file as shell code.
+if [[ "$CHANNEL_URL_SET" -eq 0 && -f "$ENV_FILE" ]]; then
+  while IFS= read -r env_line || [[ -n "$env_line" ]]; do
+    if [[ "$env_line" == UPGRADE_CHANNEL_URL=* ]]; then
+      CHANNEL_URL="${env_line#UPGRADE_CHANNEL_URL=}"
+      CHANNEL_URL="${CHANNEL_URL%$'\r'}"
+      if [[ "$CHANNEL_URL" == \"*\" || "$CHANNEL_URL" == \'*\' ]]; then
+        CHANNEL_URL="${CHANNEL_URL:1:${#CHANNEL_URL}-2}"
+      fi
+      break
+    fi
+  done < "$ENV_FILE"
+fi
+RELEASE_CHANNEL="$(basename "${CHANNEL_URL%%\?*}")"
+RELEASE_CHANNEL="${RELEASE_CHANNEL%.json}"
 mkdir -p "$AGENT_ROOT/lib" "$AGENT_ROOT/ca" "$AGENT_ROOT/upgrade" "$TRIGGER_DIR" "$JOURNAL_DIR" "${ROOT}/state" "${ROOT}/upgrade-journal" "$AGENT_STATE/home" "$AGENT_STATE/docker-config" "$AGENT_STATE/buildx"
 install -d -m 0700 -o root -g root "$AGENT_STATE/home" "$AGENT_STATE/docker-config" "$AGENT_STATE/buildx"
 install -m 0755 "${SCRIPT_DIR}/update-agent.sh" "$AGENT_ROOT/update-agent.sh"
@@ -111,7 +128,7 @@ NEOSECRA_BACKUP_ROOT=${BACKUP_ROOT}
 # legacy switch is retained only as an explicit fail-closed compatibility key.
 NEOSECRA_UPDATE_DB_BACKUP=off
 UPGRADE_CHANNEL_URL=${CHANNEL_URL}
-UPGRADE_RELEASE_CHANNEL=hotspot-stable
+UPGRADE_RELEASE_CHANNEL=${RELEASE_CHANNEL}
 UPGRADE_CHANNEL_PUBLIC_KEY=${AGENT_ROOT}/ca
 NEOSECRA_SECURE_EXTRACT=${AGENT_ROOT}/secure_extract.py
 NEOSECRA_ROLLBACK_VERIFIER=${AGENT_ROOT}/verify_rollback_auth.py
@@ -187,4 +204,4 @@ systemctl is-active --quiet neosecra-hotspot-update-agent-heartbeat.timer
 echo "Hotspot update-agent installed"
 echo "  root: ${ROOT}"
 echo "  bridge: ${STATE_BRIDGE}"
-echo "  channel: ${CHANNEL_URL}"
+echo "  channel: ${CHANNEL_URL} (release channel: ${RELEASE_CHANNEL})"
