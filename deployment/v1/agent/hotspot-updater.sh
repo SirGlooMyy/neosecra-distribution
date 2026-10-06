@@ -239,6 +239,95 @@ raise SystemExit(0 if left < right else 1)
 PY
 }
 
+prune_after_update() {
+  # Best effort only, after COMPLETED. Keep cleanup() for the update lock.
+  local from="${1:-}" root_real releases_real current_real from_real candidate name resolved check rc i
+  local removed=0 safe=1
+  local -a candidates=() newest=()
+  if [[ ! "${from}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+      || [[ -z "${ROOT:-}" || -z "${RELEASES_DIR:-}" || -z "${CURRENT_LINK:-}" || -z "${TRANSACTION_FILE:-}" ]] \
+      || [[ -L "${RELEASES_DIR}" || ! -L "${CURRENT_LINK}" ]] \
+      || [[ -e "${TRANSACTION_FILE}" || -L "${TRANSACTION_FILE}" ]]; then
+    safe=0
+  elif ! root_real="$(realpath -e -- "${ROOT}")" \
+      || ! releases_real="$(realpath -e -- "${RELEASES_DIR}")" \
+      || ! current_real="$(realpath -e -- "${CURRENT_LINK}")" \
+      || ! from_real="$(realpath -e -- "${RELEASES_DIR}/${from}")"; then
+    safe=0
+  elif [[ "${root_real}" == / || "${releases_real}" != "${root_real}/releases" \
+      || "${current_real}" != "${releases_real}/"* || ! -d "${current_real}" \
+      || "${from_real}" != "${releases_real}/${from}" || ! -d "${from_real}" \
+      || -L "${RELEASES_DIR}/${from}" ]]; then
+    safe=0
+  fi
+  if (( safe )); then
+    # Track only the newest three; comparisons use the update version order.
+    for candidate in "${RELEASES_DIR}"/*; do
+      name="${candidate##*/}"
+      [[ "${name}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && -d "${candidate}" && ! -L "${candidate}" ]] || continue
+      if ! resolved="$(realpath -e -- "${candidate}")" || [[ "${resolved}" != "${releases_real}/${name}" ]]; then
+        safe=0
+        break
+      fi
+      candidates+=("${name}")
+      i=0
+      while (( i < ${#newest[@]} )); do
+        if version_lt "${newest[i]}" "${name}"; then
+          break
+        else
+          rc=$?
+          if (( rc != 1 )); then safe=0; break; fi
+        fi
+        i=$((i + 1))
+      done
+      (( safe )) || break
+      newest=("${newest[@]:0:i}" "${name}" "${newest[@]:i}")
+      newest=("${newest[@]:0:3}")
+    done
+  fi
+  if (( safe )); then
+    for name in "${candidates[@]}"; do
+      candidate="${releases_real}/${name}"
+      [[ "${name}" != "${from}" && "${current_real}" != "${candidate}" && "${current_real}" != "${candidate}/"* ]] || continue
+      check=0
+      for resolved in "${newest[@]}"; do
+        if [[ "${name}" == "${resolved}" ]]; then check=1; break; fi
+      done
+      (( check == 0 )) || continue
+      # Recheck containment and protected pointers immediately before deletion.
+      if [[ -e "${TRANSACTION_FILE}" || -L "${TRANSACTION_FILE}" || -L "${RELEASES_DIR}" \
+          || -L "${candidate}" || ! -d "${candidate}" || ! -L "${CURRENT_LINK}" || -L "${RELEASES_DIR}/${from}" ]] \
+          || ! resolved="$(realpath -e -- "${RELEASES_DIR}")" || [[ "${resolved}" != "${releases_real}" ]] \
+          || ! resolved="$(realpath -e -- "${CURRENT_LINK}")" || [[ "${resolved}" != "${current_real}" ]] \
+          || ! resolved="$(realpath -e -- "${RELEASES_DIR}/${from}")" || [[ "${resolved}" != "${from_real}" ]] \
+          || ! resolved="$(realpath -e -- "${candidate}")" || [[ "${resolved}" != "${candidate}" ]]; then
+        printf '%s\n' 'Warning: release cleanup stopped; protected paths changed' >&2
+        break
+      fi
+      if rm -rf --one-file-system -- "${candidate}" && [[ ! -e "${candidate}" && ! -L "${candidate}" ]]; then
+        removed=$((removed + 1))
+      else
+        printf 'Warning: release cleanup failed for %s\n' "${name}" >&2
+      fi
+    done
+  else
+    printf '%s\n' 'Warning: release cleanup skipped; paths, transaction or version order could not be verified' >&2
+  fi
+  # Never use -a: offline rebuilds depend on cached digest-pinned base images.
+  if command -v docker >/dev/null 2>&1; then
+    if ! docker image prune -f >/dev/null; then
+      printf '%s\n' 'Warning: dangling Docker image cleanup failed' >&2
+    fi
+    if ! docker builder prune -f --keep-storage 2GB >/dev/null; then
+      printf '%s\n' 'Warning: Docker build cache cleanup failed' >&2
+    fi
+  else
+    printf '%s\n' 'Warning: Docker cleanup skipped; docker is unavailable' >&2
+  fi
+  printf 'Cleanup: removed_releases=%s\n' "${removed}"
+  return 0
+}
+
 env_value() {
   local file="$1" key="$2" value
   [[ -f "$file" && ! -L "$file" ]] || return 1
@@ -955,6 +1044,8 @@ apply_update() {
   clear_transaction
   write_progress "VERIFYING" "ok" 100 "Güncelleme tamamlandı"
   write_journal "COMPLETED" "${from}" "" "" "${migration_status}"
+  prune_after_update "${from}" || printf '%s\n' 'Warning: post-update cleanup failed' >&2
+  return 0
 }
 
 recover_interrupted_transaction
