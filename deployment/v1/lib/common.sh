@@ -337,7 +337,9 @@ rotate_initial_admin_password() {
 
 upsert_env_value() {
   local key="$1" value="$2" tmp
-  tmp="$(mktemp)"
+  # The temporary file is created next to the environment file: the atomic
+  # rename below cannot cross filesystems (/tmp is often a separate tmpfs).
+  tmp="$(mktemp "${ENV_FILE}.tmp.XXXXXX")" || return 1
   awk -v k="$key" -v v="$value" '
     BEGIN { done=0 }
     $0 ~ "^" k "=" { print k "=" v; done=1; next }
