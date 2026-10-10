@@ -418,6 +418,23 @@ def test_apply_rejects_local_and_tag_only_commits(world: World):
     assert run.rc != 0 and "origin" in run.err and run.count("ssh") == 0
 
 
+def test_apply_rejects_commit_that_is_only_on_another_origin_branch(world: World):
+    """A commit pushed to a side branch (agent or feature work) is on origin but not reviewed: never deployable."""
+    sha = world.local_only_commit()
+    world.git("push", "-q", "origin", f"{sha}:refs/heads/village/dagitim")
+    world.git("push", "-q", "origin", f"{sha}:refs/heads/aday")
+    run = world.deploy(sha, "--apply")
+    assert run.rc != 0 and "origin/main" in run.err and run.count("ssh") == 0
+    run = world.deploy(sha)                                    # dry run still warns
+    assert run.rc == 0 and "origin/main" in run.err
+    run = world.deploy(sha, "--origin-branch", "village/dagitim", "--apply")
+    assert run.rc != 0 and "village" in run.err and run.count("ssh") == 0
+    run = world.deploy(sha, "--origin-branch", "yok-boyle-dal", "--apply")
+    assert run.rc != 0 and run.count("ssh") == 0
+    run = world.deploy(sha, "--origin-branch", "aday", "--apply")   # a human names the branch on purpose
+    assert run.rc == 0, run.text
+
+
 def test_ancestor_commit_is_accepted(world: World):
     world.local_only_commit()
     world.git("push", "-q", "origin", "main")

@@ -9,9 +9,12 @@ progress() { printf '%s\n' "$*" >&2; }
 usage() {
   cat <<'EOF'
 deploy-live.sh --profile distribution|lisans --ref <commit|tag> --target <user@host:/abs/path>
-               [--repo <path>] [--allowlist <file>] [--identity <path>] [--transport auto|tar] [--apply]
+               [--repo <path>] [--allowlist <file>] [--identity <path>] [--transport auto|tar]
+               [--origin-branch <dal>] [--apply]
 deploy-live.sh --profile distribution|lisans --rollback <backup-name> --target <user@host:/abs/path> [--apply]
 Varsayilan DRY-RUN: uzakta kilit dahil hicbir sey yazilmaz. Servisler yeniden baslatilmaz.
+--apply yalniz origin/main'den (ya da --origin-branch ile acikca verilen origin dalindan) erisilebilen commit'i
+kabul eder; baska bir origin dalinda bulunmasi yetmez. village/* dallari hicbir zaman kabul edilmez.
 EOF
 }
 
@@ -90,22 +93,25 @@ rollback_command() {
   printf ' --apply'
 }
 
-REF='' TARGET='' PROFILE='' ALLOWLIST='' IDENTITY='' REPO='' ROLLBACK='' APPLY=0 TRANSPORT=auto WORK=''
+REF='' TARGET='' PROFILE='' ALLOWLIST='' IDENTITY='' REPO='' ROLLBACK='' APPLY=0 TRANSPORT=auto WORK='' ORIGIN_BRANCH=main
 while (($#)); do
   case $1 in
     --apply) APPLY=1; shift ;;
     --help|-h) usage; exit 0 ;;
-    --ref|--target|--profile|--allowlist|--identity|--repo|--rollback|--transport)
+    --ref|--target|--profile|--allowlist|--identity|--repo|--rollback|--transport|--origin-branch)
       (($#>=2)) || die "$1 deger ister"
       case $1 in
         --ref) REF=$2 ;; --target) TARGET=$2 ;; --profile) PROFILE=$2 ;;
         --allowlist) ALLOWLIST=$2 ;; --identity) IDENTITY=$2 ;; --repo) REPO=$2 ;;
-        --rollback) ROLLBACK=$2 ;; --transport) TRANSPORT=$2 ;;
+        --rollback) ROLLBACK=$2 ;; --transport) TRANSPORT=$2 ;; --origin-branch) ORIGIN_BRANCH=$2 ;;
       esac; shift 2 ;;
     *) die "bilinmeyen arguman: $1" ;;
   esac
 done
 case $PROFILE in distribution|lisans) ;; *) die '--profile distribution|lisans zorunlu' ;; esac
+# Reviewed work lives on origin/main. Another origin branch must be named on purpose; agent branches never qualify.
+[[ $ORIGIN_BRANCH =~ ^[A-Za-z0-9._/-]+$ && $ORIGIN_BRANCH != -* && $ORIGIN_BRANCH != *..* && $ORIGIN_BRANCH != */ ]] || die 'gecersiz --origin-branch'
+[[ $ORIGIN_BRANCH != village && $ORIGIN_BRANCH != village/* ]] || die '--origin-branch village/* olamaz: incelenmemis is dagitilmaz'
 [[ $TARGET == *:* ]] || die '--target user@host:/mutlak/yol zorunlu'
 USERHOST=${TARGET%%:*}; T=${TARGET#*:}
 target_re='^[a-z_][a-z0-9_-]*@[A-Za-z0-9.-]+$'
@@ -456,12 +462,13 @@ info "sha: $SHA; profil: $PROFILE; hedef: $USERHOST:$T; aktarim yontemi: tar"
 dirty=$(git -C "$ROOT" status --porcelain)
 [[ -z $dirty ]] || info 'not: calisma agaci kirli; yalniz commit edilmis kaynak aktarilir'
 if ((APPLY)); then git -C "$ROOT" fetch --prune origin || die 'origin fetch basarisiz'; fi
-origin_refs=$(git -C "$ROOT" for-each-ref --contains "$SHA" --format='%(refname)' refs/remotes/origin/)
+# Being on SOME origin branch is not enough: unreviewed branches (village/*, feature work) are pushed there too.
 on_origin=0
-while IFS= read -r ref; do [[ -z $ref || $ref == */HEAD ]] || on_origin=1; done <<<"$origin_refs"
+if git -C "$ROOT" rev-parse -q --verify "refs/remotes/origin/$ORIGIN_BRANCH^{commit}" >/dev/null 2>&1 &&
+   git -C "$ROOT" merge-base --is-ancestor "$SHA" "refs/remotes/origin/$ORIGIN_BRANCH"; then on_origin=1; fi
 if ((!on_origin)); then
-  if ((APPLY)); then die 'commit origin dalindan erisilebilir degil'; fi
-  printf 'UYARI: commit origin dalinda bulunamadi; --apply reddedilir\n' >&2
+  if ((APPLY)); then die "commit origin/$ORIGIN_BRANCH dalindan erisilebilir degil"; fi
+  printf 'UYARI: commit origin/%s dalinda bulunamadi; --apply reddedilir\n' "$ORIGIN_BRANCH" >&2
 fi
 LOCAL_START=$SECONDS
 progress 'yerel dogrulama: dosya secimi...'
